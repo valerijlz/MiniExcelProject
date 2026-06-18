@@ -1,0 +1,9 @@
+<resources>
+	<style name="Theme.MiniExcel" parent="Theme.MaterialComponents.Light.NoActionBar">
+		<item name="colorPrimary">#107C41</item>
+		<item name="colorPrimaryDark">#0E6C38</item>
+		<item name="colorAccent">#107C41</item>
+		<item name="android:windowBackground">#FFFFFF</item>
+		<item name="android:textColor">#2B2B2B</item>
+	</style>
+</resources>

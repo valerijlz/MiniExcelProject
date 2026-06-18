@@ -1,0 +1,57 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FFFFFF">
+
+	<HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#F3F3F3"
+        android:padding="8dp">
+
+		<LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+			<Button android:id="@+id/btnCreate" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Создать" style="@style/Widget.MaterialComponents.Button.TextButton"/>
+			<Button android:id="@+id/btnOpen" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Открыть" style="@style/Widget.MaterialComponents.Button.TextButton"/>
+			<Button android:id="@+id/btnSave" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Сохранить" style="@style/Widget.MaterialComponents.Button.TextButton"/>
+			<Button android:id="@+id/btnSaveAs" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Сохранить как" style="@style/Widget.MaterialComponents.Button.TextButton"/>
+		</LinearLayout>
+	</HorizontalScrollView>
+
+	<LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="8dp"
+        android:background="#EAEAEA">
+
+		<EditText
+            android:id="@+id/etSearch"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Поиск текста..."
+            android:background="#FFFFFF"
+            android:padding="8dp"
+            android:textSize="14sp"
+            android:inputType="text"/>
+
+		<CheckBox
+            android:id="@+id/cbFilter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Фильтр (Кол. А не пустая)"
+            android:textSize="11sp"/>
+	</LinearLayout>
+
+	<androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvTable"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="4dp"/>
+
+</LinearLayout>
