@@ -2,7 +2,7 @@ name: Android APK Auto-Compiler
 
 on:
   push:
-    branches: [ "main", "master" ] # Запуск сборки при каждом пуше в основные ветки
+    branches: [ "main", "master" ]
 
 jobs:
   compiler-job:
@@ -19,8 +19,10 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Grant Execute Rights for Gradle
-      run: chmod +x gradlew
+    - name: Fix Windows Line Endings and Grant Execute Rights
+      run: |
+        sed -i 's/\r$//' gradlew
+        chmod +x gradlew
 
     - name: Compile Application (Assemble Debug APK)
       run: ./gradlew assembleDebug
