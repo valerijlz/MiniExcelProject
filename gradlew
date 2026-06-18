@@ -135,4 +135,4 @@ set -- "$@"
 eval set -- "$DEFAULT_JVM_OPTS" "$GRADLE_OPTS" "$@ "
 
 # Execute Gradle
-exec "$JAVACMD" "$@" -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"
+exec "$JAVACMD" -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"
