@@ -132,7 +132,4 @@ set -- "$@"
 
 # Collect all arguments for the java command
 # Split up the JVM_OPTS And GRADLE_OPTS values into an array, following the shell quoting rules
-eval set -- "$DEFAULT_JVM_OPTS" "$GRADLE_OPTS" "$@ "
-
-# Execute Gradle
-exec "$JAVACMD" -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"
+exec java -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"
