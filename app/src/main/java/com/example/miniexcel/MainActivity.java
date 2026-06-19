@@ -6,8 +6,10 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
+import android.view.Gravity;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
@@ -19,7 +21,6 @@ import com.example.miniexcel.R;
 
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Cell;
-import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -39,7 +40,10 @@ public class MainActivity extends AppCompatActivity {
     private Button saveButton, openButton, btnZoomIn, btnZoomOut;
     private RecyclerView recyclerView;
     private TableAdapter adapter;
+    private LinearLayout tableHeaderLayout;
+    
     private List<RowData> dataList = new ArrayList<>();
+    private int maxColumnsInFile = 5; // Текущее количество колонок в таблице
 
     private int selectedRowIndex = -1;
     private int selectedColIndex = -1;
@@ -48,18 +52,18 @@ public class MainActivity extends AppCompatActivity {
     private boolean isXlsxFormat = true;
     private float currentScale = 1.0f;
 
-    private TextView tvHeaderEmpty, tvHeaderA, tvHeaderB, tvHeaderC, tvHeaderD, tvHeaderE;
     private ActivityResultLauncher<Intent> saveFileLauncher;
     private ActivityResultLauncher<Intent> openFileLauncher;
 
+    // Использование динамического списка вместо жесткого массива на 5 элементов
     public static class RowData {
         public int rowIndex;
-        public String[] columns = new String[5];
+        public List<String> columns = new ArrayList<>();
 
-        public RowData(int rowIndex) {
+        public RowData(int rowIndex, int colCount) {
             this.rowIndex = rowIndex;
-            for (int i = 0; i < 5; i++) {
-                columns[i] = "";
+            for (int i = 0; i < colCount; i++) {
+                columns.add("");
             }
         }
     }
@@ -75,27 +79,28 @@ public class MainActivity extends AppCompatActivity {
         btnZoomIn = findViewById(R.id.btnZoomIn);
         btnZoomOut = findViewById(R.id.btnZoomOut);
         recyclerView = findViewById(R.id.recyclerView);
-
-        tvHeaderEmpty = findViewById(R.id.tvHeaderEmpty);
-        tvHeaderA = findViewById(R.id.tvHeaderA);
-        tvHeaderB = findViewById(R.id.tvHeaderB);
-        tvHeaderC = findViewById(R.id.tvHeaderC);
-        tvHeaderD = findViewById(R.id.tvHeaderD);
-        tvHeaderE = findViewById(R.id.tvHeaderE);
+        tableHeaderLayout = findViewById(R.id.tableHeaderLayout);
 
         generateEmptyTable();
 
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         adapter = new TableAdapter(dataList, (rowIndex, colIndex) -> {
-            // ФИКСАЦИЯ ИЗМЕНЕНИЙ: Перед переключением на новую ячейку сохраняем текст старой!
             applyCurrentCellChanges();
 
             selectedRowIndex = rowIndex;
             selectedColIndex = colIndex;
-            char colLetter = (char) ('A' + colIndex);
+            
+            // Вычисляем буквенное имя колонки (A, B... Z, AA...)
+            String colLetter = getColumnLetter(colIndex);
             excelEditText.setHint("Ячейка " + colLetter + (rowIndex + 1));
             
-            String currentText = dataList.get(rowIndex).columns[colIndex];
+            RowData row = dataList.get(rowIndex);
+            // Если кликнули в расширенную область ячейки, которой еще нет в списке, расширяем строку
+            while (row.columns.size() <= colIndex) {
+                row.columns.add("");
+            }
+            
+            String currentText = row.columns.get(colIndex);
             excelEditText.setText(currentText);
             excelEditText.requestFocus();
             if (excelEditText.getText().length() > 0) {
@@ -104,20 +109,20 @@ public class MainActivity extends AppCompatActivity {
         });
         recyclerView.setAdapter(adapter);
 
-        // ОБРАБОТКА СТАБИЛЬНОГО МАСШТАБИРОВАНИЯ КНОПКАМИ
+        // ОБРАБОТКА ПРОПОРЦИОНАЛЬНОГО ЗУМА С ПЕРЕРИСОВКОЙ ДИНАМИЧЕСКОЙ ШАПКИ
         btnZoomIn.setOnClickListener(v -> {
-            if (currentScale < 2.2f) {
+            if (currentScale < 2.5f) {
                 currentScale += 0.15f;
-                adapter.setScaleFactor(currentScale);
-                updateHeaderScale();
+                adapter.setScaleAndColumns(currentScale, maxColumnsInFile);
+                rebuildTableHeader();
             }
         });
 
         btnZoomOut.setOnClickListener(v -> {
-            if (currentScale > 0.6f) {
+            if (currentScale > 0.5f) {
                 currentScale -= 0.15f;
-                adapter.setScaleFactor(currentScale);
-                updateHeaderScale();
+                adapter.setScaleAndColumns(currentScale, maxColumnsInFile);
+                rebuildTableHeader();
             }
         });
 
@@ -142,34 +147,64 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void updateHeaderScale() {
+    // Динамическая генерация букв колонок (A, B, C... Z, AA, AB...) в зависимости от их реального количества
+    private void rebuildTableHeader() {
+        tableHeaderLayout.removeAllViews();
         float density = getResources().getDisplayMetrics().density;
-        android.view.ViewGroup.LayoutParams p = tvHeaderEmpty.getLayoutParams();
-        p.width = (int) (40 * density * currentScale);
-        tvHeaderEmpty.setLayoutParams(p);
+        
+        int rowNumWidth = (int) (50 * density * currentScale);
+        int cellWidth = (int) (100 * density * currentScale);
+        int cellHeight = (int) (30 * density * currentScale);
 
-        float textSize = 14 * currentScale;
-        tvHeaderA.setTextSize(textSize);
-        tvHeaderB.setTextSize(textSize);
-        tvHeaderC.setTextSize(textSize);
-        tvHeaderD.setTextSize(textSize);
-        tvHeaderE.setTextSize(textSize);
+        // Пустой левый угол над номерами строк
+        TextView tvEmpty = new TextView(this);
+        tvEmpty.setLayoutParams(new LinearLayout.LayoutParams(rowNumWidth, cellHeight));
+        tvEmpty.setBackgroundColor(android.graphics.Color.parseColor("#C0C0C0"));
+        tableHeaderLayout.addView(tvEmpty);
+
+        // Генерируем заголовки для всех колонок
+        for (int i = 0; i < maxColumnsInFile; i++) {
+            TextView tvLetter = new TextView(this);
+            tvLetter.setLayoutParams(new LinearLayout.LayoutParams(cellWidth, cellHeight));
+            tvLetter.setText(getColumnLetter(i));
+            tvLetter.setGravity(Gravity.CENTER);
+            tvLetter.setTextStyle(android.graphics.Typeface.BOLD);
+            tvLetter.setTextColor(android.graphics.Color.BLACK);
+            tvLetter.setTextSize(14 * currentScale);
+            tvLetter.setBackgroundResource(R.drawable.grid_cell_border);
+            tableHeaderLayout.addView(tvLetter);
+        }
+    }
+
+    private String getColumnLetter(int colIndex) {
+        StringBuilder colLetter = new StringBuilder();
+        while (colIndex >= 0) {
+            colLetter.insert(0, (char) ('A' + (colIndex % 26)));
+            colIndex = (colIndex / 26) - 1;
+        }
+        return colLetter.toString();
     }
 
     private void generateEmptyTable() {
         dataList.clear();
+        maxColumnsInFile = 5;
         for (int i = 0; i < 50; i++) {
-            dataList.add(new RowData(i));
+            dataList.add(new RowData(i, maxColumnsInFile));
         }
         deleteShadowCopy();
         currentFileUri = null;
         isXlsxFormat = true;
         saveButton.setText("Сохранить как...");
+        rebuildTableHeader();
     }
 
     private void applyCurrentCellChanges() {
         if (selectedRowIndex != -1 && selectedColIndex != -1) {
-            dataList.get(selectedRowIndex).columns[selectedColIndex] = excelEditText.getText().toString();
+            RowData row = dataList.get(selectedRowIndex);
+            while (row.columns.size() <= selectedColIndex) {
+                row.columns.add("");
+            }
+            row.columns.set(selectedColIndex, excelEditText.getText().toString());
             adapter.notifyItemChanged(selectedRowIndex);
         }
     }
@@ -216,13 +251,14 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // НАДЕЖНОЕ СОХРАНЕНИЕ: Защищает стили, цвет, шрифты и структуру Excel от разрушения
+    // АБСОЛЮТНО БЕЗОПАСНОЕ ТОЧЕЧНОЕ СОХРАНЕНИЕ ТЕКСТА БЕЗ РАЗРУШЕНИЯ СТРУКТУРЫ EXCEL
     private void saveExcelWithShadowCopy(Uri uri) {
         File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
         Workbook workbook = null;
 
         try {
             if (shadowFile.exists() && shadowFile.length() > 0) {
+                // Загружаем оригинальный документ со ВСЕМИ стилями, объединениями и скрытыми листами
                 try (FileInputStream fis = new FileInputStream(shadowFile)) {
                     workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
                 }
@@ -232,32 +268,29 @@ public class MainActivity extends AppCompatActivity {
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
 
-            // Заменяем данные, СОХРАНЯЯ оригинальные стили ячеек (границы, цвета, шрифты)
+            // Заменяем ИСКЛЮЧИТЕЛЬНО текстовые значения отредактированных ячеек. 
+            // Стили ячеек (cell.getCellStyle()), размеры колонок, цвет и шрифты POI НЕ ТРОГАЕТ!
             for (int i = 0; i < dataList.size(); i++) {
                 RowData rowData = dataList.get(i);
                 Row row = sheet.getRow(i);
                 if (row == null) row = sheet.createRow(i);
                 
-                for (int j = 0; j < 5; j++) {
+                for (int j = 0; j < rowData.columns.size(); j++) {
                     Cell cell = row.getCell(j);
                     if (cell == null) {
                         cell = row.createCell(j);
                     }
-                    
-                    // БЕЗОПАСНОСТЬ СТИЛЕЙ: Сохраняем оригинальный CellStyle ячейки, если он там был задан
-                    CellStyle originalStyle = cell.getCellStyle();
-                    cell.setCellValue(rowData.columns[j]);
-                    if (originalStyle != null) {
-                        cell.setCellStyle(originalStyle); 
-                    }
+                    // Перезаписываем исключительно текстовое поле, сохраняя всю метаинформацию вокруг ячейки
+                    cell.setCellValue(rowData.columns.get(j));
                 }
             }
 
+            // Перезаписываем наш теневой клон
             try (FileOutputStream fos = new FileOutputStream(shadowFile)) {
                 workbook.write(fos);
             }
 
-            // Перенос бинарного файла напрямую в документ Android без урезания структуры
+            // Отправляем бинарный монолитный поток в целевой файл Android (Перезапись)
             try (InputStream is = new FileInputStream(shadowFile);
                  OutputStream os = getContentResolver().openOutputStream(uri, "rwt")) {
                 if (os != null) {
@@ -270,7 +303,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            Toast.makeText(this, "Файл успешно сохранен!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Документ успешно обновлен!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
@@ -288,6 +321,7 @@ public class MainActivity extends AppCompatActivity {
         Workbook workbook = null;
 
         try {
+            // Клонируем исходный Excel файл во внутренний изолированный буфер shadow_copy.bin
             try (InputStream is = getContentResolver().openInputStream(uri);
                  FileOutputStream fos = new FileOutputStream(shadowFile)) {
                 if (is == null) return;
@@ -306,19 +340,30 @@ public class MainActivity extends AppCompatActivity {
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
             dataList.clear();
 
+            // Вычисляем реальное максимальное количество колонок в этом файле Excel
+            int maxColsFound = 5;
             int maxRows = Math.max(50, sheet.getLastRowNum() + 1);
+            
             for (int i = 0; i < maxRows; i++) {
                 Row row = sheet.getRow(i);
-                RowData rowData = new RowData(i);
+                if (row != null && row.getLastCellNum() > maxColsFound) {
+                    maxColsFound = row.getLastCellNum();
+                }
+            }
+            maxColumnsInFile = maxColsFound;
+
+            // Считываем все ячейки
+            for (int i = 0; i < maxRows; i++) {
+                Row row = sheet.getRow(i);
+                RowData rowData = new RowData(i, maxColumnsInFile);
                 if (row != null) {
-                    // Читаем только первые 5 колонок для интерфейса нашего MiniExcel
-                    for (int j = 0; j < 5; j++) {
+                    for (int j = 0; j < maxColumnsInFile; j++) {
                         Cell cell = row.getCell(j);
                         if (cell != null) {
                             switch (cell.getCellType()) {
-                                case NUMERIC: rowData.columns[j] = String.valueOf(cell.getNumericCellValue()); break;
-                                case FORMULA: rowData.columns[j] = cell.getCellFormula(); break;
-                                default: rowData.columns[j] = cell.toString(); break;
+                                case NUMERIC: rowData.columns.set(j, String.valueOf(cell.getNumericCellValue())); break;
+                                case FORMULA: rowData.columns.set(j, cell.getCellFormula()); break;
+                                default: rowData.columns.set(j, cell.toString()); break;
                             }
                         }
                     }
@@ -326,15 +371,17 @@ public class MainActivity extends AppCompatActivity {
                 dataList.add(rowData);
             }
 
-            adapter.notifyDataSetChanged();
-            Toast.makeText(this, "Файл успешно открыт!", Toast.LENGTH_SHORT).show();
+            // Перестраиваем шапку под структуру открытого файла и применяем масштаб
+            rebuildTableHeader();
+            adapter.setScaleAndColumns(currentScale, maxColumnsInFile);
+            
+            Toast.makeText(this, "Файл успешно импортирован!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
             e.printStackTrace();
             generateEmptyTable();
-            adapter.notifyDataSetChanged();
-            Toast.makeText(this, "Ошибка чтения: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка импорта: " + e.getMessage(), Toast.LENGTH_LONG).show();
         } finally {
             if (workbook != null) {
                 try { workbook.close(); } catch (Exception ignored) {}
