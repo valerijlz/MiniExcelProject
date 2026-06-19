@@ -46,12 +46,13 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.0f);
             
             textView.setLayoutParams(params);
-            textView.setText(rowData.columns[i]); // Ячейка будет пустой, если там нет сохраненного текста
+            textView.setText(rowData.columns[i]); 
             textView.setPadding(12, 24, 12, 24);
             textView.setGravity(Gravity.CENTER);
             textView.setTextSize(14);
-            // Рисуем легкую рамку вокруг ячейки для сходства с таблицей Excel
-            textView.setBackgroundResource(android.R.drawable.dialog_holo_light_frame);
+            
+            // Устанавливаем нашу кастомную тонкую светло-серую сетку Excel
+            textView.setBackgroundResource(R.drawable.grid_cell_border);
             textView.setSingleLine(true);
 
             textView.setOnClickListener(v -> cellClickListener.onCellClick(rowData.rowIndex, colIdx));
