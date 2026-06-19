@@ -49,7 +49,7 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
             textView.setText(rowData.columns[i]);
             textView.setPadding(12, 16, 12, 16);
             textView.setGravity(Gravity.CENTER);
-            textView.setTextSize(14sp);
+            textView.setTextSize(14);
             textView.setBackgroundResource(android.R.drawable.edit_text); // рамка ячейки
             textView.setSingleLine(true);
 
