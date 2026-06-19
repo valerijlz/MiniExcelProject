@@ -8,18 +8,20 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
+import com.example.miniexcel.R;
+import com.example.miniexcel.MainActivity.RowData; // Явный импорт структуры данных
 import java.util.List;
 
 public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolder> {
 
-    private final List<MainActivity.RowData> dataList;
+    private final List<RowData> dataList;
     private final OnCellClickListener cellClickListener;
 
     public interface OnCellClickListener {
         void onCellClick(int rowIndex, int colIndex);
     }
 
-    public TableAdapter(List<MainActivity.RowData> dataList, OnCellClickListener cellClickListener) {
+    public TableAdapter(List<RowData> dataList, OnCellClickListener cellClickListener) {
         this.dataList = dataList;
         this.cellClickListener = cellClickListener;
     }
@@ -33,27 +35,24 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
 
     @Override
     public void onBindViewHolder(@NonNull RowViewHolder holder, int position) {
-        MainActivity.RowData rowData = dataList.get(position);
+        RowData rowData = dataList.get(position);
         holder.tvRowNumber.setText(String.valueOf(rowData.rowIndex + 1));
         
         holder.cellContainer.removeAllViews();
         
-        // Отображаем первые 5 колонок для минималистичного интерфейса
         for (int i = 0; i < 5; i++) {
             final int colIdx = i;
             TextView textView = new TextView(holder.itemView.getContext());
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
             
-            // Стилизуем под ячейку таблицы
             textView.setLayoutParams(params);
             textView.setText(rowData.columns[i]);
             textView.setPadding(12, 16, 12, 16);
             textView.setGravity(Gravity.CENTER);
-            textView.setTextSize(14);
-            textView.setBackgroundResource(android.R.drawable.edit_text); // рамка ячейки
+            textView.setTextSize(14); // Число без 'sp'
+            textView.setBackgroundResource(android.R.drawable.edit_text);
             textView.setSingleLine(true);
 
-            // Обработка клика по ячейке для редактирования
             textView.setOnClickListener(v -> cellClickListener.onCellClick(rowData.rowIndex, colIdx));
             
             holder.cellContainer.addView(textView);
@@ -66,8 +65,8 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
     }
 
     public static class RowViewHolder extends RecyclerView.ViewHolder {
-        TextView tvRowNumber;
-        LinearLayout cellContainer;
+        public TextView tvRowNumber;
+        public LinearLayout cellContainer;
 
         public RowViewHolder(@NonNull View itemView) {
             super(itemView);
