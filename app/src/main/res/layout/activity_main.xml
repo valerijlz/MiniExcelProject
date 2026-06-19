@@ -37,12 +37,14 @@
             android:text="Открыть файл" />
     </LinearLayout>
 
-    <com.example.miniexcel.ZoomLayout
+    <LinearLayout
+        android:id="@+id/tableContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical">
 
         <LinearLayout
+            android:id="@+id/tableHeaderLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -51,11 +53,13 @@
             android:paddingBottom="4dp">
 
             <TextView
+                android:id="@+id/tvHeaderEmpty"
                 android:layout_width="40dp"
                 android:layout_height="wrap_content"
                 android:text=""
                 android:gravity="center" />
             <TextView
+                android:id="@+id/tvHeaderA"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -63,6 +67,7 @@
                 android:textStyle="bold"
                 android:gravity="center" />
             <TextView
+                android:id="@+id/tvHeaderB"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -70,6 +75,7 @@
                 android:textStyle="bold"
                 android:gravity="center" />
             <TextView
+                android:id="@+id/tvHeaderC"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -77,6 +83,7 @@
                 android:textStyle="bold"
                 android:gravity="center" />
             <TextView
+                android:id="@+id/tvHeaderD"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -84,6 +91,7 @@
                 android:textStyle="bold"
                 android:gravity="center" />
             <TextView
+                android:id="@+id/tvHeaderE"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -97,6 +105,6 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
-    </com.example.miniexcel.ZoomLayout>
+    </LinearLayout>
 
 </LinearLayout>
