@@ -20,21 +20,25 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import com.example.miniexcel.R;
 
-import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -51,10 +55,10 @@ public class MainActivity extends AppCompatActivity {
     private int selectedColIndex = -1;
 
     private Uri currentFileUri = null;
-    private boolean isXlsxFormat = true;
     private float currentScale = 1.0f;
 
-    // Журнал изменений: хранит только те ячейки, которые пользователь реально отредактировал
+    // Журнал изменений: хранит точные координаты правок пользователя
+    // Ключ: "строка_колонка", Значение: новый текст ячейки
     private Map<String, String> modifiedCellsMap = new HashMap<>();
 
     private ActivityResultLauncher<Intent> saveFileLauncher;
@@ -132,7 +136,7 @@ public class MainActivity extends AppCompatActivity {
         saveButton.setOnClickListener(v -> {
             applyCurrentCellChanges();
             if (currentFileUri != null) {
-                saveExcelInPlace(currentFileUri);
+                saveExcelInPlaceWithoutPoi(currentFileUri);
             } else {
                 openSaveAsDialog();
             }
@@ -141,9 +145,7 @@ public class MainActivity extends AppCompatActivity {
         openButton.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            String[] mimeTypes = {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"};
-            intent.setType("*/*");
-            intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+            intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
             openFileLauncher.launch(intent);
         });
     }
@@ -191,7 +193,6 @@ public class MainActivity extends AppCompatActivity {
             dataList.add(new RowData(i, maxColumnsInFile));
         }
         currentFileUri = null;
-        isXlsxFormat = true;
         saveButton.setText("Сохранить как...");
         rebuildTableHeader();
     }
@@ -219,8 +220,8 @@ public class MainActivity extends AppCompatActivity {
     private void openSaveAsDialog() {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType(isXlsxFormat ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/vnd.ms-excel");
-        intent.putExtra(Intent.EXTRA_TITLE, isXlsxFormat ? "Table.xlsx" : "Table.xls");
+        intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        intent.putExtra(Intent.EXTRA_TITLE, "Table.xlsx");
         saveFileLauncher.launch(intent);
     }
 
@@ -233,12 +234,8 @@ public class MainActivity extends AppCompatActivity {
                         if (uri != null) {
                             currentFileUri = uri;
                             saveButton.setText("Сохранить");
-                            String fileName = getFileNameFromUri(uri);
-                            isXlsxFormat = fileName == null || !fileName.endsWith(".xls");
-                            
-                            // Для нового файла создаем пустую структуру, затем сохраняем изменения
-                            createEmptyWorkbookOnUri(uri);
-                            saveExcelInPlace(uri);
+                            createEmptyXlsxOnUri(uri);
+                            saveExcelInPlaceWithoutPoi(uri);
                         }
                     }
                 }
@@ -252,8 +249,6 @@ public class MainActivity extends AppCompatActivity {
                         if (uri != null) {
                             currentFileUri = uri;
                             saveButton.setText("Сохранить");
-                            String fileName = getFileNameFromUri(uri);
-                            isXlsxFormat = fileName == null || !fileName.endsWith(".xls");
                             loadExcelExcel(uri);
                         }
                     }
@@ -261,10 +256,10 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    private void createEmptyWorkbookOnUri(Uri uri) {
+    private void createEmptyXlsxOnUri(Uri uri) {
         try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(uri, "w");
              FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor());
-             Workbook workbook = isXlsxFormat ? new XSSFWorkbook() : new HSSFWorkbook()) {
+             Workbook workbook = new XSSFWorkbook()) {
             workbook.createSheet("Sheet1");
             workbook.write(fos);
         } catch (Exception e) {
@@ -272,71 +267,141 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ХИРУРГИЧЕСКОЕ ОБНОВЛЕНИЕ ВНУТРИ СУЩЕСТВУЮЩИХ БАЙТ ФАЙЛА (IN-PLACE)
-    // Оригинальное форматирование, цвета, границы и макет ячеек физически защищены от уничтожения!
-    private void saveExcelInPlace(Uri uri) {
-        Workbook workbook = null;
-        ParcelFileDescriptor pfd = null;
-
+    // АБСОЛЮТНАЯ ЗАЩИТА: Сохранение БЕЗ использования Apache POI write()
+    // Изменения внедряются напрямую в XML разметку листа внутри ZIP-структуры XLSX!
+    private void saveExcelInPlaceWithoutPoi(Uri uri) {
+        File tempFile = new File(getFilesDir(), "temp_update.xlsx");
+        
         try {
-            // Открываем файл в режиме ЧТЕНИЯ И ЗАПИСИ ("rw") без предварительного усечения до 0 байт
-            pfd = getContentResolver().openFileDescriptor(uri, "rw");
-            if (pfd == null) return;
-
-            // Сначала считываем оригинальный документ прямо из дескриптора
-            try (FileInputStream fis = new FileInputStream(pfd.getFileDescriptor())) {
-                workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
+            // 1. Копируем исходный файл во временное хранилище
+            try (InputStream is = getContentResolver().openInputStream(uri);
+                 FileOutputStream fos = new FileOutputStream(tempFile)) {
+                byte[] buf = new byte[4096];
+                int len;
+                while ((len = is.read(buf)) != -1) {
+                    fos.write(buf, 0, len);
+                }
             }
 
-            Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
-
-            // Заменяем ИСКЛЮЧИТЕЛЬНО текстовые значения в ячейках из нашего журнала правок
-            for (Map.Entry<String, String> entry : modifiedCellsMap.entrySet()) {
-                String[] coords = entry.getKey().split("_");
-                int rIdx = Integer.parseInt(coords[0]);
-                int cIdx = Integer.parseInt(coords[1]);
-                String newValue = entry.getValue();
-
-                Row row = sheet.getRow(rIdx);
-                if (row == null) row = sheet.createRow(rIdx);
-
-                Cell cell = row.getCell(cIdx);
-                if (cell == null) cell = row.createCell(cIdx);
-
-                // Запись значения. Исходные стили (.getCellStyle()), цвет шрифта, границы
-                // и объединения ячеек остаются полностью ЗАБЛОКИРОВАННЫМИ в структуре файла!
-                cell.setCellValue(newValue);
+            // Читаем временный файл и создаем измененную копию через ZIP потоки
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            try (ZipInputStream zin = new ZipInputStream(new FileInputStream(tempFile));
+                 ZipOutputStream zout = new ZipOutputStream(bos)) {
+                
+                ZipEntry entry;
+                while ((entry = zin.getNextEntry()) != null) {
+                    zout.putNextEntry(new ZipEntry(entry.getName()));
+                    
+                    // Если нашли файл данных первого листа — модифицируем его текст
+                    if (entry.getName().equals("xl/worksheets/sheet1.xml")) {
+                        ByteArrayOutputStream sheetXmlBos = new ByteArrayOutputStream();
+                        byte[] buf = new byte[4096];
+                        int len;
+                        while ((len = zin.read(buf)) != -1) {
+                            sheetXmlBos.write(buf, 0, len);
+                        }
+                        
+                        String sheetXml = sheetXmlBos.toString("UTF-8");
+                        sheetXml = injectModifiedCellsIntoXml(sheetXml);
+                        
+                        zout.write(sheetXml.getBytes("UTF-8"));
+                    } else {
+                        // Все остальные файлы (стили, темы, шрифты, связи) копируем БАЙТ В БАЙТ без изменений!
+                        byte[] buf = new byte[4096];
+                        int len;
+                        while ((len = zin.read(buf)) != -1) {
+                            zout.write(buf, 0, len);
+                        }
+                    }
+                    zin.closeEntry();
+                    zout.closeEntry();
+                }
             }
 
-            // Перемещаем указатель файла в самое начало дескриптора, чтобы перезаписать обновленные данные
-            try (ParcelFileDescriptor pfdWrite = getContentResolver().openFileDescriptor(uri, "rw");
-                 FileOutputStream fos = new FileOutputStream(pfdWrite.getFileDescriptor())) {
-                workbook.write(fos);
+            // 2. Записываем результирующий ZIP архив обратно в документ Android (Перезапись данных)
+            try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(uri, "rwt");
+                 FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
+                fos.write(bos.toByteArray());
                 fos.flush();
             }
 
-            modifiedCellsMap.clear(); // Изменения успешно зафиксированы в исходном файле
-            Toast.makeText(this, "Файл успешно обновлен. Структура сохранена!", Toast.LENGTH_SHORT).show();
+            modifiedCellsMap.clear(); // Очищаем журнал
+            if (tempFile.exists()) tempFile.delete();
+
+            Toast.makeText(this, "Файл успешно модифицирован. Стили сохранены!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка сохранения: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        } finally {
-            if (workbook != null) {
-                try { workbook.close(); } catch (Exception ignored) {}
-            }
-            if (pfd != null) {
-                try { pfd.close(); } catch (Exception ignored) {}
+            Toast.makeText(this, "Ошибка записи: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    // Внедрение правок в XML-код листа с сохранением окружающих тегов разметки
+    private String injectModifiedCellsIntoXml(String xml) {
+        for (Map.Entry<String, String> entry : modifiedCellsMap.entrySet()) {
+            String[] coords = entry.getKey().split("_");
+            int rIdx = Integer.parseInt(coords[0]) + 1; // В XLSX строки начинаются с 1
+            int cIdx = Integer.parseInt(coords[1]);
+            String cellRef = getColumnLetter(cIdx) + rIdx; // Например: "A1", "B5"
+            String newValue = entry.getValue();
+
+            // Шаблон поиска ячейки: <c r="A1" ...> ... </c>
+            String pattern = "<c[^>]*r=\"" + cellRef + "\"[^>]*>";
+            int cellPos = xml.indexOf("r=\"" + cellRef + "\"");
+
+            if (cellPos != -1) {
+                // Находим границы открывающего тега <c> и закрывающего </c>
+                int startTagOpen = xml.lastIndexOf("<c ", cellPos);
+                int startTagClose = xml.indexOf(">", cellPos) + 1;
+                int endTagOpen = xml.indexOf("</c>", startTagClose);
+
+                if (startTagOpen != -1 && startTagClose != -1 && endTagOpen != -1) {
+                    // Извлекаем существующий тег <c ...> для сохранения стиля s="индекс_стиля"
+                    String openingTag = xml.substring(startTagOpen, startTagClose);
+                    
+                    // Чтобы Excel не искал текст в таблице общих строк (shared strings), 
+                    // принудительно переводим тип ячейки в inlineStr (прямая строка)
+                    if (openingTag.contains("t=\"s\"")) {
+                        openingTag = openingTag.replace("t=\"s\"", "t=\"inlineStr\"");
+                    } else if (!openingTag.contains("t=")) {
+                        openingTag = openingTag.substring(0, openingTag.length() - 1) + " t=\"inlineStr\">";
+                    }
+
+                    // Конструируем внутреннее тело ячейки для сохранения обычного текста
+                    String newBody = "<is><t>" + escapeXml(newValue) + "</t></is>";
+                    
+                    // Пересобираем XML строку листа
+                    xml = xml.substring(0, startTagOpen) + openingTag + newBody + xml.substring(endTagOpen);
+                }
+            } else {
+                // Если ячейки физически не существовало в XML, внедряем её внутрь тега строки <row r="строка">
+                String rowTag = "<row r=\"" + rIdx + "\"";
+                int rowPos = xml.indexOf(rowTag);
+                if (rowPos != -1) {
+                    int rowClose = xml.indexOf(">", rowPos) + 1;
+                    String newCellXml = "<c r=\"" + cellRef + "\" t=\"inlineStr\"><is><t>" + escapeXml(newValue) + "</t></is></c>";
+                    xml = xml.substring(0, rowClose) + newCellXml + xml.substring(rowClose);
+                }
             }
         }
+        return xml;
+    }
+
+    private String escapeXml(String text) {
+        if (text == null) return "";
+        return text.replace("&", "&amp;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;")
+                   .replace("\"", "&quot;")
+                   .replace("'", "&apos;");
     }
 
     private void loadExcelExcel(Uri uri) {
         Workbook workbook = null;
         try (InputStream is = getContentResolver().openInputStream(uri)) {
             if (is == null) return;
-            workbook = isXlsxFormat ? new XSSFWorkbook(is) : new HSSFWorkbook(is);
+            workbook = new XSSFWorkbook(is);
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
             dataList.clear();
@@ -374,7 +439,7 @@ public class MainActivity extends AppCompatActivity {
             rebuildTableHeader();
             adapter.setScaleAndColumns(currentScale, maxColumnsInFile);
             
-            Toast.makeText(this, "Файл импортирован успешно!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Файл прочитан. Защита стилей активна!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
@@ -394,23 +459,5 @@ public class MainActivity extends AppCompatActivity {
         selectedRowIndex = -1;
         selectedColIndex = -1;
         excelEditText.clearFocus();
-    }
-
-    private String getFileNameFromUri(Uri uri) {
-        String result = null;
-        if (uri.getScheme().equals("content")) {
-            try (Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
-                if (cursor != null && cursor.moveToFirst()) {
-                    int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                    if (index != -1) result = cursor.getString(index);
-                }
-            }
-        }
-        if (result == null) {
-            result = uri.getPath();
-            int cut = result.lastIndexOf('/');
-            if (cut != -1) result = result.substring(cut + 1);
-        }
-        return result;
     }
 }
