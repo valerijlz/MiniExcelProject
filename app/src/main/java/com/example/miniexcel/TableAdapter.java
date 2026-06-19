@@ -17,6 +17,7 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
     private final List<RowData> dataList;
     private final OnCellClickListener cellClickListener;
     private float scaleFactor = 1.0f;
+    private int maxColumnsCount = 5; // По умолчанию отображаем 5 колонок, но расширяем динамически при открытии Excel
 
     public interface OnCellClickListener {
         void onCellClick(int rowIndex, int colIndex);
@@ -27,8 +28,9 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
         this.cellClickListener = cellClickListener;
     }
 
-    public void setScaleFactor(float scaleFactor) {
+    public void setScaleAndColumns(float scaleFactor, int columnsCount) {
         this.scaleFactor = scaleFactor;
+        this.maxColumnsCount = Math.max(5, columnsCount);
         notifyDataSetChanged();
     }
 
@@ -42,26 +44,38 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
     @Override
     public void onBindViewHolder(@NonNull RowViewHolder holder, int position) {
         RowData rowData = dataList.get(position);
-        
+        float density = holder.itemView.getContext().getResources().getDisplayMetrics().density;
+
+        // Рассчитываем пропорциональные размеры
+        int rowNumWidth = (int) (50 * density * scaleFactor);
+        int cellWidth = (int) (100 * density * scaleFactor);
+        int cellHeight = (int) (40 * density * scaleFactor);
+
+        // Масштабируем боковой номер строки
         holder.tvRowNumber.setText(String.valueOf(rowData.rowIndex + 1));
         holder.tvRowNumber.setTextSize(14 * scaleFactor);
         ViewGroup.LayoutParams rowNumParams = holder.tvRowNumber.getLayoutParams();
-        rowNumParams.width = (int) (40 * holder.itemView.getContext().getResources().getDisplayMetrics().density * scaleFactor);
+        rowNumParams.width = rowNumWidth;
+        rowNumParams.height = cellHeight;
         holder.tvRowNumber.setLayoutParams(rowNumParams);
 
         holder.cellContainer.removeAllViews();
         
-        for (int i = 0; i < 5; i++) {
+        // Рендерим ровно столько колонок, сколько реально есть в документе Excel
+        for (int i = 0; i < maxColumnsCount; i++) {
             final int colIdx = i;
             TextView textView = new TextView(holder.itemView.getContext());
-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.0f);
+            
+            // СТРОГИЕ ПРОПОРЦИИ КВАДРАТНОЙ ФОРМЫ ЯЧЕЙКИ С УЧЕТОМ ЗУМА
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(cellWidth, cellHeight);
             textView.setLayoutParams(params);
             
-            textView.setText(rowData.columns[i]); 
-            
-            int paddingVertical = (int) (14 * scaleFactor);
-            int paddingHorizontal = (int) (6 * scaleFactor);
-            textView.setPadding(paddingHorizontal, paddingVertical, paddingHorizontal, paddingVertical);
+            // Проверяем, есть ли данные для текущего индекса столбца
+            if (i < rowData.columns.size()) {
+                textView.setText(rowData.columns.get(i));
+            } else {
+                textView.setText("");
+            }
             
             textView.setGravity(Gravity.CENTER);
             textView.setTextSize(14 * scaleFactor);
