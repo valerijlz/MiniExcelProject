@@ -6,11 +6,8 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
-import android.view.ScaleGestureDetector;
-import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
@@ -22,6 +19,7 @@ import com.example.miniexcel.R;
 
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -38,8 +36,7 @@ import java.util.List;
 public class MainActivity extends AppCompatActivity {
 
     private EditText excelEditText;
-    private Button saveButton;
-    private Button openButton;
+    private Button saveButton, openButton, btnZoomIn, btnZoomOut;
     private RecyclerView recyclerView;
     private TableAdapter adapter;
     private List<RowData> dataList = new ArrayList<>();
@@ -49,12 +46,9 @@ public class MainActivity extends AppCompatActivity {
 
     private Uri currentFileUri = null;
     private boolean isXlsxFormat = true;
-
-    // Ссылки на элементы шапки для синхронного изменения размера букв при зуме
-    private TextView tvHeaderEmpty, tvHeaderA, tvHeaderB, tvHeaderC, tvHeaderD, tvHeaderE;
-    private ScaleGestureDetector scaleGestureDetector;
     private float currentScale = 1.0f;
 
+    private TextView tvHeaderEmpty, tvHeaderA, tvHeaderB, tvHeaderC, tvHeaderD, tvHeaderE;
     private ActivityResultLauncher<Intent> saveFileLauncher;
     private ActivityResultLauncher<Intent> openFileLauncher;
 
@@ -78,9 +72,10 @@ public class MainActivity extends AppCompatActivity {
         excelEditText = findViewById(R.id.excelEditText);
         saveButton = findViewById(R.id.saveButton);
         openButton = findViewById(R.id.openButton);
+        btnZoomIn = findViewById(R.id.btnZoomIn);
+        btnZoomOut = findViewById(R.id.btnZoomOut);
         recyclerView = findViewById(R.id.recyclerView);
 
-        // Инициализируем элементы шапки
         tvHeaderEmpty = findViewById(R.id.tvHeaderEmpty);
         tvHeaderA = findViewById(R.id.tvHeaderA);
         tvHeaderB = findViewById(R.id.tvHeaderB);
@@ -92,6 +87,9 @@ public class MainActivity extends AppCompatActivity {
 
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         adapter = new TableAdapter(dataList, (rowIndex, colIndex) -> {
+            // ФИКСАЦИЯ ИЗМЕНЕНИЙ: Перед переключением на новую ячейку сохраняем текст старой!
+            applyCurrentCellChanges();
+
             selectedRowIndex = rowIndex;
             selectedColIndex = colIndex;
             char colLetter = (char) ('A' + colIndex);
@@ -106,27 +104,21 @@ public class MainActivity extends AppCompatActivity {
         });
         recyclerView.setAdapter(adapter);
 
-        // НАСТРОЙКА КЛАССИЧЕСКОГО ЗУМА EXCEL ЖЕСТАМИ ПАЛЬЦЕВ
-        scaleGestureDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            @Override
-            public boolean onScale(ScaleGestureDetector detector) {
-                currentScale *= detector.getScaleFactor();
-                currentScale = Math.max(0.6f, Math.min(currentScale, 2.5f)); // Границы зума
-                
-                // 1. Отдаем новый масштаб в адаптер строк (перерисует ячейки на лету)
+        // ОБРАБОТКА СТАБИЛЬНОГО МАСШТАБИРОВАНИЯ КНОПКАМИ
+        btnZoomIn.setOnClickListener(v -> {
+            if (currentScale < 2.2f) {
+                currentScale += 0.15f;
                 adapter.setScaleFactor(currentScale);
-                
-                // 2. Масштабируем элементы верхней шапки (A, B, C...)
                 updateHeaderScale();
-                return true;
             }
         });
 
-        // Привязываем детектор жестов к контейнеру таблицы
-        LinearLayout tableContainer = findViewById(R.id.tableContainer);
-        tableContainer.setOnTouchListener((v, event) -> {
-            scaleGestureDetector.onTouchEvent(event);
-            return false; // Позволяем событиям клика проходить дальше к ячейкам
+        btnZoomOut.setOnClickListener(v -> {
+            if (currentScale > 0.6f) {
+                currentScale -= 0.15f;
+                adapter.setScaleFactor(currentScale);
+                updateHeaderScale();
+            }
         });
 
         initFileLaunchers();
@@ -152,7 +144,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateHeaderScale() {
         float density = getResources().getDisplayMetrics().density;
-        ViewGroup.LayoutParams p = tvHeaderEmpty.getLayoutParams();
+        android.view.ViewGroup.LayoutParams p = tvHeaderEmpty.getLayoutParams();
         p.width = (int) (40 * density * currentScale);
         tvHeaderEmpty.setLayoutParams(p);
 
@@ -224,25 +216,23 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // СТРАТЕГИЯ ТЕНЕВОГО КЛОНИРОВАНИЯ: Полностью сохраняет структуру оригинального файла Excel
+    // НАДЕЖНОЕ СОХРАНЕНИЕ: Защищает стили, цвет, шрифты и структуру Excel от разрушения
     private void saveExcelWithShadowCopy(Uri uri) {
         File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
         Workbook workbook = null;
 
         try {
             if (shadowFile.exists() && shadowFile.length() > 0) {
-                // Если мы работаем с открытым оригинальным файлом, открываем напрямую локальную копию
                 try (FileInputStream fis = new FileInputStream(shadowFile)) {
                     workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
                 }
             } else {
-                // Создание нового файла с нуля
                 workbook = isXlsxFormat ? new XSSFWorkbook() : new HSSFWorkbook();
             }
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
 
-            // Заменяем ТОЛЬКО ТЕКСТ в первых 5 колонках. Стили, объединенные ячейки, размеры и другие листы/колонки POI НЕ ТРОГАЕТ
+            // Заменяем данные, СОХРАНЯЯ оригинальные стили ячеек (границы, цвета, шрифты)
             for (int i = 0; i < dataList.size(); i++) {
                 RowData rowData = dataList.get(i);
                 Row row = sheet.getRow(i);
@@ -250,17 +240,24 @@ public class MainActivity extends AppCompatActivity {
                 
                 for (int j = 0; j < 5; j++) {
                     Cell cell = row.getCell(j);
-                    if (cell == null) cell = row.createCell(j);
+                    if (cell == null) {
+                        cell = row.createCell(j);
+                    }
+                    
+                    // БЕЗОПАСНОСТЬ СТИЛЕЙ: Сохраняем оригинальный CellStyle ячейки, если он там был задан
+                    CellStyle originalStyle = cell.getCellStyle();
                     cell.setCellValue(rowData.columns[j]);
+                    if (originalStyle != null) {
+                        cell.setCellStyle(originalStyle); 
+                    }
                 }
             }
 
-            // Записываем обновленный воркбук обратно в локальный изолированный теневой файл
             try (FileOutputStream fos = new FileOutputStream(shadowFile)) {
                 workbook.write(fos);
             }
 
-            // Копируем этот идеальный локальный файл целиком на место внешнего документа через Android Uri (Атомарная замена)
+            // Перенос бинарного файла напрямую в документ Android без урезания структуры
             try (InputStream is = new FileInputStream(shadowFile);
                  OutputStream os = getContentResolver().openOutputStream(uri, "rwt")) {
                 if (os != null) {
@@ -278,7 +275,7 @@ public class MainActivity extends AppCompatActivity {
 
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка сохранения структуры: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка сохранения: " + e.getMessage(), Toast.LENGTH_LONG).show();
         } finally {
             if (workbook != null) {
                 try { workbook.close(); } catch (Exception ignored) {}
@@ -291,7 +288,6 @@ public class MainActivity extends AppCompatActivity {
         Workbook workbook = null;
 
         try {
-            // Клонируем файл из внешней системы во внутреннюю безопасную память приложения
             try (InputStream is = getContentResolver().openInputStream(uri);
                  FileOutputStream fos = new FileOutputStream(shadowFile)) {
                 if (is == null) return;
@@ -303,7 +299,6 @@ public class MainActivity extends AppCompatActivity {
                 fos.flush();
             }
 
-            // Открываем созданный теневой клон
             try (FileInputStream fis = new FileInputStream(shadowFile)) {
                 workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
             }
@@ -316,6 +311,7 @@ public class MainActivity extends AppCompatActivity {
                 Row row = sheet.getRow(i);
                 RowData rowData = new RowData(i);
                 if (row != null) {
+                    // Читаем только первые 5 колонок для интерфейса нашего MiniExcel
                     for (int j = 0; j < 5; j++) {
                         Cell cell = row.getCell(j);
                         if (cell != null) {
@@ -331,7 +327,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             adapter.notifyDataSetChanged();
-            Toast.makeText(this, "Файл открыт со всеми стилями!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Файл успешно открыт!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
