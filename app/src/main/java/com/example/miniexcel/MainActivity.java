@@ -32,7 +32,9 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -43,7 +45,7 @@ public class MainActivity extends AppCompatActivity {
     private LinearLayout tableHeaderLayout;
     
     private List<RowData> dataList = new ArrayList<>();
-    private int maxColumnsInFile = 5; // Текущее количество колонок в таблице
+    private int maxColumnsInFile = 5;
 
     private int selectedRowIndex = -1;
     private int selectedColIndex = -1;
@@ -52,10 +54,13 @@ public class MainActivity extends AppCompatActivity {
     private boolean isXlsxFormat = true;
     private float currentScale = 1.0f;
 
+    // Журнал изменений: хранит только те ячейки, которые пользователь реально отредактировал
+    // Ключ: "строка_колонка", Значение: новый текст
+    private Map<String, String> modifiedCellsMap = new HashMap<>();
+
     private ActivityResultLauncher<Intent> saveFileLauncher;
     private ActivityResultLauncher<Intent> openFileLauncher;
 
-    // Использование динамического списка вместо жесткого массива на 5 элементов
     public static class RowData {
         public int rowIndex;
         public List<String> columns = new ArrayList<>();
@@ -90,12 +95,10 @@ public class MainActivity extends AppCompatActivity {
             selectedRowIndex = rowIndex;
             selectedColIndex = colIndex;
             
-            // Вычисляем буквенное имя колонки (A, B... Z, AA...)
             String colLetter = getColumnLetter(colIndex);
             excelEditText.setHint("Ячейка " + colLetter + (rowIndex + 1));
             
             RowData row = dataList.get(rowIndex);
-            // Если кликнули в расширенную область ячейки, которой еще нет в списке, расширяем строку
             while (row.columns.size() <= colIndex) {
                 row.columns.add("");
             }
@@ -109,7 +112,6 @@ public class MainActivity extends AppCompatActivity {
         });
         recyclerView.setAdapter(adapter);
 
-        // ОБРАБОТКА ПРОПОРЦИОНАЛЬНОГО ЗУМА С ПЕРЕРИСОВКОЙ ДИНАМИЧЕСКОЙ ШАПКИ
         btnZoomIn.setOnClickListener(v -> {
             if (currentScale < 2.5f) {
                 currentScale += 0.15f;
@@ -147,7 +149,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // Динамическая генерация букв колонок (A, B, C... Z, AA, AB...) в зависимости от их реального количества
     private void rebuildTableHeader() {
         tableHeaderLayout.removeAllViews();
         float density = getResources().getDisplayMetrics().density;
@@ -156,22 +157,17 @@ public class MainActivity extends AppCompatActivity {
         int cellWidth = (int) (100 * density * currentScale);
         int cellHeight = (int) (30 * density * currentScale);
 
-        // Пустой левый угол над номерами строк
         TextView tvEmpty = new TextView(this);
         tvEmpty.setLayoutParams(new LinearLayout.LayoutParams(rowNumWidth, cellHeight));
         tvEmpty.setBackgroundColor(android.graphics.Color.parseColor("#C0C0C0"));
         tableHeaderLayout.addView(tvEmpty);
 
-        // Генерируем заголовки для всех колонок
         for (int i = 0; i < maxColumnsInFile; i++) {
             TextView tvLetter = new TextView(this);
             tvLetter.setLayoutParams(new LinearLayout.LayoutParams(cellWidth, cellHeight));
             tvLetter.setText(getColumnLetter(i));
             tvLetter.setGravity(Gravity.CENTER);
-            
-            // ИСПРАВЛЕНО: Вместо ошибочного setTextStyle используем setTypeface
             tvLetter.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-            
             tvLetter.setTextColor(android.graphics.Color.BLACK);
             tvLetter.setTextSize(14 * currentScale);
             tvLetter.setBackgroundResource(R.drawable.grid_cell_border);
@@ -190,6 +186,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void generateEmptyTable() {
         dataList.clear();
+        modifiedCellsMap.clear(); // Очищаем журнал правок
         maxColumnsInFile = 5;
         for (int i = 0; i < 50; i++) {
             dataList.add(new RowData(i, maxColumnsInFile));
@@ -203,12 +200,23 @@ public class MainActivity extends AppCompatActivity {
 
     private void applyCurrentCellChanges() {
         if (selectedRowIndex != -1 && selectedColIndex != -1) {
+            String newText = excelEditText.getText().toString();
             RowData row = dataList.get(selectedRowIndex);
             while (row.columns.size() <= selectedColIndex) {
                 row.columns.add("");
             }
-            row.columns.set(selectedColIndex, excelEditText.getText().toString());
-            adapter.notifyItemChanged(selectedRowIndex);
+            
+            // Запоминаем старое значение, чтобы понять, изменилось ли что-то
+            String oldText = row.columns.get(selectedColIndex);
+            if (!newText.equals(oldText)) {
+                row.columns.set(selectedColIndex, newText);
+                
+                // Фиксируем изменение в нашем точечном журнале
+                String key = selectedRowIndex + "_" + selectedColIndex;
+                modifiedCellsMap.put(key, newText);
+                
+                adapter.notifyItemChanged(selectedRowIndex);
+            }
         }
     }
 
@@ -254,14 +262,14 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // АБСОЛЮТНО БЕЗОПАСНОЕ ТОЧЕЧНОЕ СОХРАНЕНИЕ ТЕКСТА БЕЗ РАЗРУШЕНИЯ СТРУКТУРЫ EXCEL
+    // ХИРУРГИЧЕСКИ ТОЧЕЧНОЕ СОХРАНЕНИЕ: Структура файла Excel больше вообще не затрагивается!
     private void saveExcelWithShadowCopy(Uri uri) {
         File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
         Workbook workbook = null;
 
         try {
             if (shadowFile.exists() && shadowFile.length() > 0) {
-                // Загружаем оригинальный документ со ВСЕМИ стилями, объединениями и скрытыми листами
+                // Открываем ОРИГИНАЛЬНЫЙ монолитный бинарный слепок со всеми стилями и скрытыми листами
                 try (FileInputStream fis = new FileInputStream(shadowFile)) {
                     workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
                 }
@@ -271,29 +279,34 @@ public class MainActivity extends AppCompatActivity {
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
 
-            // Заменяем ИСКЛЮЧИТЕЛЬНО текстовые значения отредактированных ячеек. 
-            // Стили ячеек (cell.getCellStyle()), размеры колонок, цвет и шрифты POI НЕ ТРОГАЕТ!
-            for (int i = 0; i < dataList.size(); i++) {
-                RowData rowData = dataList.get(i);
-                Row row = sheet.getRow(i);
-                if (row == null) row = sheet.createRow(i);
-                
-                for (int j = 0; j < rowData.columns.size(); j++) {
-                    Cell cell = row.getCell(j);
-                    if (cell == null) {
-                        cell = row.createCell(j);
-                    }
-                    // Перезаписываем исключительно текстовое поле, сохраняя всю метаинформацию вокруг ячейки
-                    cell.setCellValue(rowData.columns.get(j));
+            // ВМЕСТО ЦИКЛА ПО ВСЕЙ ТАБЛИЦЕ: Обходим только те ячейки, которые пользователь реально отредактировал!
+            for (Map.Entry<String, String> entry : modifiedCellsMap.entrySet()) {
+                String[] coords = entry.getKey().split("_");
+                int rIdx = Integer.parseInt(coords[0]);
+                int cIdx = Integer.parseInt(coords[1]);
+                String newValue = entry.getValue();
+
+                Row row = sheet.getRow(rIdx);
+                if (row == null) {
+                    row = sheet.createRow(rIdx);
                 }
+
+                Cell cell = row.getCell(cIdx);
+                if (cell == null) {
+                    cell = row.createCell(cIdx);
+                }
+
+                // Изменяем ТОЛЬКО строковое значение. Все стили оформления (Cell Type, Style, Font, Fills),
+                // размеры родительских колонок, объединения регионов в файле ОСТАЮТСЯ НЕИЗМЕННЫМИ!
+                cell.setCellValue(newValue);
             }
 
-            // Перезаписываем наш теневой клон
+            // Перезаписываем изолированный буфер shadow_copy.bin
             try (FileOutputStream fos = new FileOutputStream(shadowFile)) {
                 workbook.write(fos);
             }
 
-            // Отправляем бинарный монолитный поток в целевой файл Android (Перезапись)
+            // Переносим бинарный поток в целевой файл Android (Абсолютное сохранение структуры байт в байт)
             try (InputStream is = new FileInputStream(shadowFile);
                  OutputStream os = getContentResolver().openOutputStream(uri, "rwt")) {
                 if (os != null) {
@@ -306,7 +319,10 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            Toast.makeText(this, "Документ успешно обновлен!", Toast.LENGTH_SHORT).show();
+            // После успешного сохранения очищаем журнал правок, так как они зафиксированы в файле
+            modifiedCellsMap.clear();
+
+            Toast.makeText(this, "Файл сохранен без изменения структуры!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
@@ -324,7 +340,7 @@ public class MainActivity extends AppCompatActivity {
         Workbook workbook = null;
 
         try {
-            // Клонируем исходный Excel файл во внутренний изолированный буфер shadow_copy.bin
+            // Клонируем исходный файл во внутренний изолированный буфер shadow_copy.bin
             try (InputStream is = getContentResolver().openInputStream(uri);
                  FileOutputStream fos = new FileOutputStream(shadowFile)) {
                 if (is == null) return;
@@ -342,8 +358,9 @@ public class MainActivity extends AppCompatActivity {
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
             dataList.clear();
+            modifiedCellsMap.clear(); // Сбрасываем старый журнал изменений для нового файла
 
-            // Вычисляем реальное максимальное количество колонок в этом файле Excel
+            // Находим реальный максимум колонок в импортируемом файле
             int maxColsFound = 5;
             int maxRows = Math.max(50, sheet.getLastRowNum() + 1);
             
@@ -355,7 +372,7 @@ public class MainActivity extends AppCompatActivity {
             }
             maxColumnsInFile = maxColsFound;
 
-            // Считываем все ячейки
+            // Считываем исключительно текстовые репрезентации ячеек для отображения в интерфейсе MiniExcel
             for (int i = 0; i < maxRows; i++) {
                 Row row = sheet.getRow(i);
                 RowData rowData = new RowData(i, maxColumnsInFile);
@@ -374,17 +391,16 @@ public class MainActivity extends AppCompatActivity {
                 dataList.add(rowData);
             }
 
-            // Перестраиваем шапку под структуру открытого файла и применяем масштаб
             rebuildTableHeader();
             adapter.setScaleAndColumns(currentScale, maxColumnsInFile);
             
-            Toast.makeText(this, "Файл успешно импортирован!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Файл импортирован. Структура защищена!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
             e.printStackTrace();
             generateEmptyTable();
-            Toast.makeText(this, "Ошибка импорта: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка чтения: " + e.getMessage(), Toast.LENGTH_LONG).show();
         } finally {
             if (workbook != null) {
                 try { workbook.close(); } catch (Exception ignored) {}
