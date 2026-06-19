@@ -5,21 +5,24 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-	<EditText
+    <EditText
         android:id="@+id/excelEditText"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:gravity="top"
-        android:hint="Текст из Excel файла будет здесь..."
-        android:background="@null"
-        android:inputType="textMultiLine" />
+        android:layout_height="wrap_content"
+        android:hint="Редактировать ячейку"
+        android:minHeight="48dp" />
 
-	<Button
+    <Button
         android:id="@+id/saveButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Сохранить в Excel (.xlsx)"
-        android:backgroundTint="#217346"
-        android:textColor="@android:color/white" />
+        android:text="Сохранить"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="16dp"/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
 </LinearLayout>
