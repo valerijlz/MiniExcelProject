@@ -16,6 +16,8 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
 
     private final List<RowData> dataList;
     private final OnCellClickListener cellClickListener;
+    // Текущий масштаб таблицы (базовый 1.0)
+    private float scaleFactor = 1.0f;
 
     public interface OnCellClickListener {
         void onCellClick(int rowIndex, int colIndex);
@@ -24,6 +26,12 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
     public TableAdapter(List<RowData> dataList, OnCellClickListener cellClickListener) {
         this.dataList = dataList;
         this.cellClickListener = cellClickListener;
+    }
+
+    // Метод для динамического обновления масштаба ячеек из MainActivity
+    public void setScaleFactor(float scaleFactor) {
+        this.scaleFactor = scaleFactor;
+        notifyDataSetChanged(); // Заставляем перерисовать всю видимую сетку и подгрузить новые скрытые ячейки
     }
 
     @NonNull
@@ -36,22 +44,33 @@ public class TableAdapter extends RecyclerView.Adapter<TableAdapter.RowViewHolde
     @Override
     public void onBindViewHolder(@NonNull RowViewHolder holder, int position) {
         RowData rowData = dataList.get(position);
-        holder.tvRowNumber.setText(String.valueOf(rowData.rowIndex + 1));
         
+        // Динамически масштабируем номер строки
+        holder.tvRowNumber.setText(String.valueOf(rowData.rowIndex + 1));
+        holder.tvRowNumber.setTextSize(12 * scaleFactor);
+        ViewGroup.LayoutParams rowNumParams = holder.tvRowNumber.getLayoutParams();
+        rowNumParams.width = (int) (40 * holder.itemView.getContext().getResources().getDisplayMetrics().density * scaleFactor);
+        holder.tvRowNumber.setLayoutParams(rowNumParams);
+
         holder.cellContainer.removeAllViews();
         
+        // Отрисовка 5 колонок с учетом физического масштабирования ячеек
         for (int i = 0; i < 5; i++) {
             final int colIdx = i;
             TextView textView = new TextView(holder.itemView.getContext());
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.0f);
-            
             textView.setLayoutParams(params);
-            textView.setText(rowData.columns[i]); 
-            textView.setPadding(12, 24, 12, 24);
-            textView.setGravity(Gravity.CENTER);
-            textView.setTextSize(14);
             
-            // Устанавливаем нашу кастомную тонкую светло-серую сетку Excel
+            textView.setText(rowData.columns[i]); 
+            
+            // Физически меняем внутренние отступы (padding) и размер шрифта ячейки на основе зума
+            int paddingVertical = (int) (16 * scaleFactor);
+            int paddingHorizontal = (int) (8 * scaleFactor);
+            textView.setPadding(paddingHorizontal, paddingVertical, paddingHorizontal, paddingVertical);
+            
+            textView.setGravity(Gravity.CENTER);
+            textView.setTextSize(14 * scaleFactor); // Шрифт увеличивается/уменьшается как в Excel
+            
             textView.setBackgroundResource(R.drawable.grid_cell_border);
             textView.setSingleLine(true);
 
