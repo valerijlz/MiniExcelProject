@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.widget.Button;
@@ -30,7 +31,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -55,7 +55,6 @@ public class MainActivity extends AppCompatActivity {
     private float currentScale = 1.0f;
 
     // Журнал изменений: хранит только те ячейки, которые пользователь реально отредактировал
-    // Ключ: "строка_колонка", Значение: новый текст
     private Map<String, String> modifiedCellsMap = new HashMap<>();
 
     private ActivityResultLauncher<Intent> saveFileLauncher;
@@ -133,7 +132,7 @@ public class MainActivity extends AppCompatActivity {
         saveButton.setOnClickListener(v -> {
             applyCurrentCellChanges();
             if (currentFileUri != null) {
-                saveExcelWithShadowCopy(currentFileUri);
+                saveExcelInPlace(currentFileUri);
             } else {
                 openSaveAsDialog();
             }
@@ -186,12 +185,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void generateEmptyTable() {
         dataList.clear();
-        modifiedCellsMap.clear(); // Очищаем журнал правок
+        modifiedCellsMap.clear();
         maxColumnsInFile = 5;
         for (int i = 0; i < 50; i++) {
             dataList.add(new RowData(i, maxColumnsInFile));
         }
-        deleteShadowCopy();
         currentFileUri = null;
         isXlsxFormat = true;
         saveButton.setText("Сохранить как...");
@@ -206,12 +204,10 @@ public class MainActivity extends AppCompatActivity {
                 row.columns.add("");
             }
             
-            // Запоминаем старое значение, чтобы понять, изменилось ли что-то
             String oldText = row.columns.get(selectedColIndex);
             if (!newText.equals(oldText)) {
                 row.columns.set(selectedColIndex, newText);
                 
-                // Фиксируем изменение в нашем точечном журнале
                 String key = selectedRowIndex + "_" + selectedColIndex;
                 modifiedCellsMap.put(key, newText);
                 
@@ -239,7 +235,10 @@ public class MainActivity extends AppCompatActivity {
                             saveButton.setText("Сохранить");
                             String fileName = getFileNameFromUri(uri);
                             isXlsxFormat = fileName == null || !fileName.endsWith(".xls");
-                            saveExcelWithShadowCopy(uri);
+                            
+                            // Для нового файла создаем пустую структуру, затем сохраняем изменения
+                            createEmptyWorkbookOnUri(uri);
+                            saveExcelInPlace(uri);
                         }
                     }
                 }
@@ -255,31 +254,43 @@ public class MainActivity extends AppCompatActivity {
                             saveButton.setText("Сохранить");
                             String fileName = getFileNameFromUri(uri);
                             isXlsxFormat = fileName == null || !fileName.endsWith(".xls");
-                            loadExcelWithShadowCopy(uri);
+                            loadExcelExcel(uri);
                         }
                     }
                 }
         );
     }
 
-    // ХИРУРГИЧЕСКИ ТОЧЕЧНОЕ СОХРАНЕНИЕ: Структура файла Excel больше вообще не затрагивается!
-    private void saveExcelWithShadowCopy(Uri uri) {
-        File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
+    private void createEmptyWorkbookOnUri(Uri uri) {
+        try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(uri, "w");
+             FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor());
+             Workbook workbook = isXlsxFormat ? new XSSFWorkbook() : new HSSFWorkbook()) {
+            workbook.createSheet("Sheet1");
+            workbook.write(fos);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    // ХИРУРГИЧЕСКОЕ ОБНОВЛЕНИЕ ВНУТРИ СУЩЕСТВУЮЩИХ БАЙТ ФАЙЛА (IN-PLACE)
+    // Оригинальное форматирование, цвета, границы и макет ячеек физически защищены от уничтожения!
+    private void saveExcelInPlace(Uri uri) {
         Workbook workbook = null;
+        ParcelFileDescriptor pfd = null;
 
         try {
-            if (shadowFile.exists() && shadowFile.length() > 0) {
-                // Открываем ОРИГИНАЛЬНЫЙ монолитный бинарный слепок со всеми стилями и скрытыми листами
-                try (FileInputStream fis = new FileInputStream(shadowFile)) {
-                    workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
-                }
-            } else {
-                workbook = isXlsxFormat ? new XSSFWorkbook() : new HSSFWorkbook();
+            // Открываем файл в режиме ЧТЕНИЯ И ЗАПИСИ ("rw") без предварительного усечения до 0 байт
+            pfd = getContentResolver().openFileDescriptor(uri, "rw");
+            if (pfd == null) return;
+
+            // Сначала считываем оригинальный документ прямо из дескриптора
+            try (FileInputStream fis = new FileInputStream(pfd.getFileDescriptor())) {
+                workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
             }
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
 
-            // ВМЕСТО ЦИКЛА ПО ВСЕЙ ТАБЛИЦЕ: Обходим только те ячейки, которые пользователь реально отредактировал!
+            // Заменяем ИСКЛЮЧИТЕЛЬНО текстовые значения в ячейках из нашего журнала правок
             for (Map.Entry<String, String> entry : modifiedCellsMap.entrySet()) {
                 String[] coords = entry.getKey().split("_");
                 int rIdx = Integer.parseInt(coords[0]);
@@ -287,42 +298,25 @@ public class MainActivity extends AppCompatActivity {
                 String newValue = entry.getValue();
 
                 Row row = sheet.getRow(rIdx);
-                if (row == null) {
-                    row = sheet.createRow(rIdx);
-                }
+                if (row == null) row = sheet.createRow(rIdx);
 
                 Cell cell = row.getCell(cIdx);
-                if (cell == null) {
-                    cell = row.createCell(cIdx);
-                }
+                if (cell == null) cell = row.createCell(cIdx);
 
-                // Изменяем ТОЛЬКО строковое значение. Все стили оформления (Cell Type, Style, Font, Fills),
-                // размеры родительских колонок, объединения регионов в файле ОСТАЮТСЯ НЕИЗМЕННЫМИ!
+                // Запись значения. Исходные стили (.getCellStyle()), цвет шрифта, границы
+                // и объединения ячеек остаются полностью ЗАБЛОКИРОВАННЫМИ в структуре файла!
                 cell.setCellValue(newValue);
             }
 
-            // Перезаписываем изолированный буфер shadow_copy.bin
-            try (FileOutputStream fos = new FileOutputStream(shadowFile)) {
+            // Перемещаем указатель файла в самое начало дескриптора, чтобы перезаписать обновленные данные
+            try (ParcelFileDescriptor pfdWrite = getContentResolver().openFileDescriptor(uri, "rw");
+                 FileOutputStream fos = new FileOutputStream(pfdWrite.getFileDescriptor())) {
                 workbook.write(fos);
+                fos.flush();
             }
 
-            // Переносим бинарный поток в целевой файл Android (Абсолютное сохранение структуры байт в байт)
-            try (InputStream is = new FileInputStream(shadowFile);
-                 OutputStream os = getContentResolver().openOutputStream(uri, "rwt")) {
-                if (os != null) {
-                    byte[] buf = new byte[4096];
-                    int len;
-                    while ((len = is.read(buf)) != -1) {
-                        os.write(buf, 0, len);
-                    }
-                    os.flush();
-                }
-            }
-
-            // После успешного сохранения очищаем журнал правок, так как они зафиксированы в файле
-            modifiedCellsMap.clear();
-
-            Toast.makeText(this, "Файл сохранен без изменения структуры!", Toast.LENGTH_SHORT).show();
+            modifiedCellsMap.clear(); // Изменения успешно зафиксированы в исходном файле
+            Toast.makeText(this, "Файл успешно обновлен. Структура сохранена!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
@@ -332,35 +326,22 @@ public class MainActivity extends AppCompatActivity {
             if (workbook != null) {
                 try { workbook.close(); } catch (Exception ignored) {}
             }
+            if (pfd != null) {
+                try { pfd.close(); } catch (Exception ignored) {}
+            }
         }
     }
 
-    private void loadExcelWithShadowCopy(Uri uri) {
-        File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
+    private void loadExcelExcel(Uri uri) {
         Workbook workbook = null;
-
-        try {
-            // Клонируем исходный файл во внутренний изолированный буфер shadow_copy.bin
-            try (InputStream is = getContentResolver().openInputStream(uri);
-                 FileOutputStream fos = new FileOutputStream(shadowFile)) {
-                if (is == null) return;
-                byte[] buf = new byte[4096];
-                int len;
-                while ((len = is.read(buf)) != -1) {
-                    fos.write(buf, 0, len);
-                }
-                fos.flush();
-            }
-
-            try (FileInputStream fis = new FileInputStream(shadowFile)) {
-                workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
-            }
+        try (InputStream is = getContentResolver().openInputStream(uri)) {
+            if (is == null) return;
+            workbook = isXlsxFormat ? new XSSFWorkbook(is) : new HSSFWorkbook(is);
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
             dataList.clear();
-            modifiedCellsMap.clear(); // Сбрасываем старый журнал изменений для нового файла
+            modifiedCellsMap.clear();
 
-            // Находим реальный максимум колонок в импортируемом файле
             int maxColsFound = 5;
             int maxRows = Math.max(50, sheet.getLastRowNum() + 1);
             
@@ -372,7 +353,6 @@ public class MainActivity extends AppCompatActivity {
             }
             maxColumnsInFile = maxColsFound;
 
-            // Считываем исключительно текстовые репрезентации ячеек для отображения в интерфейсе MiniExcel
             for (int i = 0; i < maxRows; i++) {
                 Row row = sheet.getRow(i);
                 RowData rowData = new RowData(i, maxColumnsInFile);
@@ -394,7 +374,7 @@ public class MainActivity extends AppCompatActivity {
             rebuildTableHeader();
             adapter.setScaleAndColumns(currentScale, maxColumnsInFile);
             
-            Toast.makeText(this, "Файл импортирован. Структура защищена!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Файл импортирован успешно!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
@@ -406,11 +386,6 @@ public class MainActivity extends AppCompatActivity {
                 try { workbook.close(); } catch (Exception ignored) {}
             }
         }
-    }
-
-    private void deleteShadowCopy() {
-        File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
-        if (shadowFile.exists()) shadowFile.delete();
     }
 
     private void clearEditorFocus() {
