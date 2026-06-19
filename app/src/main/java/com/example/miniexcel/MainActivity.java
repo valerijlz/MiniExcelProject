@@ -168,7 +168,10 @@ public class MainActivity extends AppCompatActivity {
             tvLetter.setLayoutParams(new LinearLayout.LayoutParams(cellWidth, cellHeight));
             tvLetter.setText(getColumnLetter(i));
             tvLetter.setGravity(Gravity.CENTER);
-            tvLetter.setTextStyle(android.graphics.Typeface.BOLD);
+            
+            // ИСПРАВЛЕНО: Вместо ошибочного setTextStyle используем setTypeface
+            tvLetter.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            
             tvLetter.setTextColor(android.graphics.Color.BLACK);
             tvLetter.setTextSize(14 * currentScale);
             tvLetter.setBackgroundResource(R.drawable.grid_cell_border);
