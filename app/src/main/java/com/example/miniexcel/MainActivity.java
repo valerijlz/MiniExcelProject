@@ -6,8 +6,12 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
+import android.view.ScaleGestureDetector;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -23,7 +27,6 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -46,7 +49,11 @@ public class MainActivity extends AppCompatActivity {
 
     private Uri currentFileUri = null;
     private boolean isXlsxFormat = true;
-    private byte[] originalFileBytes = null;
+
+    // Ссылки на элементы шапки для синхронного изменения размера букв при зуме
+    private TextView tvHeaderEmpty, tvHeaderA, tvHeaderB, tvHeaderC, tvHeaderD, tvHeaderE;
+    private ScaleGestureDetector scaleGestureDetector;
+    private float currentScale = 1.0f;
 
     private ActivityResultLauncher<Intent> saveFileLauncher;
     private ActivityResultLauncher<Intent> openFileLauncher;
@@ -73,6 +80,14 @@ public class MainActivity extends AppCompatActivity {
         openButton = findViewById(R.id.openButton);
         recyclerView = findViewById(R.id.recyclerView);
 
+        // Инициализируем элементы шапки
+        tvHeaderEmpty = findViewById(R.id.tvHeaderEmpty);
+        tvHeaderA = findViewById(R.id.tvHeaderA);
+        tvHeaderB = findViewById(R.id.tvHeaderB);
+        tvHeaderC = findViewById(R.id.tvHeaderC);
+        tvHeaderD = findViewById(R.id.tvHeaderD);
+        tvHeaderE = findViewById(R.id.tvHeaderE);
+
         generateEmptyTable();
 
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
@@ -91,12 +106,35 @@ public class MainActivity extends AppCompatActivity {
         });
         recyclerView.setAdapter(adapter);
 
+        // НАСТРОЙКА КЛАССИЧЕСКОГО ЗУМА EXCEL ЖЕСТАМИ ПАЛЬЦЕВ
+        scaleGestureDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScale(ScaleGestureDetector detector) {
+                currentScale *= detector.getScaleFactor();
+                currentScale = Math.max(0.6f, Math.min(currentScale, 2.5f)); // Границы зума
+                
+                // 1. Отдаем новый масштаб в адаптер строк (перерисует ячейки на лету)
+                adapter.setScaleFactor(currentScale);
+                
+                // 2. Масштабируем элементы верхней шапки (A, B, C...)
+                updateHeaderScale();
+                return true;
+            }
+        });
+
+        // Привязываем детектор жестов к контейнеру таблицы
+        LinearLayout tableContainer = findViewById(R.id.tableContainer);
+        tableContainer.setOnTouchListener((v, event) -> {
+            scaleGestureDetector.onTouchEvent(event);
+            return false; // Позволяем событиям клика проходить дальше к ячейкам
+        });
+
         initFileLaunchers();
 
         saveButton.setOnClickListener(v -> {
             applyCurrentCellChanges();
             if (currentFileUri != null) {
-                saveExcelToUri(currentFileUri);
+                saveExcelWithShadowCopy(currentFileUri);
             } else {
                 openSaveAsDialog();
             }
@@ -105,14 +143,25 @@ public class MainActivity extends AppCompatActivity {
         openButton.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            String[] mimeTypes = {
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-                    "application/vnd.ms-excel" // .xls
-            };
+            String[] mimeTypes = {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"};
             intent.setType("*/*");
             intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
             openFileLauncher.launch(intent);
         });
+    }
+
+    private void updateHeaderScale() {
+        float density = getResources().getDisplayMetrics().density;
+        ViewGroup.LayoutParams p = tvHeaderEmpty.getLayoutParams();
+        p.width = (int) (40 * density * currentScale);
+        tvHeaderEmpty.setLayoutParams(p);
+
+        float textSize = 14 * currentScale;
+        tvHeaderA.setTextSize(textSize);
+        tvHeaderB.setTextSize(textSize);
+        tvHeaderC.setTextSize(textSize);
+        tvHeaderD.setTextSize(textSize);
+        tvHeaderE.setTextSize(textSize);
     }
 
     private void generateEmptyTable() {
@@ -120,7 +169,7 @@ public class MainActivity extends AppCompatActivity {
         for (int i = 0; i < 50; i++) {
             dataList.add(new RowData(i));
         }
-        originalFileBytes = null;
+        deleteShadowCopy();
         currentFileUri = null;
         isXlsxFormat = true;
         saveButton.setText("Сохранить как...");
@@ -136,13 +185,8 @@ public class MainActivity extends AppCompatActivity {
     private void openSaveAsDialog() {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        if (isXlsxFormat) {
-            intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-            intent.putExtra(Intent.EXTRA_TITLE, "Table.xlsx");
-        } else {
-            intent.setType("application/vnd.ms-excel");
-            intent.putExtra(Intent.EXTRA_TITLE, "Table.xls");
-        }
+        intent.setType(isXlsxFormat ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/vnd.ms-excel");
+        intent.putExtra(Intent.EXTRA_TITLE, isXlsxFormat ? "Table.xlsx" : "Table.xls");
         saveFileLauncher.launch(intent);
     }
 
@@ -157,7 +201,7 @@ public class MainActivity extends AppCompatActivity {
                             saveButton.setText("Сохранить");
                             String fileName = getFileNameFromUri(uri);
                             isXlsxFormat = fileName == null || !fileName.endsWith(".xls");
-                            saveExcelToUri(uri);
+                            saveExcelWithShadowCopy(uri);
                         }
                     }
                 }
@@ -173,108 +217,96 @@ public class MainActivity extends AppCompatActivity {
                             saveButton.setText("Сохранить");
                             String fileName = getFileNameFromUri(uri);
                             isXlsxFormat = fileName == null || !fileName.endsWith(".xls");
-                            loadExcelFromUri(uri);
+                            loadExcelWithShadowCopy(uri);
                         }
                     }
                 }
         );
     }
 
-    // БУФЕРИЗИРОВАННОЕ АТОМАРНОЕ СОХРАНЕНИЕ (Защищает структуру от разрушения и принудительно пишет текст)
-    private void saveExcelToUri(Uri uri) {
+    // СТРАТЕГИЯ ТЕНЕВОГО КЛОНИРОВАНИЯ: Полностью сохраняет структуру оригинального файла Excel
+    private void saveExcelWithShadowCopy(Uri uri) {
+        File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
         Workbook workbook = null;
-        File tempFile = null;
-        try {
-            // Создаем временный файл в изолированном кэше Android для безопасных манипуляций со структурой POI
-            tempFile = File.createTempFile("excel_buffer", isXlsxFormat ? ".xlsx" : ".xls", getCacheDir());
 
-            if (originalFileBytes != null && originalFileBytes.length > 0) {
-                // Если мы открыли существующий файл, разворачиваем его структуру во временный файл
-                try (FileOutputStream fos = new FileOutputStream(tempFile)) {
-                    fos.write(originalFileBytes);
-                }
-                try (FileInputStream fis = new FileInputStream(tempFile)) {
+        try {
+            if (shadowFile.exists() && shadowFile.length() > 0) {
+                // Если мы работаем с открытым оригинальным файлом, открываем напрямую локальную копию
+                try (FileInputStream fis = new FileInputStream(shadowFile)) {
                     workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
                 }
             } else {
-                // Если это совершенно новый файл
+                // Создание нового файла с нуля
                 workbook = isXlsxFormat ? new XSSFWorkbook() : new HSSFWorkbook();
             }
 
-            // Получаем доступ к первому листу
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
 
-            // Заменяем исключительно текстовое наполнение ячеек в рамках MiniExcel. Стили, цвет шрифта и границы остаются нетронутыми!
+            // Заменяем ТОЛЬКО ТЕКСТ в первых 5 колонках. Стили, объединенные ячейки, размеры и другие листы/колонки POI НЕ ТРОГАЕТ
             for (int i = 0; i < dataList.size(); i++) {
                 RowData rowData = dataList.get(i);
                 Row row = sheet.getRow(i);
-                if (row == null) {
-                    row = sheet.createRow(i);
-                }
+                if (row == null) row = sheet.createRow(i);
+                
                 for (int j = 0; j < 5; j++) {
                     Cell cell = row.getCell(j);
-                    if (cell == null) {
-                        cell = row.createCell(j);
-                    }
+                    if (cell == null) cell = row.createCell(j);
                     cell.setCellValue(rowData.columns[j]);
                 }
             }
 
-            // Записываем обновленный Workbook во временный файл-буфер
-            try (FileOutputStream fos = new FileOutputStream(tempFile)) {
+            // Записываем обновленный воркбук обратно в локальный изолированный теневой файл
+            try (FileOutputStream fos = new FileOutputStream(shadowFile)) {
                 workbook.write(fos);
             }
 
-            // Читаем измененный буфер обратно в байтовый кэш оперативной памяти приложения
-            try (FileInputStream fis = new FileInputStream(tempFile);
-                 ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-                byte[] buffer = new byte[4096];
-                int read;
-                while ((read = fis.read(buffer)) != -1) {
-                    baos.write(buffer, 0, read);
-                }
-                originalFileBytes = baos.toByteArray();
-            }
-
-            // Перезаписываем оригинальный файл на диске смартфона атомарным бинарным потоком
-            try (OutputStream os = getContentResolver().openOutputStream(uri, "rwt")) {
+            // Копируем этот идеальный локальный файл целиком на место внешнего документа через Android Uri (Атомарная замена)
+            try (InputStream is = new FileInputStream(shadowFile);
+                 OutputStream os = getContentResolver().openOutputStream(uri, "rwt")) {
                 if (os != null) {
-                    os.write(originalFileBytes);
-                    os.flush(); // Принудительно выталкиваем данные из кэша Android на физический накопитель
+                    byte[] buf = new byte[4096];
+                    int len;
+                    while ((len = is.read(buf)) != -1) {
+                        os.write(buf, 0, len);
+                    }
+                    os.flush();
                 }
             }
 
-            Toast.makeText(this, "Файл успешно перезаписан и сохранен!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Файл успешно сохранен!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка записи файла: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка сохранения структуры: " + e.getMessage(), Toast.LENGTH_LONG).show();
         } finally {
             if (workbook != null) {
                 try { workbook.close(); } catch (Exception ignored) {}
             }
-            if (tempFile != null && tempFile.exists()) {
-                tempFile.delete(); // Удаляем временный буфер из кэша системы
-            }
         }
     }
 
-    private void loadExcelFromUri(Uri uri) {
+    private void loadExcelWithShadowCopy(Uri uri) {
+        File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
         Workbook workbook = null;
-        try (InputStream is = getContentResolver().openInputStream(uri)) {
-            if (is == null) return;
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
-            int bytesRead;
-            while ((bytesRead = is.read(buffer)) != -1) {
-                baos.write(buffer, 0, bytesRead);
+        try {
+            // Клонируем файл из внешней системы во внутреннюю безопасную память приложения
+            try (InputStream is = getContentResolver().openInputStream(uri);
+                 FileOutputStream fos = new FileOutputStream(shadowFile)) {
+                if (is == null) return;
+                byte[] buf = new byte[4096];
+                int len;
+                while ((len = is.read(buf)) != -1) {
+                    fos.write(buf, 0, len);
+                }
+                fos.flush();
             }
-            originalFileBytes = baos.toByteArray();
 
-            java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(originalFileBytes);
-            workbook = isXlsxFormat ? new XSSFWorkbook(bais) : new HSSFWorkbook(bais);
+            // Открываем созданный теневой клон
+            try (FileInputStream fis = new FileInputStream(shadowFile)) {
+                workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
+            }
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
             dataList.clear();
@@ -298,24 +330,25 @@ public class MainActivity extends AppCompatActivity {
                 dataList.add(rowData);
             }
 
-            if (dataList.isEmpty()) {
-                generateEmptyTable();
-            }
-            
             adapter.notifyDataSetChanged();
-            Toast.makeText(this, "Файл успешно открыт!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Файл открыт со всеми стилями!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
             e.printStackTrace();
             generateEmptyTable();
             adapter.notifyDataSetChanged();
-            Toast.makeText(this, "Ошибка импорта Excel: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка чтения: " + e.getMessage(), Toast.LENGTH_LONG).show();
         } finally {
             if (workbook != null) {
                 try { workbook.close(); } catch (Exception ignored) {}
             }
         }
+    }
+
+    private void deleteShadowCopy() {
+        File shadowFile = new File(getFilesDir(), "shadow_copy.bin");
+        if (shadowFile.exists()) shadowFile.delete();
     }
 
     private void clearEditorFocus() {
