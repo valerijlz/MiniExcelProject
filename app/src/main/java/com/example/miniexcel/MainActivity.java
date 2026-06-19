@@ -3,6 +3,7 @@ package com.example.miniexcel;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -18,7 +19,10 @@ public class MainActivity extends AppCompatActivity {
     private TableAdapter adapter;
     private List<RowData> dataList = new ArrayList<>();
 
-    // Внутренний класс обязательно должен быть PUBLIC STATIC, чтобы TableAdapter его видел
+    // Переменные для хранения индексов текущей редактируемой ячейки
+    private int selectedRowIndex = -1;
+    private int selectedColIndex = -1;
+
     public static class RowData {
         public int rowIndex;
         public String[] columns = new String[5];
@@ -40,7 +44,7 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         recyclerView = findViewById(R.id.recyclerView);
 
-        // Инициализация тестовых данных для сетки таблицы
+        // Инициализация тестовых данных (A1...E50)
         for (int i = 0; i < 50; i++) {
             RowData row = new RowData(i);
             row.columns[0] = "A" + (i + 1);
@@ -52,11 +56,47 @@ public class MainActivity extends AppCompatActivity {
         }
 
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        
+        // Обработка клика по ячейке таблицы
         adapter = new TableAdapter(dataList, (rowIndex, colIndex) -> {
-            // Клик по ячейке: выводим текст в поле редактирования
+            // Запоминаем, какую ячейку выбрал пользователь
+            selectedRowIndex = rowIndex;
+            selectedColIndex = colIndex;
+            
+            // Выводим её текст в верхнее поле ввода для редактирования
             String currentText = dataList.get(rowIndex).columns[colIndex];
             excelEditText.setText(currentText);
+            
+            // Фокусируемся на поле ввода, чтобы сразу можно было писать
+            excelEditText.requestFocus();
+            excelEditText.setSelection(excelEditText.getText().length());
         });
+        
         recyclerView.setAdapter(adapter);
+
+        // ОЖИВЛЯЕМ КНОПКУ «СОХРАНИТЬ»
+        saveButton.setOnClickListener(v -> {
+            // Проверяем, выбрана ли хоть какая-то ячейка
+            if (selectedRowIndex != -1 && selectedColIndex != -1) {
+                // Берем текст из верхнего поля ввода
+                String newText = excelEditText.getText().toString();
+                
+                // Записываем его в наш массив данных таблицы
+                dataList.get(selectedRowIndex).columns[selectedColIndex] = newText;
+                
+                // Приказываем таблице обновить отображение этой строки
+                adapter.notifyItemChanged(selectedRowIndex);
+                
+                // Очищаем фокус и поле ввода
+                excelEditText.setText("");
+                selectedRowIndex = -1;
+                selectedColIndex = -1;
+                excelEditText.clearFocus();
+                
+                Toast.makeText(MainActivity.this, "Значение ячейки обновлено", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(MainActivity.this, "Сначала выберите ячейку таблицы!", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 }
