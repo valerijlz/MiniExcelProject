@@ -24,6 +24,9 @@ import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -41,11 +44,8 @@ public class MainActivity extends AppCompatActivity {
     private int selectedRowIndex = -1;
     private int selectedColIndex = -1;
 
-    // Ссылка на Uri текущего открытого или сохраненного файла (для прямой перезаписи)
     private Uri currentFileUri = null;
-    // Флаг формата текущего файла: true для .xlsx, false для .xls
     private boolean isXlsxFormat = true;
-    // Кэш оригинального файла в байтах, чтобы сохранять стили, цвета и разметку оригинального Excel
     private byte[] originalFileBytes = null;
 
     private ActivityResultLauncher<Intent> saveFileLauncher;
@@ -93,24 +93,18 @@ public class MainActivity extends AppCompatActivity {
 
         initFileLaunchers();
 
-        // Кнопка «Сохранить». Если файл уже открыт — перезаписывает его. Иначе открывает диалог "Сохранить как"
         saveButton.setOnClickListener(v -> {
             applyCurrentCellChanges();
-            
             if (currentFileUri != null) {
-                // Файл уже существует на диске — перезаписываем его напрямую без лишних вопросов
                 saveExcelToUri(currentFileUri);
             } else {
-                // Новая таблица — запрашиваем у системы диалог "Сохранить как..."
                 openSaveAsDialog();
             }
         });
 
-        // Кнопка «Открыть файл» поддерживает и .xls, и .xlsx
         openButton.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            // Указываем оба поддерживаемых типа MIME для Excel
             String[] mimeTypes = {
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
                     "application/vnd.ms-excel" // .xls
@@ -161,6 +155,8 @@ public class MainActivity extends AppCompatActivity {
                         if (uri != null) {
                             currentFileUri = uri;
                             saveButton.setText("Сохранить");
+                            String fileName = getFileNameFromUri(uri);
+                            isXlsxFormat = fileName == null || !fileName.endsWith(".xls");
                             saveExcelToUri(uri);
                         }
                     }
@@ -175,7 +171,6 @@ public class MainActivity extends AppCompatActivity {
                         if (uri != null) {
                             currentFileUri = uri;
                             saveButton.setText("Сохранить");
-                            // Определяем расширение/формат открываемого файла
                             String fileName = getFileNameFromUri(uri);
                             isXlsxFormat = fileName == null || !fileName.endsWith(".xls");
                             loadExcelFromUri(uri);
@@ -185,23 +180,31 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // БЕЗОПАСНОЕ СОХРАНЕНИЕ: Модифицирует существующий файл, сохраняя все его стили и структуру
+    // БУФЕРИЗИРОВАННОЕ АТОМАРНОЕ СОХРАНЕНИЕ (Защищает структуру от разрушения и принудительно пишет текст)
     private void saveExcelToUri(Uri uri) {
         Workbook workbook = null;
+        File tempFile = null;
         try {
-            if (originalFileBytes != null) {
-                // Если файл был импортирован, загружаем его оригинальную структуру из кэша байт
-                java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(originalFileBytes);
-                workbook = isXlsxFormat ? new XSSFWorkbook(bais) : new HSSFWorkbook(bais);
+            // Создаем временный файл в изолированном кэше Android для безопасных манипуляций со структурой POI
+            tempFile = File.createTempFile("excel_buffer", isXlsxFormat ? ".xlsx" : ".xls", getCacheDir());
+
+            if (originalFileBytes != null && originalFileBytes.length > 0) {
+                // Если мы открыли существующий файл, разворачиваем его структуру во временный файл
+                try (FileOutputStream fos = new FileOutputStream(tempFile)) {
+                    fos.write(originalFileBytes);
+                }
+                try (FileInputStream fis = new FileInputStream(tempFile)) {
+                    workbook = isXlsxFormat ? new XSSFWorkbook(fis) : new HSSFWorkbook(fis);
+                }
             } else {
-                // Если это новый документ
+                // Если это совершенно новый файл
                 workbook = isXlsxFormat ? new XSSFWorkbook() : new HSSFWorkbook();
             }
 
-            // Ищем или создаем первый лист
+            // Получаем доступ к первому листу
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
 
-            // Заменяем исключительно текстовые значения ячеек, стили и разметка строк вокруг остаются нетронутыми!
+            // Заменяем исключительно текстовое наполнение ячеек в рамках MiniExcel. Стили, цвет шрифта и границы остаются нетронутыми!
             for (int i = 0; i < dataList.size(); i++) {
                 RowData rowData = dataList.get(i);
                 Row row = sheet.getRow(i);
@@ -217,35 +220,51 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            // Пишем изменения обратно в файл на диске смартфона (Перезапись)
-            try (OutputStream os = getContentResolver().openOutputStream(uri, "rwt")) {
-                workbook.write(os);
+            // Записываем обновленный Workbook во временный файл-буфер
+            try (FileOutputStream fos = new FileOutputStream(tempFile)) {
+                workbook.write(fos);
             }
 
-            // Обновляем кэш байт текущей версией файла на случай последующих сохранений
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            workbook.write(baos);
-            originalFileBytes = baos.toByteArray();
+            // Читаем измененный буфер обратно в байтовый кэш оперативной памяти приложения
+            try (FileInputStream fis = new FileInputStream(tempFile);
+                 ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[4096];
+                int read;
+                while ((read = fis.read(buffer)) != -1) {
+                    baos.write(buffer, 0, read);
+                }
+                originalFileBytes = baos.toByteArray();
+            }
 
-            Toast.makeText(this, "Файл успешно сохранен!", Toast.LENGTH_SHORT).show();
+            // Перезаписываем оригинальный файл на диске смартфона атомарным бинарным потоком
+            try (OutputStream os = getContentResolver().openOutputStream(uri, "rwt")) {
+                if (os != null) {
+                    os.write(originalFileBytes);
+                    os.flush(); // Принудительно выталкиваем данные из кэша Android на физический накопитель
+                }
+            }
+
+            Toast.makeText(this, "Файл успешно перезаписан и сохранен!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
 
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка сохранения: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка записи файла: " + e.getMessage(), Toast.LENGTH_LONG).show();
         } finally {
             if (workbook != null) {
                 try { workbook.close(); } catch (Exception ignored) {}
             }
+            if (tempFile != null && tempFile.exists()) {
+                tempFile.delete(); // Удаляем временный буфер из кэша системы
+            }
         }
     }
 
-    // ИМПОРТ ФАЙЛА: считывает данные и сохраняет весь файл в двоичный кэш для защиты стилей
     private void loadExcelFromUri(Uri uri) {
         Workbook workbook = null;
         try (InputStream is = getContentResolver().openInputStream(uri)) {
-            
-            // Читаем поток файла в массив байт (кэш оригинального файла со всеми стилями и разметкой)
+            if (is == null) return;
+
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
             int bytesRead;
@@ -254,14 +273,12 @@ public class MainActivity extends AppCompatActivity {
             }
             originalFileBytes = baos.toByteArray();
 
-            // Создаем воркбук на основе считанных байт в зависимости от формата (.xls или .xlsx)
             java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(originalFileBytes);
             workbook = isXlsxFormat ? new XSSFWorkbook(bais) : new HSSFWorkbook(bais);
 
             Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : workbook.createSheet("Sheet1");
             dataList.clear();
 
-            // Читаем первые 5 колонок для вывода в сетку интерфейса MiniExcel
             int maxRows = Math.max(50, sheet.getLastRowNum() + 1);
             for (int i = 0; i < maxRows; i++) {
                 Row row = sheet.getRow(i);
@@ -270,7 +287,6 @@ public class MainActivity extends AppCompatActivity {
                     for (int j = 0; j < 5; j++) {
                         Cell cell = row.getCell(j);
                         if (cell != null) {
-                            // Приведение любых типов данных (формулы, числа) к тексту для вывода на экран
                             switch (cell.getCellType()) {
                                 case NUMERIC: rowData.columns[j] = String.valueOf(cell.getNumericCellValue()); break;
                                 case FORMULA: rowData.columns[j] = cell.getCellFormula(); break;
@@ -282,6 +298,10 @@ public class MainActivity extends AppCompatActivity {
                 dataList.add(rowData);
             }
 
+            if (dataList.isEmpty()) {
+                generateEmptyTable();
+            }
+            
             adapter.notifyDataSetChanged();
             Toast.makeText(this, "Файл успешно открыт!", Toast.LENGTH_SHORT).show();
             clearEditorFocus();
@@ -290,7 +310,7 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
             generateEmptyTable();
             adapter.notifyDataSetChanged();
-            Toast.makeText(this, "Ошибка импорта структуры Excel: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка импорта Excel: " + e.getMessage(), Toast.LENGTH_LONG).show();
         } finally {
             if (workbook != null) {
                 try { workbook.close(); } catch (Exception ignored) {}
