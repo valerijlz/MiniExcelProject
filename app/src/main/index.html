@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MiniExcel Core</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortune-sheet/variant@1.0.0/dist/index.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/@fortune-sheet/variant@1.0.0/dist/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+        #sheet-container { width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+
+<div id="sheet-container"></div>
+
+<script>
+    let sheetInstance = null;
+    let originalWorkbookRef = null; // Храним слепок всего оригинального файла (включая скрытые стили)
+
+    // Функция вызывается из Java кода Android при открытии файла
+    function loadExcelFromBytes(base64Data) {
+        try {
+            const binaryString = atob(base64Data);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            // Читаем весь файл со всеми потрохами (стили, формулы, метаданные)
+            originalWorkbookRef = XLSX.read(bytes.buffer, { type: 'array', cellStyles: true, cellNF: true });
+            
+            // Конвертируем первый лист для визуального редактора
+            const firstSheetName = originalWorkbookRef.SheetNames[0];
+            const worksheet = originalWorkbookRef.Sheets[firstSheetName];
+            
+            // Инициализируем редактор FortuneSheet
+            const data = fortune.mockData(worksheet); 
+            
+            document.getElementById('sheet-container').innerHTML = '';
+            sheetInstance = fortune.createSheet({
+                container: 'sheet-container',
+                data: [{ name: firstSheetName, celldata: data }],
+                showinfobar: false,
+                allowUpdate: true
+            });
+            
+            AndroidBridge.onStatus("Файл успешно визуализирован!");
+        } catch (e) {
+            AndroidBridge.onStatus("Ошибка парсинга в JS: " + e.message);
+        }
+    }
+
+    // Функция вызывается из Java при нажатии на кнопку "Сохранить"
+    function exportExcelToAndroid() {
+        try {
+            if (!sheetInstance || !originalWorkbookRef) {
+                AndroidBridge.onStatus("Нет данных для сохранения");
+                return;
+            }
+            
+            // Получаем измененные данные из редактора
+            const sheetData = sheetInstance.getSheetData();
+            const firstSheetName = originalWorkbookRef.SheetNames[0];
+            
+            // Превращаем данные обратно в формат листа Excel
+            const updatedWorksheet = fortune.exportToWorksheet(sheetData);
+            
+            // Внедряем обновленный лист обратно в оригинальный объект книги.
+            // Благодаря этому все остальные листы, глобальные стили, темы и шрифты книги НЕ ПЕРЕЗАПИСЫВАЮТСЯ С НУЛЯ, а сохраняются!
+            originalWorkbookRef.Sheets[firstSheetName] = updatedWorksheet;
+            
+            // Генерируем финальный бинарный массив XLSX
+            const wbout = XLSX.write(originalWorkbookRef, { bookType: 'xlsx', type: 'array', cellStyles: true });
+            
+            // Переводим в Base64 для передачи через мост в Android Java
+            const binary = String.fromCharCode.apply(null, new Uint8Array(wbout));
+            const base64 = btoa(binary);
+            
+            // Отправляем готовый валидный файл в Java для физической записи на диск
+            AndroidBridge.saveFileData(base64);
+        } catch (e) {
+            AndroidBridge.onStatus("Ошибка сборки файла в JS: " + e.message);
+        }
+    }
+
+    // Если открыли пустое приложение, создаем пустую сетку таблицы
+    window.onload = function() {
+        if (!sheetInstance) {
+            sheetInstance = fortune.createSheet({
+                container: 'sheet-container',
+                data: [{ name: 'Sheet1', row: 50, column: 15 }],
+                showinfobar: false
+            });
+        }
+    }
+</script>
+</body>
+</html>
