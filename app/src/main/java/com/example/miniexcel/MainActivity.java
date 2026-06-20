@@ -52,12 +52,15 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
         
-        // Масштабирование пальцами (Pinch-to-zoom)
+        // Включаем полноценный Pinch-to-Zoom (и увеличение, и уменьшение)
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
         webSettings.setDisplayZoomControls(false); 
+        
+        // Важные настройки: отключаем авто-раздувание шрифтов WebView, чтобы вернуть оригинальный масштаб Excel
         webSettings.setLoadWithOverviewMode(true);
         webSettings.setUseWideViewPort(true);
+        webSettings.setTextZoom(100); // Строго 100% размер шрифта без мобильного авто-увеличения
 
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient() {
@@ -76,8 +79,8 @@ public class MainActivity extends AppCompatActivity {
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
             String[] mimeTypes = {
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-                    "application/vnd.ms-excel" // .xls
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/vnd.ms-excel"
             };
             intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
             openFileLauncher.launch(intent);
@@ -117,7 +120,6 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // Изолированный и защищенный конвертер цветов во избежание NoClassDefFoundError в Android
     private String getHexColor(Color color) {
         if (color == null) return null;
         try {
@@ -132,9 +134,7 @@ public class MainActivity extends AppCompatActivity {
                     return String.format("#%02x%02x%02x", triplet[0], triplet[1], triplet[2]);
                 }
             }
-        } catch (Throwable ignored) {
-            // Если Android-система вырезала эти методы, просто игнорируем ошибку
-        }
+        } catch (Throwable ignored) {}
         return null;
     }
 
@@ -145,7 +145,6 @@ public class MainActivity extends AppCompatActivity {
             Sheet sheet = workbook.getSheetAt(0);
             JSONArray jsonTable = new JSONArray();
 
-            // Безопасное вычисление реальных размеров листа
             int totalRows = sheet.getPhysicalNumberOfRows() > 0 ? sheet.getLastRowNum() : 0;
             int maxCellCount = 0;
             for (int r = 0; r <= totalRows; r++) {
@@ -159,30 +158,26 @@ public class MainActivity extends AppCompatActivity {
 
             DataFormatter formatter = new DataFormatter();
 
-            // Формируем JSON матрицу
             for (int r = 0; r <= totalRows; r++) {
                 Row row = sheet.getRow(r);
                 JSONArray jsonRow = new JSONArray();
                 
                 for (int c = 0; c < maxCellCount; c++) {
                     JSONObject cellObj = new JSONObject();
-                    cellObj.put("v", ""); // По умолчанию ячейка пустая
+                    cellObj.put("v", "");
                     
                     if (row != null) {
                         Cell cell = row.getCell(c);
                         if (cell != null) {
-                            // Безопасное извлечение значения ячейки
                             try {
                                 cellObj.put("v", formatter.formatCellValue(cell));
                             } catch (Exception e) {
                                 cellObj.put("v", "");
                             }
 
-                            // Каждую операцию чтения стилей оборачиваем в try-catch для защиты от вылетов
                             try {
                                 CellStyle style = cell.getCellStyle();
                                 if (style != null) {
-                                    // 1. Чтение фоновой заливки ячейки
                                     try {
                                         Color bgColor = style.getFillForegroundColorColor();
                                         if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
@@ -193,7 +188,6 @@ public class MainActivity extends AppCompatActivity {
                                         }
                                     } catch (Throwable ignored) {}
 
-                                    // 2. Чтение параметров шрифта и его цвета
                                     try {
                                         int fontIdx = style.getFontIndex();
                                         Font font = workbook.getFontAt(fontIdx);
@@ -201,7 +195,6 @@ public class MainActivity extends AppCompatActivity {
                                             if (font.getBold()) cellObj.put("bold", true);
                                             if (font.getItalic()) cellObj.put("italic", true);
                                             
-                                            // Извлечение цвета шрифта
                                             try {
                                                 if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
                                                     String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
@@ -224,7 +217,6 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(jsonRow);
             }
 
-            // Извлечение объединенных регионов (Merges)
             JSONArray jsonMerges = new JSONArray();
             try {
                 for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
@@ -250,7 +242,7 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка парсинга: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка чтения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -261,6 +253,7 @@ public class MainActivity extends AppCompatActivity {
                 if (currentFileUri == null) {
                     Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
                     intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    // Динамически выставляем тип для создания нового файла по умолчанию
                     intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
                     intent.putExtra(Intent.EXTRA_TITLE, "Table.xlsx");
                     saveFileLauncher.launch(intent);
@@ -298,13 +291,14 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
+                    // ИСПРАВЛЕНИЕ: Перезаписываем файл в корректном режиме "rwt" без привязки к жесткому MIME-типу во время сохранения
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
                          FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
                         workbook.write(fos);
                     }
                     workbook.close();
 
-                    Toast.makeText(MainActivity.this, "Изменения сохранены! Оформление защищено.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "Изменения сохранены!", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
                     e.printStackTrace();
                     Toast.makeText(MainActivity.this, "Ошибка записи: " + e.getMessage(), Toast.LENGTH_LONG).show();
