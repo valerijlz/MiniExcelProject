@@ -17,7 +17,9 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
@@ -63,7 +65,13 @@ public class MainActivity extends AppCompatActivity {
         openButton.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            // РАЗРЕШАЕМ ОБА ФОРМАТА: и .xlsx, и старый .xls
+            intent.setType("*/*");
+            String[] mimeTypes = {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+                    "application/vnd.ms-excel" // .xls
+            };
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
             openFileLauncher.launch(intent);
         });
 
@@ -101,30 +109,25 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // Чтение Excel на стороне Java и превращение ТОЛЬКО ТЕКСТА в JSON матрицу
     private void pipeExcelToWebView(Uri uri) {
         try (InputStream is = getContentResolver().openInputStream(uri);
              Workbook workbook = WorkbookFactory.create(is)) {
             
             Sheet sheet = workbook.getSheetAt(0);
+            
+            // 1. Извлекаем текстовую матрицу
             JSONArray jsonTable = new JSONArray();
-
-            // Вычисляем максимальное количество колонок в файле
             int maxCellCount = 0;
             for (Row row : sheet) {
-                if (row.getLastCellNum() > maxCellCount) {
-                    maxCellCount = row.getLastCellNum();
-                }
+                if (row.getLastCellNum() > maxCellCount) maxCellCount = row.getLastCellNum();
             }
-            if (maxCellCount < 15) maxCellCount = 15; // Минимальная сетка
+            if (maxCellCount < 15) maxCellCount = 15;
 
             DataFormatter formatter = new DataFormatter();
 
-            // Пробегаем по строкам и ячейкам
             for (int r = 0; r <= sheet.getLastRowNum(); r++) {
                 Row row = sheet.getRow(r);
                 JSONArray jsonRow = new JSONArray();
-                
                 for (int c = 0; c < maxCellCount; c++) {
                     if (row == null) {
                         jsonRow.put("");
@@ -136,19 +139,32 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(jsonRow);
             }
 
-            // Переводим JSON-матрицу в чистую строку
-            String jsonString = jsonTable.toString();
-            
-            // Кодируем в Base64 БЕЗ ПЕРЕНОСОВ СТРОК, чтобы JavaScript прочитал её как одну команду
-            String base64Json = Base64.encodeToString(jsonString.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+            // 2. Извлекаем координаты объединенных областей, чтобы структура не разъезжалась
+            JSONArray jsonMerges = new JSONArray();
+            for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
+                CellRangeAddress region = sheet.getMergedRegion(i);
+                JSONObject mergeObj = new JSONObject();
+                mergeObj.put("sr", region.getFirstRow());
+                mergeObj.put("er", region.getLastRow());
+                mergeObj.put("sc", region.getFirstColumn());
+                mergeObj.put("ec", region.getLastColumn());
+                jsonMerges.put(mergeObj);
+            }
+
+            // Упаковываем всё в один общий объект
+            JSONObject payload = new JSONObject();
+            payload.put("matrix", jsonTable);
+            payload.put("merges", jsonMerges);
+
+            String jsonString = payload.toString();
+            String base64Payload = Base64.encodeToString(jsonString.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
             if (isEngineLoaded) {
-                // Внедряем именно base64Json строку (которая внутри содержит текст ячеек)
-                tableWebView.post(() -> tableWebView.evaluateJavascript("loadExcelFromBytes('" + base64Json + "');", null));
+                tableWebView.post(() -> tableWebView.evaluateJavascript("loadExcelFromBytes('" + base64Payload + "');", null));
             }
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка парсинга в Java: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка чтения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -165,7 +181,6 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                // Безопасное хирургическое обновление оригинального Excel файла
                 try {
                     byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
                     String jsonString = new String(decodedBytes, StandardCharsets.UTF_8);
@@ -188,7 +203,6 @@ public class MainActivity extends AppCompatActivity {
                             Cell cell = row.getCell(c);
                             if (cell == null) cell = row.createCell(c);
                             
-                            // Сохраняем значения интеллектуально, защищая исходный стиль ячейки
                             try {
                                 double num = Double.parseDouble(value);
                                 cell.setCellValue(num);
@@ -198,7 +212,7 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    // Перезаписываем файл
+                    // Перезапись файла в режиме чтения-записи
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
                          FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
                         workbook.write(fos);
