@@ -2,21 +2,21 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=0.5, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes">
-    <title>MiniExcel Tight Grid</title>
+    <meta name="viewport" content="width=device-width, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes">
+    <title>MiniExcel Pro Grid</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #fff; }
         .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
-        table { border-collapse: collapse; table-layout: auto; width: max-content; background: white; }
+        table { border-collapse: collapse; table-layout: fixed; width: max-content; background: white; }
         
-        /* Убираем min-width, ставим автоматическую ширину по контенту. Высота строго 18px (~3мм) */
-        th, td { border: 0.5px solid #d4d4d4; padding: 1px 3px; font-size: 11px; height: 18px; min-height: 18px; max-height: 18px; outline: none; vertical-align: middle; word-break: normal; white-space: nowrap; width: auto; }
+        /* Пропорциональные размеры ячеек по умолчанию */
+        th, td { border: 0.5px solid #d4d4d4; padding: 2px 5px; font-size: 11px; height: 18px; min-height: 18px; max-height: 18px; outline: none; vertical-align: middle; word-break: normal; white-space: nowrap; width: 75px; min-width: 75px; }
         
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 2; user-select: none; }
         tr th:first-child { position: sticky; left: 0; z-index: 3; background-color: #f1f1f1; }
         
-        /* Узкая колонка для номеров строк (строго 25px) */
-        td:first-child { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; min-width: 25px !important; width: 25px !important; max-width: 25px !important; }
+        /* Узкая колонка номеров строк */
+        td:first-child { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; min-width: 30px !important; width: 30px !important; max-width: 30px !important; }
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 5; position: relative; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
     </style>
@@ -29,19 +29,22 @@
 
 <script>
     let currentData = [];
-    let maxRows = 60;
-    let maxCols = 20;
+    let maxRows = 50;
+    let maxCols = 15;
 
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
         table.innerHTML = '';
+        table.style.tableLayout = "fixed"; // Пустая сетка имеет фиксированные пропорции ячеек Excel
+
         let headerRow = document.createElement('tr');
         let emptyTh = document.createElement('th');
-        emptyTh.style.width = "25px";
+        emptyTh.style.width = "30px";
         headerRow.appendChild(emptyTh);
         for (let c = 0; c < maxCols; c++) {
             let th = document.createElement('th');
             th.innerText = String.fromCharCode(65 + c);
+            th.style.width = "75px";
             headerRow.appendChild(th);
         }
         table.appendChild(headerRow);
@@ -81,7 +84,8 @@
             
             const table = document.getElementById('excel-table');
             table.innerHTML = '';
-            
+            table.style.tableLayout = "auto"; // Открытый файл подстраивается под текст автоматически
+
             if (!rows || rows.length === 0) {
                 createEmptyGrid();
                 return;
@@ -92,11 +96,12 @@
 
             let headerRow = document.createElement('tr');
             let firstTh = document.createElement('th');
-            firstTh.style.width = "25px";
+            firstTh.style.width = "30px";
             headerRow.appendChild(firstTh);
             for (let c = 0; c < colsCount; c++) {
                 let th = document.createElement('th');
                 th.innerText = String.fromCharCode(65 + c);
+                th.style.width = "auto";
                 headerRow.appendChild(th);
             }
             table.appendChild(headerRow);
