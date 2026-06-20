@@ -73,8 +73,16 @@
     // Вызывается из Java. Принимает JSON-матрицу ячеек из оригинального Excel
     function loadExcelFromBytes(base64Data) {
         try {
-            // Декодируем текстовые данные из Base64 формата
-            const decodedString = decodeURIComponent(escape(atob(base64Data)));
+            // Безопасное декодирование Base64 строки в UTF-8 текст без использования escape/decodeURIComponent
+            const binaryString = atob(base64Data);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            const decoder = new TextDecoder('utf-8');
+            const decodedString = decoder.decode(bytes);
+            
             const rows = JSON.parse(decodedString);
             
             const table = document.getElementById('excel-table');
@@ -130,7 +138,17 @@
     function exportExcelToAndroid() {
         try {
             const jsonString = JSON.stringify(currentData);
-            const base64 = btoa(unescape(encodeURIComponent(jsonString)));
+            
+            // Безопасное кодирование текста в Base64 без ограничений по символам
+            const encoder = new TextEncoder();
+            const bytes = encoder.encode(jsonString);
+            let binary = '';
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            const base64 = btoa(binary);
+            
             AndroidBridge.saveFileData(base64);
         } catch (e) {
             AndroidBridge.onStatus("Ошибка экспорта: " + e.message);
