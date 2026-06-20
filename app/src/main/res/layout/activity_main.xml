@@ -2,85 +2,35 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="12dp">
-
-    <EditText
-        android:id="@+id/excelEditText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Редактировать ячейку"
-        android:minHeight="48dp" />
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginTop="4dp"
-        android:layout_marginBottom="4dp"
-        android:weightSum="3">
-
-        <Button
-            android:id="@+id/saveButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="4dp"
-            android:text="Сохранить" />
+        android:padding="8dp"
+        android:background="#EEEEEE">
 
         <Button
             android:id="@+id/openButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="4dp"
-            android:layout_marginEnd="4dp"
-            android:text="Открыть" />
+            android:text="Открыть Excel"
+            android:layout_marginEnd="4dp"/>
 
-        <LinearLayout
+        <Button
+            android:id="@+id/saveButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:orientation="horizontal"
-            android:layout_gravity="center"
-            android:layout_marginStart="4dp">
-            <Button
-                android:id="@+id/btnZoomIn"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="+" />
-            <Button
-                android:id="@+id/btnZoomOut"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="-" />
-        </LinearLayout>
+            android:text="Сохранить"
+            android:layout_marginStart="4dp"/>
     </LinearLayout>
 
-    <HorizontalScrollView
+    <WebView
+        android:id="@+id/tableWebView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:fillViewport="true">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:orientation="vertical">
-
-            <LinearLayout
-                android:id="@+id/tableHeaderLayout"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="#D0D0D0"
-                android:orientation="horizontal" />
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/recyclerView"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent" />
-        </LinearLayout>
-    </HorizontalScrollView>
+        android:layout_height="match_parent" />
 
 </LinearLayout>
