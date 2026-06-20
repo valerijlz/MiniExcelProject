@@ -26,6 +26,7 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends AppCompatActivity {
@@ -309,13 +310,15 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    // ИСПРАВЛЕНО: используем правильный системный метод setFdSize(0)
-                    try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt")) {
-                        pfd.setFdSize(0); 
-                        try (FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
-                            workbook.write(fos);
-                            fos.flush();
-                        }
+                    // НАДЕЖНЫЙ СТАНДАРТНЫЙ ФИКС: Используем FileChannel для принудительного усечения (очистки) файла перед записью
+                    try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
+                         FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
+                        
+                        FileChannel channel = fos.getChannel();
+                        channel.truncate(0); // Безопасно очищаем файл на уровне Java NIO канала
+                        
+                        workbook.write(fos);
+                        fos.flush();
                     }
                     workbook.close();
 
