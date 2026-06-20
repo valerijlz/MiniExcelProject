@@ -47,16 +47,15 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
-        // Настраиваем WebView с полной поддержкой ЗУМА пальцами
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
         
-        // ВКЛЮЧАЕМ НАПРАВЛЕННЫЙ ЗУМ (Pinch-to-zoom)
+        // Масштабирование пальцами (Pinch-to-zoom)
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
-        webSettings.setDisplayZoomControls(false); // Убираем уродливые системные кнопки +/-
+        webSettings.setDisplayZoomControls(false); 
         webSettings.setLoadWithOverviewMode(true);
         webSettings.setUseWideViewPort(true);
 
@@ -77,8 +76,8 @@ public class MainActivity extends AppCompatActivity {
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
             String[] mimeTypes = {
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    "application/vnd.ms-excel"
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+                    "application/vnd.ms-excel" // .xls
             };
             intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
             openFileLauncher.launch(intent);
@@ -118,20 +117,23 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // Вспомогательный метод для получения цвета в формате HEX из ячейки Excel
+    // Изолированный и защищенный конвертер цветов во избежание NoClassDefFoundError в Android
     private String getHexColor(Color color) {
         if (color == null) return null;
-        if (color instanceof XSSFColor) {
-            byte[] rgb = ((XSSFColor) color).getARGB(); // Получаем ARGB массив
-            if (rgb != null && rgb.length == 4) {
-                // Игнорируем альфа-канал, берем только RGB
-                return String.format("#%02x%02x%02x", rgb[1], rgb[2], rgb[3]);
+        try {
+            if (color instanceof XSSFColor) {
+                byte[] rgb = ((XSSFColor) color).getARGB();
+                if (rgb != null && rgb.length == 4) {
+                    return String.format("#%02x%02x%02x", rgb[1], rgb[2], rgb[3]);
+                }
+            } else if (color instanceof HSSFColor) {
+                short[] triplet = ((HSSFColor) color).getTriplet();
+                if (triplet != null && triplet.length == 3) {
+                    return String.format("#%02x%02x%02x", triplet[0], triplet[1], triplet[2]);
+                }
             }
-        } else if (color instanceof HSSFColor) {
-            short[] triplet = ((HSSFColor) color).getTriplet();
-            if (triplet != null && triplet.length == 3) {
-                return String.format("#%02x%02x%02x", triplet[0], triplet[1], triplet[2]);
-            }
+        } catch (Throwable ignored) {
+            // Если Android-система вырезала эти методы, просто игнорируем ошибку
         }
         return null;
     }
@@ -143,9 +145,8 @@ public class MainActivity extends AppCompatActivity {
             Sheet sheet = workbook.getSheetAt(0);
             JSONArray jsonTable = new JSONArray();
 
-            // Гарантированный ручной подсчет реальных границ для защиты .xls от пустых листов
+            // Безопасное вычисление реальных размеров листа
             int totalRows = sheet.getPhysicalNumberOfRows() > 0 ? sheet.getLastRowNum() : 0;
-            
             int maxCellCount = 0;
             for (int r = 0; r <= totalRows; r++) {
                 Row row = sheet.getRow(r);
@@ -154,50 +155,68 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
             if (maxCellCount < 15) maxCellCount = 15;
-            if (totalRows == 0 && sheet.getPhysicalNumberOfRows() == 0) totalRows = 40; // запуск пустой
+            if (totalRows == 0) totalRows = 40;
 
             DataFormatter formatter = new DataFormatter();
 
-            // Читаем матрицу ячеек вместе с метаданными стилей
+            // Формируем JSON матрицу
             for (int r = 0; r <= totalRows; r++) {
                 Row row = sheet.getRow(r);
                 JSONArray jsonRow = new JSONArray();
                 
                 for (int c = 0; c < maxCellCount; c++) {
                     JSONObject cellObj = new JSONObject();
-                    if (row == null) {
-                        cellObj.put("v", "");
-                    } else {
+                    cellObj.put("v", ""); // По умолчанию ячейка пустая
+                    
+                    if (row != null) {
                         Cell cell = row.getCell(c);
-                        if (cell == null) {
-                            cellObj.put("v", "");
-                        } else {
-                            cellObj.put("v", formatter.formatCellValue(cell));
-                            
-                            // Считываем стили оформления
-                            CellStyle style = cell.getCellStyle();
-                            if (style != null) {
-                                // Заливка ячейки
-                                Color bgColor = style.getFillForegroundColorColor();
-                                if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
-                                    String hexBg = getHexColor(bgColor);
-                                    if (hexBg != null && !hexBg.equals("#000000")) cellObj.put("bg", hexBg);
-                                }
-                                
-                                // Шрифты, цвета текста, жирность
-                                int fontIdx = style.getFontIndex();
-                                Font font = workbook.getFontAt(fontIdx);
-                                if (font != null) {
-                                    if (font.getBold()) cellObj.put("bold", true);
-                                    if (font.getItalic()) cellObj.put("italic", true);
-                                    
-                                    // Цвет шрифта
-                                    if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
-                                        String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
-                                        if (fontColor != null) cellObj.put("color", fontColor);
-                                    }
-                                }
+                        if (cell != null) {
+                            // Безопасное извлечение значения ячейки
+                            try {
+                                cellObj.put("v", formatter.formatCellValue(cell));
+                            } catch (Exception e) {
+                                cellObj.put("v", "");
                             }
+
+                            // Каждую операцию чтения стилей оборачиваем в try-catch для защиты от вылетов
+                            try {
+                                CellStyle style = cell.getCellStyle();
+                                if (style != null) {
+                                    // 1. Чтение фоновой заливки ячейки
+                                    try {
+                                        Color bgColor = style.getFillForegroundColorColor();
+                                        if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
+                                            String hexBg = getHexColor(bgColor);
+                                            if (hexBg != null && !hexBg.equals("#000000")) {
+                                                cellObj.put("bg", hexBg);
+                                            }
+                                        }
+                                    } catch (Throwable ignored) {}
+
+                                    // 2. Чтение параметров шрифта и его цвета
+                                    try {
+                                        int fontIdx = style.getFontIndex();
+                                        Font font = workbook.getFontAt(fontIdx);
+                                        if (font != null) {
+                                            if (font.getBold()) cellObj.put("bold", true);
+                                            if (font.getItalic()) cellObj.put("italic", true);
+                                            
+                                            // Извлечение цвета шрифта
+                                            try {
+                                                if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
+                                                    String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
+                                                    if (fontColor != null) cellObj.put("color", fontColor);
+                                                } else if (font instanceof org.apache.poi.hssf.usermodel.HSSFFont) {
+                                                    short colorIdx = font.getColor();
+                                                    HSSFColor hssfColor = HSSFColor.getIndexHash().get((int) colorIdx);
+                                                    String fontColor = getHexColor(hssfColor);
+                                                    if (fontColor != null) cellObj.put("color", fontColor);
+                                                }
+                                            } catch (Throwable ignored) {}
+                                        }
+                                    } catch (Throwable ignored) {}
+                                }
+                            } catch (Throwable ignored) {}
                         }
                     }
                     jsonRow.put(cellObj);
@@ -205,17 +224,19 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(jsonRow);
             }
 
-            // Читаем объединения ячеек
+            // Извлечение объединенных регионов (Merges)
             JSONArray jsonMerges = new JSONArray();
-            for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
-                CellRangeAddress region = sheet.getMergedRegion(i);
-                JSONObject mergeObj = new JSONObject();
-                mergeObj.put("sr", region.getFirstRow());
-                mergeObj.put("er", region.getLastRow());
-                mergeObj.put("sc", region.getFirstColumn());
-                mergeObj.put("ec", region.getLastColumn());
-                jsonMerges.put(mergeObj);
-            }
+            try {
+                for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
+                    CellRangeAddress region = sheet.getMergedRegion(i);
+                    JSONObject mergeObj = new JSONObject();
+                    mergeObj.put("sr", region.getFirstRow());
+                    mergeObj.put("er", region.getLastRow());
+                    mergeObj.put("sc", region.getFirstColumn());
+                    mergeObj.put("ec", region.getLastColumn());
+                    jsonMerges.put(mergeObj);
+                }
+            } catch (Exception ignored) {}
 
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
@@ -229,7 +250,7 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка чтения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка парсинга: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -283,7 +304,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                     workbook.close();
 
-                    Toast.makeText(MainActivity.this, "Изменения сохранены! Все оригинальные стили защищены.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "Изменения сохранены! Оформление защищено.", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
                     e.printStackTrace();
                     Toast.makeText(MainActivity.this, "Ошибка записи: " + e.getMessage(), Toast.LENGTH_LONG).show();
