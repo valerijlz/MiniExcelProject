@@ -3,70 +3,167 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Core</title>
+    <title>MiniExcel Core Pro</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortune-sheet/variant@1.0.0/dist/index.min.css" />
     <script src="https://cdn.jsdelivr.net/npm/@fortune-sheet/variant@1.0.0/dist/index.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #f5f5f5; }
         #sheet-container { width: 100%; height: 100%; }
     </style>
 </head>
 <body>
+
 <div id="sheet-container"></div>
+
 <script>
     let sheetInstance = null;
     let originalWorkbookRef = null;
 
+    // Безопасный перевод Base64 в ArrayBuffer (работает стабильно с любыми объемами)
+    function base64ToArrayBuffer(base64) {
+        const binaryString = atob(base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    // ГЛАВНЫЙ НАДЕЖНЫЙ ПАРСЕР
     function loadExcelFromBytes(base64Data) {
         try {
-            const binaryString = atob(base64Data);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
+            // 1. Читаем бинарный архив файла с включенным сохранением стилей
+            const dataBuffer = base64ToArrayBuffer(base64Data);
+            originalWorkbookRef = XLSX.read(dataBuffer, { type: 'array', cellStyles: true, cellNF: true, cellDates: true });
+            
+            if (!originalWorkbookRef || !originalWorkbookRef.SheetNames.length) {
+                throw new Error("Файл пуст или поврежден");
             }
-            originalWorkbookRef = XLSX.read(bytes.buffer, { type: 'array', cellStyles: true, cellNF: true });
+
             const firstSheetName = originalWorkbookRef.SheetNames[0];
             const worksheet = originalWorkbookRef.Sheets[firstSheetName];
-            const data = fortune.mockData(worksheet); 
+            
+            // 2. Создаем пустую безопасную сетку для FortuneSheet (100 строк на 30 колонок по умолчанию)
+            let celldata = [];
+            
+            // Находим реальные границы данных в файле Excel (например, "A1:M25")
+            if (worksheet['!ref']) {
+                const range = XLSX.utils.decode_range(worksheet['!ref']);
+                
+                // Проходим циклом по каждой ячейке файла абсолютно безопасно
+                for (let r = range.s.r; r <= range.e.r; r++) {
+                    for (let c = range.s.c; c <= range.e.c; c++) {
+                        const cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
+                        const cell = worksheet[cellAddress];
+                        
+                        // Если ячейка существует и содержит данные, переносим их в редактор
+                        if (cell) {
+                            let cellObj = { r: r, c: c, v: {} };
+                            
+                            if (cell.f) {
+                                // Если это формула (например, =SUM(A1:A5))
+                                cellObj.v.f = "=" + cell.f;
+                                cellObj.v.v = cell.v !== undefined ? cell.v : "";
+                            } else {
+                                // Если это обычное значение (текст, число, дата)
+                                cellObj.v.v = cell.v !== undefined ? cell.v : "";
+                            }
+                            
+                            // Отображаемый текст (форматированный вид)
+                            cellObj.v.m = cell.w !== undefined ? cell.w : String(cellObj.v.v);
+                            cellObj.v.ct = { fa: cell.z || "@", t: cell.t || "s" };
+                            
+                            celldata.push(cellObj);
+                        }
+                    }
+                }
+            }
+
+            // 3. Извлекаем информацию об объединенных ячейках (Merge Regions), чтобы они не разваливались
+            let config = {};
+            if (worksheet['!merges']) {
+                config.merge = {};
+                worksheet['!merges'].forEach(m => {
+                    // Конвертируем координаты слияния в формат понятный визуальному движку
+                    const mergeKey = r + "_" + c;
+                    config.merge[m.s.r + "_" + m.s.c] = {
+                        rowlen: (m.e.r - m.s.r) + 1,
+                        collen: (m.e.c - m.s.c) + 1
+                    };
+                });
+            }
+
+            // 4. Инициализируем визуальный интерфейс редактора
             document.getElementById('sheet-container').innerHTML = '';
             sheetInstance = fortune.createSheet({
                 container: 'sheet-container',
-                data: [{ name: firstSheetName, celldata: data }],
+                data: [{ 
+                    name: firstSheetName, 
+                    celldata: celldata,
+                    config: config
+                }],
                 showinfobar: false,
                 allowUpdate: true
             });
-            AndroidBridge.onStatus("Файл успешно визуализирован!");
+            
+            AndroidBridge.onStatus("Файл успешно открыт!");
         } catch (e) {
-            AndroidBridge.onStatus("Ошибка парсинга в JS: " + e.message);
+            // Если что-то пошло не так, выводим точную причину ошибки вместо абстрактного сообщения
+            AndroidBridge.onStatus("Детали ошибки парсинга: " + e.message);
+            console.error(e);
         }
     }
 
+    // ФУНКЦИЯ ЭКСПОРТА И СОХРАНЕНИЯ БЕЗ ПОТЕРЬ
     function exportExcelToAndroid() {
         try {
             if (!sheetInstance || !originalWorkbookRef) {
-                AndroidBridge.onStatus("Нет данных для сохранения");
+                AndroidBridge.onStatus("Нет данных для записи");
                 return;
             }
+            
             const sheetData = sheetInstance.getSheetData();
             const firstSheetName = originalWorkbookRef.SheetNames[0];
+            
+            // Экспортируем данные сетки обратно в формат данных листа
             const updatedWorksheet = fortune.exportToWorksheet(sheetData);
+            
+            // Возвращаем на место метаданные оригинального файла (объединения, сетку, ширину колонок)
+            if (originalWorkbookRef.Sheets[firstSheetName]['!merges']) {
+                updatedWorksheet['!merges'] = originalWorkbookRef.Sheets[firstSheetName]['!merges'];
+            }
+            if (originalWorkbookRef.Sheets[firstSheetName]['!cols']) {
+                updatedWorksheet['!cols'] = originalWorkbookRef.Sheets[firstSheetName]['!cols'];
+            }
+            if (originalWorkbookRef.Sheets[firstSheetName]['!rows']) {
+                updatedWorksheet['!rows'] = originalWorkbookRef.Sheets[firstSheetName]['!rows'];
+            }
+
+            // Перезаписываем первый лист в оригинальной структуре книги
             originalWorkbookRef.Sheets[firstSheetName] = updatedWorksheet;
+            
+            // Генерируем финальный чистый ZIP/XLSX архив со всеми стилями
             const wbout = XLSX.write(originalWorkbookRef, { bookType: 'xlsx', type: 'array', cellStyles: true });
+            
+            // Кодируем в Base64 для передачи в Android Java
             const binary = String.fromCharCode.apply(null, new Uint8Array(wbout));
             const base64 = btoa(binary);
+            
             AndroidBridge.saveFileData(base64);
         } catch (e) {
-            AndroidBridge.onStatus("Ошибка сборки файла в JS: " + e.message);
+            AndroidBridge.onStatus("Ошибка сборки: " + e.message);
         }
     }
 
+    // Дефолтная инициализация при старте пустого приложения
     window.onload = function() {
         if (!sheetInstance) {
             sheetInstance = fortune.createSheet({
                 container: 'sheet-container',
-                data: [{ name: 'Sheet1', row: 50, column: 15 }],
+                data: [{ name: 'Sheet1', row: 40, column: 15 }],
                 showinfobar: false
             });
         }
