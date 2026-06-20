@@ -16,8 +16,10 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
+import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.usermodel.XSSFColor;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -45,10 +47,18 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
+        // Настраиваем WebView с полной поддержкой ЗУМА пальцами
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
+        
+        // ВКЛЮЧАЕМ НАПРАВЛЕННЫЙ ЗУМ (Pinch-to-zoom)
+        webSettings.setSupportZoom(true);
+        webSettings.setBuiltInZoomControls(true);
+        webSettings.setDisplayZoomControls(false); // Убираем уродливые системные кнопки +/-
+        webSettings.setLoadWithOverviewMode(true);
+        webSettings.setUseWideViewPort(true);
 
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient() {
@@ -65,11 +75,10 @@ public class MainActivity extends AppCompatActivity {
         openButton.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            // РАЗРЕШАЕМ ОБА ФОРМАТА: и .xlsx, и старый .xls
             intent.setType("*/*");
             String[] mimeTypes = {
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-                    "application/vnd.ms-excel" // .xls
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/vnd.ms-excel"
             };
             intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
             openFileLauncher.launch(intent);
@@ -109,37 +118,94 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
+    // Вспомогательный метод для получения цвета в формате HEX из ячейки Excel
+    private String getHexColor(Color color) {
+        if (color == null) return null;
+        if (color instanceof XSSFColor) {
+            byte[] rgb = ((XSSFColor) color).getARGB(); // Получаем ARGB массив
+            if (rgb != null && rgb.length == 4) {
+                // Игнорируем альфа-канал, берем только RGB
+                return String.format("#%02x%02x%02x", rgb[1], rgb[2], rgb[3]);
+            }
+        } else if (color instanceof HSSFColor) {
+            short[] triplet = ((HSSFColor) color).getTriplet();
+            if (triplet != null && triplet.length == 3) {
+                return String.format("#%02x%02x%02x", triplet[0], triplet[1], triplet[2]);
+            }
+        }
+        return null;
+    }
+
     private void pipeExcelToWebView(Uri uri) {
         try (InputStream is = getContentResolver().openInputStream(uri);
              Workbook workbook = WorkbookFactory.create(is)) {
             
             Sheet sheet = workbook.getSheetAt(0);
-            
-            // 1. Извлекаем текстовую матрицу
             JSONArray jsonTable = new JSONArray();
+
+            // Гарантированный ручной подсчет реальных границ для защиты .xls от пустых листов
+            int totalRows = sheet.getPhysicalNumberOfRows() > 0 ? sheet.getLastRowNum() : 0;
+            
             int maxCellCount = 0;
-            for (Row row : sheet) {
-                if (row.getLastCellNum() > maxCellCount) maxCellCount = row.getLastCellNum();
+            for (int r = 0; r <= totalRows; r++) {
+                Row row = sheet.getRow(r);
+                if (row != null && row.getLastCellNum() > maxCellCount) {
+                    maxCellCount = row.getLastCellNum();
+                }
             }
             if (maxCellCount < 15) maxCellCount = 15;
+            if (totalRows == 0 && sheet.getPhysicalNumberOfRows() == 0) totalRows = 40; // запуск пустой
 
             DataFormatter formatter = new DataFormatter();
 
-            for (int r = 0; r <= sheet.getLastRowNum(); r++) {
+            // Читаем матрицу ячеек вместе с метаданными стилей
+            for (int r = 0; r <= totalRows; r++) {
                 Row row = sheet.getRow(r);
                 JSONArray jsonRow = new JSONArray();
+                
                 for (int c = 0; c < maxCellCount; c++) {
+                    JSONObject cellObj = new JSONObject();
                     if (row == null) {
-                        jsonRow.put("");
+                        cellObj.put("v", "");
                     } else {
                         Cell cell = row.getCell(c);
-                        jsonRow.put(cell == null ? "" : formatter.formatCellValue(cell));
+                        if (cell == null) {
+                            cellObj.put("v", "");
+                        } else {
+                            cellObj.put("v", formatter.formatCellValue(cell));
+                            
+                            // Считываем стили оформления
+                            CellStyle style = cell.getCellStyle();
+                            if (style != null) {
+                                // Заливка ячейки
+                                Color bgColor = style.getFillForegroundColorColor();
+                                if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
+                                    String hexBg = getHexColor(bgColor);
+                                    if (hexBg != null && !hexBg.equals("#000000")) cellObj.put("bg", hexBg);
+                                }
+                                
+                                // Шрифты, цвета текста, жирность
+                                int fontIdx = style.getFontIndex();
+                                Font font = workbook.getFontAt(fontIdx);
+                                if (font != null) {
+                                    if (font.getBold()) cellObj.put("bold", true);
+                                    if (font.getItalic()) cellObj.put("italic", true);
+                                    
+                                    // Цвет шрифта
+                                    if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
+                                        String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
+                                        if (fontColor != null) cellObj.put("color", fontColor);
+                                    }
+                                }
+                            }
+                        }
                     }
+                    jsonRow.put(cellObj);
                 }
                 jsonTable.put(jsonRow);
             }
 
-            // 2. Извлекаем координаты объединенных областей, чтобы структура не разъезжалась
+            // Читаем объединения ячеек
             JSONArray jsonMerges = new JSONArray();
             for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
                 CellRangeAddress region = sheet.getMergedRegion(i);
@@ -151,7 +217,6 @@ public class MainActivity extends AppCompatActivity {
                 jsonMerges.put(mergeObj);
             }
 
-            // Упаковываем всё в один общий объект
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
             payload.put("merges", jsonMerges);
@@ -212,14 +277,13 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    // Перезапись файла в режиме чтения-записи
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
                          FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
                         workbook.write(fos);
                     }
                     workbook.close();
 
-                    Toast.makeText(MainActivity.this, "Изменения сохранены! Оформление защищено.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "Изменения сохранены! Все оригинальные стили защищены.", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
                     e.printStackTrace();
                     Toast.makeText(MainActivity.this, "Ошибка записи: " + e.getMessage(), Toast.LENGTH_LONG).show();
