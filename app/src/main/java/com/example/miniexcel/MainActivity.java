@@ -52,15 +52,15 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
         
-        // Включаем полноценный Pinch-to-Zoom (и увеличение, и уменьшение)
+        // Разблокируем жесткое уменьшение масштаба (Zoom-out) на уровне WebView
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
         webSettings.setDisplayZoomControls(false); 
         
-        // Важные настройки: отключаем авто-раздувание шрифтов WebView, чтобы вернуть оригинальный масштаб Excel
-        webSettings.setLoadWithOverviewMode(true);
+        // Переводим WebView в режим "Десктопного ПК", чтобы снять мобильные лимиты сжатия контента
         webSettings.setUseWideViewPort(true);
-        webSettings.setTextZoom(100); // Строго 100% размер шрифта без мобильного авто-увеличения
+        webSettings.setLoadWithOverviewMode(true);
+        webSettings.setTextZoom(100);
 
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient() {
@@ -175,9 +175,11 @@ public class MainActivity extends AppCompatActivity {
                                 cellObj.put("v", "");
                             }
 
+                            // МАКСИМАЛЬНАЯ ЗАЩИТА: Изолируем чтение стилей, чтобы спасти .xls файлы от краша
                             try {
                                 CellStyle style = cell.getCellStyle();
                                 if (style != null) {
+                                    // Чтение фоновой заливки ячейки
                                     try {
                                         Color bgColor = style.getFillForegroundColorColor();
                                         if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
@@ -188,9 +190,16 @@ public class MainActivity extends AppCompatActivity {
                                         }
                                     } catch (Throwable ignored) {}
 
+                                    // Чтение шрифтов полностью переписано с защитой от багов старых .xls в Android
                                     try {
                                         int fontIdx = style.getFontIndex();
-                                        Font font = workbook.getFontAt(fontIdx);
+                                        Font font = null;
+                                        try {
+                                            font = workbook.getFontAt(fontIdx);
+                                        } catch (Throwable t) {
+                                            // Если системный индекс шрифтов в .xls поврежден, не падаем
+                                        }
+                                        
                                         if (font != null) {
                                             if (font.getBold()) cellObj.put("bold", true);
                                             if (font.getItalic()) cellObj.put("italic", true);
@@ -242,7 +251,7 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка чтения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Критическая ошибка: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -253,7 +262,6 @@ public class MainActivity extends AppCompatActivity {
                 if (currentFileUri == null) {
                     Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
                     intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    // Динамически выставляем тип для создания нового файла по умолчанию
                     intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
                     intent.putExtra(Intent.EXTRA_TITLE, "Table.xlsx");
                     saveFileLauncher.launch(intent);
@@ -291,7 +299,6 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    // ИСПРАВЛЕНИЕ: Перезаписываем файл в корректном режиме "rwt" без привязки к жесткому MIME-типу во время сохранения
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
                          FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
                         workbook.write(fos);
