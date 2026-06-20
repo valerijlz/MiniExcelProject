@@ -2,18 +2,18 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Advanced Engine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>MiniExcel Ultra Engine</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #fff; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #fff; }
         .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
         table { border-collapse: collapse; table-layout: fixed; width: max-content; background: white; }
-        th, td { border: 1px solid #d4d4d4; padding: 6px 10px; font-size: 14px; min-width: 90px; height: 28px; outline: none; text-align: left; vertical-align: middle; word-break: break-word; }
+        th, td { border: 1px solid #d4d4d4; padding: 4px 6px; font-size: 13px; min-width: 65px; height: 22px; outline: none; vertical-align: middle; word-break: normal; white-space: nowrap; }
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 2; user-select: none; }
         tr th:first-child { position: sticky; left: 0; z-index: 3; background-color: #f1f1f1; }
-        td:first-child { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; user-select: none; }
-        td:focus { border: 2px solid #107c41 !important; background-color: #f3f9f5; }
-        .hidden-merged-cell { display: none; } /* Скрываем ячейки внутри объединенных областей */
+        td:first-child { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; user-select: none; min-width: 40px !important; width: 40px !important; }
+        td:focus { outline: 2px solid #107c41 !important; z-index: 5; position: relative; background-color: #f3f9f5 !important; }
+        .hidden-merged-cell { display: none; }
     </style>
 </head>
 <body>
@@ -23,7 +23,7 @@
 </div>
 
 <script>
-    let currentData = [];
+    let currentData = []; // Хранит только текстовую матрицу для обратной отправки в Java
     let maxRows = 60;
     let maxCols = 20;
 
@@ -32,6 +32,7 @@
         table.innerHTML = '';
         let headerRow = document.createElement('tr');
         let emptyTh = document.createElement('th');
+        emptyTh.style.width = "40px";
         headerRow.appendChild(emptyTh);
         for (let c = 0; c < maxCols; c++) {
             let th = document.createElement('th');
@@ -61,7 +62,6 @@
         }
     }
 
-    // Принимает объект { matrix: [...], merges: [...] }
     function loadExcelFromBytes(base64Data) {
         try {
             const binaryString = atob(base64Data);
@@ -71,8 +71,8 @@
             const decodedString = new TextDecoder('utf-8').decode(bytes);
             
             const payload = JSON.parse(decodedString);
-            const rows = payload.matrix;
-            const merges = payload.merges || []; // Массив объектов {sr, er, sc, ec}
+            const rows = payload.matrix; // Массив объектов ячеек {v, bg, color, bold, italic}
+            const merges = payload.merges || [];
             
             const table = document.getElementById('excel-table');
             table.innerHTML = '';
@@ -82,12 +82,15 @@
                 return;
             }
 
-            currentData = rows;
+            // Инициализируем массив под изменения текста
+            currentData = [];
             let colsCount = rows[0].length;
 
-            // Заголовки
+            // Рендерим заголовки колонок
             let headerRow = document.createElement('tr');
-            headerRow.appendChild(document.createElement('th'));
+            let firstTh = document.createElement('th');
+            firstTh.style.width = "40px";
+            headerRow.appendChild(firstTh);
             for (let c = 0; c < colsCount; c++) {
                 let th = document.createElement('th');
                 th.innerText = String.fromCharCode(65 + c);
@@ -95,7 +98,7 @@
             }
             table.appendChild(headerRow);
 
-            // Создаем карту занятых ячеек для корректного скрытия при слиянии
+            // Строим карту объединений ячеек
             let mergeMap = {};
             merges.forEach(m => {
                 for (let r = m.sr; r <= m.er; r++) {
@@ -109,32 +112,46 @@
                 }
             });
 
-            // Отрисовка сетки
+            // Отрисовка ячеек со стилями
             for (let r = 0; r < rows.length; r++) {
                 let tr = document.createElement('tr');
                 let rowTh = document.createElement('td');
                 rowTh.innerText = r + 1;
                 tr.appendChild(rowTh);
 
+                currentData[r] = [];
+
                 for (let c = 0; c < colsCount; c++) {
+                    let cellData = rows[r][c]; // Это объект {v, bg, color, bold, italic}
                     let td = document.createElement('td');
                     td.contentEditable = true;
                     td.dataset.row = r;
                     td.dataset.col = c;
-                    td.innerText = rows[r][c] || "";
+                    
+                    let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
+                    td.innerText = textValue;
+                    currentData[r][c] = textValue;
+
+                    // Применяем стили из оригинального Excel файла
+                    if (cellData) {
+                        if (cellData.bg) td.style.backgroundColor = cellData.bg;
+                        if (cellData.color) td.style.color = cellData.color;
+                        if (cellData.bold) td.style.fontWeight = "bold";
+                        if (cellData.italic) td.style.fontStyle = "italic";
+                    }
 
                     td.addEventListener('blur', function() {
                         currentData[this.dataset.row][this.dataset.col] = this.innerText;
                     });
 
-                    // Умное управление объединением ячеек на уровне HTML
+                    // Обработка Merged Cells
                     let mergeInfo = mergeMap[`${r}_${c}`];
                     if (mergeInfo) {
                         if (mergeInfo.isMain) {
                             if (mergeInfo.rowspan > 1) td.rowSpan = mergeInfo.rowspan;
                             if (mergeInfo.colspan > 1) td.colSpan = mergeInfo.colspan;
                         } else if (mergeInfo.isChild) {
-                            td.classList.add('hidden-merged-cell'); // Прячем поглощенные ячейки
+                            td.classList.add('hidden-merged-cell');
                         }
                     }
 
