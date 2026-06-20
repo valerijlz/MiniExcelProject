@@ -46,7 +46,7 @@
             const firstSheetName = originalWorkbookRef.SheetNames[0];
             const worksheet = originalWorkbookRef.Sheets[firstSheetName];
             
-            // 2. Создаем пустую безопасную сетку для FortuneSheet (100 строк на 30 колонок по умолчанию)
+            // 2. Создаем пустую безопасную сетку для FortuneSheet
             let celldata = [];
             
             // Находим реальные границы данных в файле Excel (например, "A1:M25")
@@ -82,16 +82,16 @@
                 }
             }
 
-            // 3. Извлекаем информацию об объединенных ячейках (Merge Regions), чтобы они не разваливались
+            // 3. Извлекаем информацию об объединенных ячейках (Merge Regions) БЕЗ ОШИБОК ОБЪЯВЛЕНИЯ
             let config = {};
             if (worksheet['!merges']) {
                 config.merge = {};
                 worksheet['!merges'].forEach(m => {
-                    // Конвертируем координаты слияния в формат понятный визуальному движку
-                    const mergeKey = r + "_" + c;
-                    config.merge[m.s.r + "_" + m.s.c] = {
-                        rowlen: (m.e.r - m.s.r) + 1,
-                        collen: (m.e.c - m.s.c) + 1
+                    // Ключом в FortuneSheet является координата левой верхней ячейки региона слияния "строка_колонка"
+                    const mergeKey = m.s.r + "_" + m.s.c;
+                    config.merge[mergeKey] = {
+                        rowlen: (m.e.r - m.s.r) + 1, // Сколько строк занимает объединение
+                        collen: (m.e.c - m.s.c) + 1  // Сколько колонок занимает объединение
                     };
                 });
             }
@@ -111,7 +111,7 @@
             
             AndroidBridge.onStatus("Файл успешно открыт!");
         } catch (e) {
-            // Если что-то пошло не так, выводим точную причину ошибки вместо абстрактного сообщения
+            // Выводим точную причину ошибки
             AndroidBridge.onStatus("Детали ошибки парсинга: " + e.message);
             console.error(e);
         }
