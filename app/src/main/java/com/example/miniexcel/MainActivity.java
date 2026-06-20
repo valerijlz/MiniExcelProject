@@ -52,12 +52,12 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
         
-        // Разблокируем жесткое уменьшение масштаба (Zoom-out) на уровне WebView
+        // Включаем полноценный аппаратный зум во все стороны
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
         webSettings.setDisplayZoomControls(false); 
         
-        // Переводим WebView в режим "Десктопного ПК", чтобы снять мобильные лимиты сжатия контента
+        // КЛЮЧЕВОЙ ФИКС ДЛЯ ЗУМА НАЗАД: Имитируем экран огромного десктопа ПК
         webSettings.setUseWideViewPort(true);
         webSettings.setLoadWithOverviewMode(true);
         webSettings.setTextZoom(100);
@@ -139,19 +139,29 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void pipeExcelToWebView(Uri uri) {
-        try (InputStream is = getContentResolver().openInputStream(uri);
-             Workbook workbook = WorkbookFactory.create(is)) {
-            
+        // МАКСИМАЛЬНАЯ ИЗОЛЯЦИЯ ВСЕГО ЦИКЛА ЧТЕНИЯ ДЛЯ ЗАЩИТЫ СТАРЫХ ФАЙЛОВ .XLS
+        try {
+            Workbook workbook;
+            try (InputStream is = getContentResolver().openInputStream(uri)) {
+                workbook = WorkbookFactory.create(is);
+            }
+
             Sheet sheet = workbook.getSheetAt(0);
             JSONArray jsonTable = new JSONArray();
 
-            int totalRows = sheet.getPhysicalNumberOfRows() > 0 ? sheet.getLastRowNum() : 0;
+            int totalRows = 40;
+            try {
+                totalRows = sheet.getPhysicalNumberOfRows() > 0 ? sheet.getLastRowNum() : 0;
+            } catch (Throwable ignored) {}
+            
             int maxCellCount = 0;
             for (int r = 0; r <= totalRows; r++) {
-                Row row = sheet.getRow(r);
-                if (row != null && row.getLastCellNum() > maxCellCount) {
-                    maxCellCount = row.getLastCellNum();
-                }
+                try {
+                    Row row = sheet.getRow(r);
+                    if (row != null && row.getLastCellNum() > maxCellCount) {
+                        maxCellCount = row.getLastCellNum();
+                    }
+                } catch (Throwable ignored) {}
             }
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
@@ -159,7 +169,8 @@ public class MainActivity extends AppCompatActivity {
             DataFormatter formatter = new DataFormatter();
 
             for (int r = 0; r <= totalRows; r++) {
-                Row row = sheet.getRow(r);
+                Row row = null;
+                try { row = sheet.getRow(r); } catch (Throwable ignored) {}
                 JSONArray jsonRow = new JSONArray();
                 
                 for (int c = 0; c < maxCellCount; c++) {
@@ -167,7 +178,8 @@ public class MainActivity extends AppCompatActivity {
                     cellObj.put("v", "");
                     
                     if (row != null) {
-                        Cell cell = row.getCell(c);
+                        Cell cell = null;
+                        try { cell = row.getCell(c); } catch (Throwable ignored) {}
                         if (cell != null) {
                             try {
                                 cellObj.put("v", formatter.formatCellValue(cell));
@@ -175,11 +187,9 @@ public class MainActivity extends AppCompatActivity {
                                 cellObj.put("v", "");
                             }
 
-                            // МАКСИМАЛЬНАЯ ЗАЩИТА: Изолируем чтение стилей, чтобы спасти .xls файлы от краша
                             try {
                                 CellStyle style = cell.getCellStyle();
                                 if (style != null) {
-                                    // Чтение фоновой заливки ячейки
                                     try {
                                         Color bgColor = style.getFillForegroundColorColor();
                                         if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
@@ -190,16 +200,9 @@ public class MainActivity extends AppCompatActivity {
                                         }
                                     } catch (Throwable ignored) {}
 
-                                    // Чтение шрифтов полностью переписано с защитой от багов старых .xls в Android
                                     try {
                                         int fontIdx = style.getFontIndex();
-                                        Font font = null;
-                                        try {
-                                            font = workbook.getFontAt(fontIdx);
-                                        } catch (Throwable t) {
-                                            // Если системный индекс шрифтов в .xls поврежден, не падаем
-                                        }
-                                        
+                                        Font font = workbook.getFontAt(fontIdx);
                                         if (font != null) {
                                             if (font.getBold()) cellObj.put("bold", true);
                                             if (font.getItalic()) cellObj.put("italic", true);
@@ -228,16 +231,23 @@ public class MainActivity extends AppCompatActivity {
 
             JSONArray jsonMerges = new JSONArray();
             try {
-                for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
-                    CellRangeAddress region = sheet.getMergedRegion(i);
-                    JSONObject mergeObj = new JSONObject();
-                    mergeObj.put("sr", region.getFirstRow());
-                    mergeObj.put("er", region.getLastRow());
-                    mergeObj.put("sc", region.getFirstColumn());
-                    mergeObj.put("ec", region.getLastColumn());
-                    jsonMerges.put(mergeObj);
+                int numRegions = sheet.getNumMergedRegions();
+                for (int i = 0; i < numRegions; i++) {
+                    try {
+                        CellRangeAddress region = sheet.getMergedRegion(i);
+                        if (region != null) {
+                            JSONObject mergeObj = new JSONObject();
+                            mergeObj.put("sr", region.getFirstRow());
+                            mergeObj.put("er", region.getLastRow());
+                            mergeObj.put("sc", region.getFirstColumn());
+                            mergeObj.put("ec", region.getLastColumn());
+                            jsonMerges.put(mergeObj);
+                        }
+                    } catch (Throwable ignored) {}
                 }
-            } catch (Exception ignored) {}
+            } catch (Throwable ignored) {}
+
+            workbook.close();
 
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
@@ -251,7 +261,7 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Exception e) {
             e.printStackTrace();
-            Toast.makeText(this, "Критическая ошибка: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Ошибка чтения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -273,6 +283,7 @@ public class MainActivity extends AppCompatActivity {
                     String jsonString = new String(decodedBytes, StandardCharsets.UTF_8);
                     JSONArray jsonTable = new JSONArray(jsonString);
 
+                    // ГАРАНТИРОВАННОЕ ПЕРЕОТКРЫТИЕ И ИЗМЕНЕНИЕ ДАННЫХ
                     Workbook workbook;
                     try (InputStream is = getContentResolver().openInputStream(currentFileUri)) {
                         workbook = WorkbookFactory.create(is);
@@ -299,13 +310,18 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
-                         FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
-                        workbook.write(fos);
+                    // ПОЛНАЯ ФИКСАЦИЯ ИЗМЕНЕНИЙ НА ДИСКЕ С ОЧИСТКОЙ СТАРОГО БУФЕРА
+                    try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt")) {
+                        // Очищаем старое содержимое перед записью свежих данных
+                        pfd.setRfSize(0); 
+                        try (FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
+                            workbook.write(fos);
+                            fos.flush();
+                        }
                     }
                     workbook.close();
 
-                    Toast.makeText(MainActivity.this, "Изменения сохранены!", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(MainActivity.this, "Изменения успешно сохранены!", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
                     e.printStackTrace();
                     Toast.makeText(MainActivity.this, "Ошибка записи: " + e.getMessage(), Toast.LENGTH_LONG).show();
