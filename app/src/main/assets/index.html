@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Native Engine</title>
+    <title>MiniExcel Advanced Engine</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #fff; }
         .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
@@ -13,13 +13,13 @@
         tr th:first-child { position: sticky; left: 0; z-index: 3; background-color: #f1f1f1; }
         td:first-child { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; user-select: none; }
         td:focus { border: 2px solid #107c41 !important; background-color: #f3f9f5; }
+        .hidden-merged-cell { display: none; } /* Скрываем ячейки внутри объединенных областей */
     </style>
 </head>
 <body>
 
 <div class="table-wrapper">
-    <table id="excel-table">
-        </table>
+    <table id="excel-table"></table>
 </div>
 
 <script>
@@ -27,16 +27,12 @@
     let maxRows = 60;
     let maxCols = 20;
 
-    // Генерация пустой таблицы при старте приложения
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
         table.innerHTML = '';
-        
-        // Создаем буквенные заголовки колонок (A, B, C...)
         let headerRow = document.createElement('tr');
         let emptyTh = document.createElement('th');
         headerRow.appendChild(emptyTh);
-        
         for (let c = 0; c < maxCols; c++) {
             let th = document.createElement('th');
             th.innerText = String.fromCharCode(65 + c);
@@ -44,13 +40,11 @@
         }
         table.appendChild(headerRow);
 
-        // Создаем числовые строки (1, 2, 3...)
         for (let r = 0; r < maxRows; r++) {
             let tr = document.createElement('tr');
             let rowTh = document.createElement('td');
             rowTh.innerText = r + 1;
             tr.appendChild(rowTh);
-
             currentData[r] = [];
             for (let c = 0; c < maxCols; c++) {
                 let td = document.createElement('td');
@@ -58,32 +52,27 @@
                 td.dataset.row = r;
                 td.dataset.col = c;
                 currentData[r][c] = "";
-
-                // Слушатель изменения текста в ячейке
                 td.addEventListener('blur', function() {
                     currentData[this.dataset.row][this.dataset.col] = this.innerText;
                 });
-
                 tr.appendChild(td);
             }
             table.appendChild(tr);
         }
     }
 
-    // Вызывается из Java. Принимает JSON-матрицу ячеек из оригинального Excel
+    // Принимает объект { matrix: [...], merges: [...] }
     function loadExcelFromBytes(base64Data) {
         try {
-            // Безопасное декодирование Base64 строки в UTF-8 текст без использования escape/decodeURIComponent
             const binaryString = atob(base64Data);
             const len = binaryString.length;
             const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            const decoder = new TextDecoder('utf-8');
-            const decodedString = decoder.decode(bytes);
+            for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
+            const decodedString = new TextDecoder('utf-8').decode(bytes);
             
-            const rows = JSON.parse(decodedString);
+            const payload = JSON.parse(decodedString);
+            const rows = payload.matrix;
+            const merges = payload.merges || []; // Массив объектов {sr, er, sc, ec}
             
             const table = document.getElementById('excel-table');
             table.innerHTML = '';
@@ -96,7 +85,7 @@
             currentData = rows;
             let colsCount = rows[0].length;
 
-            // Перерисовываем буквенные заголовки колонок
+            // Заголовки
             let headerRow = document.createElement('tr');
             headerRow.appendChild(document.createElement('th'));
             for (let c = 0; c < colsCount; c++) {
@@ -106,7 +95,21 @@
             }
             table.appendChild(headerRow);
 
-            // Наполняем таблицу реальными текстовыми данными ячеек
+            // Создаем карту занятых ячеек для корректного скрытия при слиянии
+            let mergeMap = {};
+            merges.forEach(m => {
+                for (let r = m.sr; r <= m.er; r++) {
+                    for (let c = m.sc; c <= m.ec; c++) {
+                        if (r === m.sr && c === m.sc) {
+                            mergeMap[`${r}_${c}`] = { isMain: true, rowspan: (m.er - m.sr) + 1, colspan: (m.ec - m.sc) + 1 };
+                        } else {
+                            mergeMap[`${r}_${c}`] = { isChild: true };
+                        }
+                    }
+                }
+            });
+
+            // Отрисовка сетки
             for (let r = 0; r < rows.length; r++) {
                 let tr = document.createElement('tr');
                 let rowTh = document.createElement('td');
@@ -124,6 +127,17 @@
                         currentData[this.dataset.row][this.dataset.col] = this.innerText;
                     });
 
+                    // Умное управление объединением ячеек на уровне HTML
+                    let mergeInfo = mergeMap[`${r}_${c}`];
+                    if (mergeInfo) {
+                        if (mergeInfo.isMain) {
+                            if (mergeInfo.rowspan > 1) td.rowSpan = mergeInfo.rowspan;
+                            if (mergeInfo.colspan > 1) td.colSpan = mergeInfo.colspan;
+                        } else if (mergeInfo.isChild) {
+                            td.classList.add('hidden-merged-cell'); // Прячем поглощенные ячейки
+                        }
+                    }
+
                     tr.appendChild(td);
                 }
                 table.appendChild(tr);
@@ -134,28 +148,19 @@
         }
     }
 
-    // Вызывается из Java при нажатии на кнопку "Сохранить"
     function exportExcelToAndroid() {
         try {
             const jsonString = JSON.stringify(currentData);
-            
-            // Безопасное кодирование текста в Base64 без ограничений по символам
             const encoder = new TextEncoder();
             const bytes = encoder.encode(jsonString);
             let binary = '';
-            const len = bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-                binary += String.fromCharCode(bytes[i]);
-            }
-            const base64 = btoa(binary);
-            
-            AndroidBridge.saveFileData(base64);
+            for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
+            AndroidBridge.saveFileData(btoa(binary));
         } catch (e) {
             AndroidBridge.onStatus("Ошибка экспорта: " + e.message);
         }
     }
 
-    // Дефолтный запуск пустой сетки при открытии приложения
     window.onload = createEmptyGrid;
 </script>
 </body>
