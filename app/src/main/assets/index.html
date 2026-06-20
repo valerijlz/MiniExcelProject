@@ -3,171 +3,142 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Core Pro</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortune-sheet/variant@1.0.0/dist/index.min.css" />
-    <script src="https://cdn.jsdelivr.net/npm/@fortune-sheet/variant@1.0.0/dist/index.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    
+    <title>MiniExcel Native Engine</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #f5f5f5; }
-        #sheet-container { width: 100%; height: 100%; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #fff; }
+        .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
+        table { border-collapse: collapse; table-layout: fixed; width: max-content; background: white; }
+        th, td { border: 1px solid #d4d4d4; padding: 6px 10px; font-size: 14px; min-width: 90px; height: 28px; outline: none; text-align: left; vertical-align: middle; word-break: break-word; }
+        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 2; user-select: none; }
+        tr th:first-child { position: sticky; left: 0; z-index: 3; background-color: #f1f1f1; }
+        td:first-child { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; user-select: none; }
+        td:focus { border: 2px solid #107c41 !important; background-color: #f3f9f5; }
     </style>
 </head>
 <body>
 
-<div id="sheet-container"></div>
+<div class="table-wrapper">
+    <table id="excel-table">
+        </table>
+</div>
 
 <script>
-    let sheetInstance = null;
-    let originalWorkbookRef = null;
+    let currentData = [];
+    let maxRows = 60;
+    let maxCols = 20;
 
-    // Безопасный перевод Base64 в ArrayBuffer (работает стабильно с любыми объемами)
-    function base64ToArrayBuffer(base64) {
-        const binaryString = atob(base64);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
+    // Генерация пустой таблицы при старте приложения
+    function createEmptyGrid() {
+        const table = document.getElementById('excel-table');
+        table.innerHTML = '';
+        
+        // Создаем буквенные заголовки колонок (A, B, C...)
+        let headerRow = document.createElement('tr');
+        let emptyTh = document.createElement('th');
+        headerRow.appendChild(emptyTh);
+        
+        for (let c = 0; c < maxCols; c++) {
+            let th = document.createElement('th');
+            th.innerText = String.fromCharCode(65 + c);
+            headerRow.appendChild(th);
         }
-        return bytes.buffer;
+        table.appendChild(headerRow);
+
+        // Создаем числовые строки (1, 2, 3...)
+        for (let r = 0; r < maxRows; r++) {
+            let tr = document.createElement('tr');
+            let rowTh = document.createElement('td');
+            rowTh.innerText = r + 1;
+            tr.appendChild(rowTh);
+
+            currentData[r] = [];
+            for (let c = 0; c < maxCols; c++) {
+                let td = document.createElement('td');
+                td.contentEditable = true;
+                td.dataset.row = r;
+                td.dataset.col = c;
+                currentData[r][c] = "";
+
+                // Слушатель изменения текста в ячейке
+                td.addEventListener('blur', function() {
+                    currentData[this.dataset.row][this.dataset.col] = this.innerText;
+                });
+
+                tr.appendChild(td);
+            }
+            table.appendChild(tr);
+        }
     }
 
-    // ГЛАВНЫЙ НАДЕЖНЫЙ ПАРСЕР
+    // Вызывается из Java. Принимает JSON-матрицу ячеек из оригинального Excel
     function loadExcelFromBytes(base64Data) {
         try {
-            // 1. Читаем бинарный архив файла с включенным сохранением стилей
-            const dataBuffer = base64ToArrayBuffer(base64Data);
-            originalWorkbookRef = XLSX.read(dataBuffer, { type: 'array', cellStyles: true, cellNF: true, cellDates: true });
+            // Декодируем текстовые данные из Base64 формата
+            const decodedString = decodeURIComponent(escape(atob(base64Data)));
+            const rows = JSON.parse(decodedString);
             
-            if (!originalWorkbookRef || !originalWorkbookRef.SheetNames.length) {
-                throw new Error("Файл пуст или поврежден");
-            }
-
-            const firstSheetName = originalWorkbookRef.SheetNames[0];
-            const worksheet = originalWorkbookRef.Sheets[firstSheetName];
+            const table = document.getElementById('excel-table');
+            table.innerHTML = '';
             
-            // 2. Создаем пустую безопасную сетку для FortuneSheet
-            let celldata = [];
-            
-            // Находим реальные границы данных в файле Excel (например, "A1:M25")
-            if (worksheet['!ref']) {
-                const range = XLSX.utils.decode_range(worksheet['!ref']);
-                
-                // Проходим циклом по каждой ячейке файла абсолютно безопасно
-                for (let r = range.s.r; r <= range.e.r; r++) {
-                    for (let c = range.s.c; c <= range.e.c; c++) {
-                        const cellAddress = XLSX.utils.encode_cell({ r: r, c: c });
-                        const cell = worksheet[cellAddress];
-                        
-                        // Если ячейка существует и содержит данные, переносим их в редактор
-                        if (cell) {
-                            let cellObj = { r: r, c: c, v: {} };
-                            
-                            if (cell.f) {
-                                // Если это формула (например, =SUM(A1:A5))
-                                cellObj.v.f = "=" + cell.f;
-                                cellObj.v.v = cell.v !== undefined ? cell.v : "";
-                            } else {
-                                // Если это обычное значение (текст, число, дата)
-                                cellObj.v.v = cell.v !== undefined ? cell.v : "";
-                            }
-                            
-                            // Отображаемый текст (форматированный вид)
-                            cellObj.v.m = cell.w !== undefined ? cell.w : String(cellObj.v.v);
-                            cellObj.v.ct = { fa: cell.z || "@", t: cell.t || "s" };
-                            
-                            celldata.push(cellObj);
-                        }
-                    }
-                }
-            }
-
-            // 3. Извлекаем информацию об объединенных ячейках (Merge Regions) БЕЗ ОШИБОК ОБЪЯВЛЕНИЯ
-            let config = {};
-            if (worksheet['!merges']) {
-                config.merge = {};
-                worksheet['!merges'].forEach(m => {
-                    // Ключом в FortuneSheet является координата левой верхней ячейки региона слияния "строка_колонка"
-                    const mergeKey = m.s.r + "_" + m.s.c;
-                    config.merge[mergeKey] = {
-                        rowlen: (m.e.r - m.s.r) + 1, // Сколько строк занимает объединение
-                        collen: (m.e.c - m.s.c) + 1  // Сколько колонок занимает объединение
-                    };
-                });
-            }
-
-            // 4. Инициализируем визуальный интерфейс редактора
-            document.getElementById('sheet-container').innerHTML = '';
-            sheetInstance = fortune.createSheet({
-                container: 'sheet-container',
-                data: [{ 
-                    name: firstSheetName, 
-                    celldata: celldata,
-                    config: config
-                }],
-                showinfobar: false,
-                allowUpdate: true
-            });
-            
-            AndroidBridge.onStatus("Файл успешно открыт!");
-        } catch (e) {
-            // Выводим точную причину ошибки
-            AndroidBridge.onStatus("Детали ошибки парсинга: " + e.message);
-            console.error(e);
-        }
-    }
-
-    // ФУНКЦИЯ ЭКСПОРТА И СОХРАНЕНИЯ БЕЗ ПОТЕРЬ
-    function exportExcelToAndroid() {
-        try {
-            if (!sheetInstance || !originalWorkbookRef) {
-                AndroidBridge.onStatus("Нет данных для записи");
+            if (!rows || rows.length === 0) {
+                createEmptyGrid();
                 return;
             }
-            
-            const sheetData = sheetInstance.getSheetData();
-            const firstSheetName = originalWorkbookRef.SheetNames[0];
-            
-            // Экспортируем данные сетки обратно в формат данных листа
-            const updatedWorksheet = fortune.exportToWorksheet(sheetData);
-            
-            // Возвращаем на место метаданные оригинального файла (объединения, сетку, ширину колонок)
-            if (originalWorkbookRef.Sheets[firstSheetName]['!merges']) {
-                updatedWorksheet['!merges'] = originalWorkbookRef.Sheets[firstSheetName]['!merges'];
-            }
-            if (originalWorkbookRef.Sheets[firstSheetName]['!cols']) {
-                updatedWorksheet['!cols'] = originalWorkbookRef.Sheets[firstSheetName]['!cols'];
-            }
-            if (originalWorkbookRef.Sheets[firstSheetName]['!rows']) {
-                updatedWorksheet['!rows'] = originalWorkbookRef.Sheets[firstSheetName]['!rows'];
-            }
 
-            // Перезаписываем первый лист в оригинальной структуре книги
-            originalWorkbookRef.Sheets[firstSheetName] = updatedWorksheet;
-            
-            // Генерируем финальный чистый ZIP/XLSX архив со всеми стилями
-            const wbout = XLSX.write(originalWorkbookRef, { bookType: 'xlsx', type: 'array', cellStyles: true });
-            
-            // Кодируем в Base64 для передачи в Android Java
-            const binary = String.fromCharCode.apply(null, new Uint8Array(wbout));
-            const base64 = btoa(binary);
-            
+            currentData = rows;
+            let colsCount = rows[0].length;
+
+            // Перерисовываем буквенные заголовки колонок
+            let headerRow = document.createElement('tr');
+            headerRow.appendChild(document.createElement('th'));
+            for (let c = 0; c < colsCount; c++) {
+                let th = document.createElement('th');
+                th.innerText = String.fromCharCode(65 + c);
+                headerRow.appendChild(th);
+            }
+            table.appendChild(headerRow);
+
+            // Наполняем таблицу реальными текстовыми данными ячеек
+            for (let r = 0; r < rows.length; r++) {
+                let tr = document.createElement('tr');
+                let rowTh = document.createElement('td');
+                rowTh.innerText = r + 1;
+                tr.appendChild(rowTh);
+
+                for (let c = 0; c < colsCount; c++) {
+                    let td = document.createElement('td');
+                    td.contentEditable = true;
+                    td.dataset.row = r;
+                    td.dataset.col = c;
+                    td.innerText = rows[r][c] || "";
+
+                    td.addEventListener('blur', function() {
+                        currentData[this.dataset.row][this.dataset.col] = this.innerText;
+                    });
+
+                    tr.appendChild(td);
+                }
+                table.appendChild(tr);
+            }
+            AndroidBridge.onStatus("Файл успешно визуализирован!");
+        } catch (e) {
+            AndroidBridge.onStatus("Ошибка отрисовки: " + e.message);
+        }
+    }
+
+    // Вызывается из Java при нажатии на кнопку "Сохранить"
+    function exportExcelToAndroid() {
+        try {
+            const jsonString = JSON.stringify(currentData);
+            const base64 = btoa(unescape(encodeURIComponent(jsonString)));
             AndroidBridge.saveFileData(base64);
         } catch (e) {
-            AndroidBridge.onStatus("Ошибка сборки: " + e.message);
+            AndroidBridge.onStatus("Ошибка экспорта: " + e.message);
         }
     }
 
-    // Дефолтная инициализация при старте пустого приложения
-    window.onload = function() {
-        if (!sheetInstance) {
-            sheetInstance = fortune.createSheet({
-                container: 'sheet-container',
-                data: [{ name: 'Sheet1', row: 40, column: 15 }],
-                showinfobar: false
-            });
-        }
-    }
+    // Дефолтный запуск пустой сетки при открытии приложения
+    window.onload = createEmptyGrid;
 </script>
 </body>
 </html>
