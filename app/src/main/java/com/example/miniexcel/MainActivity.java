@@ -283,7 +283,6 @@ public class MainActivity extends AppCompatActivity {
                     String jsonString = new String(decodedBytes, StandardCharsets.UTF_8);
                     JSONArray jsonTable = new JSONArray(jsonString);
 
-                    // ГАРАНТИРОВАННОЕ ПЕРЕОТКРЫТИЕ И ИЗМЕНЕНИЕ ДАННЫХ
                     Workbook workbook;
                     try (InputStream is = getContentResolver().openInputStream(currentFileUri)) {
                         workbook = WorkbookFactory.create(is);
@@ -310,10 +309,9 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    // ПОЛНАЯ ФИКСАЦИЯ ИЗМЕНЕНИЙ НА ДИСКЕ С ОЧИСТКОЙ СТАРОГО БУФЕРА
+                    // ИСПРАВЛЕНО: используем правильный системный метод setFdSize(0)
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt")) {
-                        // Очищаем старое содержимое перед записью свежих данных
-                        pfd.setRfSize(0); 
+                        pfd.setFdSize(0); 
                         try (FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
                             workbook.write(fos);
                             fos.flush();
