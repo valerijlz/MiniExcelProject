@@ -172,13 +172,32 @@ private void pipeExcelToWebView(Uri uri) {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
-            // Улучшенная стандартная конвертация ширины колонок Excel -> Пиксели
+            // ПОЛУЧАЕМ СТАНДАРТНУЮ ШИРИНУ КОЛОНКИ ЛИСТА (если явная ширина не задана в Excel)
+            // В POI getDefaultColumnWidth() возвращает ширину в символах (например, 8). 
+            // Переводим её в пиксели (стандарт для Excel: 1 символ ≈ 8-9 пикселей при 96 DPI)
+            int defaultColWidthInPx = (int) (sheet.getDefaultColumnWidth() * 8.4 + 5);
+            if (defaultColWidthInPx < 40) defaultColWidthInPx = 85;
+
+            // ТОЧНЫЙ АЛГОРИТМ КОНВЕРТАЦИИ ЕДИНИЦ EXCEL В ПИКСЕЛИ
             JSONArray jsonColWidths = new JSONArray();
             for (int c = 0; c < maxCellCount; c++) {
+                // sheet.getColumnWidth() возвращает значение в 1/256 ширины символа
                 int poiWidth = sheet.getColumnWidth(c);
-                // 1 единица POI = 1/256 от ширины символа. Переводим в px корректно:
-                int widthInPx = (int) (((double) poiWidth / 256.0) * 7.5); 
-                if (widthInPx < 50) widthInPx = 85; // Оптимальный компактный порог
+                
+                int widthInPx;
+                // Исключаем дефолтное неинициализированное POI-значение (2048)
+                if (poiWidth == 2048 && sheet.isColumnHidden(c)) {
+                    widthInPx = defaultColWidthInPx;
+                } else {
+                    double characters = (double) poiWidth / 256.0;
+                    // Официальная формула Microsoft для перевода ширины в пиксели при 96 DPI:
+                    // Pixels = trunc(((256 * characters + trunc(128 / 7)) / 256) * 7)
+                    // Упрощенный стабильный аналог для Android WebView:
+                    widthInPx = (int) (characters * 8.4 + 5);
+                }
+                
+                // Предотвращаем схлопывание колонок
+                if (widthInPx < 30) widthInPx = defaultColWidthInPx;
                 jsonColWidths.put(widthInPx);
             }
 
@@ -189,9 +208,11 @@ private void pipeExcelToWebView(Uri uri) {
                 Row row = null;
                 try { row = sheet.getRow(r); } catch (Throwable ignored) {}
                 
+                // Стандартная высота строки Excel (15pt ≈ 20px)
                 int heightInPx = 20; 
                 if (row != null && row.getHeightInPoints() > 0) {
-                    heightInPx = (int) (row.getHeightInPoints() * 1.2); 
+                    // Перевод Points в Pixels (1 pt = 1.33 px при стандартной плотности)
+                    heightInPx = (int) (row.getHeightInPoints() * 1.33); 
                 }
                 jsonRowHeights.put(heightInPx);
 
