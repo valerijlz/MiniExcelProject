@@ -2,27 +2,36 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.2, maximum-scale=5.0, user-scalable=yes">
-    <title>MiniExcel Perfect Grid</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes">
+    <title>MiniExcel Native Proportions</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #fff; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: "Calibri", "Segoe UI", Arial, sans-serif; background-color: #fff; }
         .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
         
+        /* table-layout: fixed обязателен для работы colgroup */
         table { border-collapse: collapse; table-layout: fixed; width: max-content; background: white; box-sizing: border-box; }
         
-        /* Устанавливаем overflow: visible, разрешая вылет текста за рамку ячейки */
-        th, td { border: 0.5px solid #d4d4d4; padding: 0; font-size: 11px; outline: none; vertical-align: middle; position: relative; overflow: visible; box-sizing: border-box; }
+        /* Устанавливаем базовый размер шрифта, от которого рассчитывается единица ch (1ch = ширина символа '0') */
+        th, td { 
+            border: 0.5px solid #d4d4d4; 
+            padding: 0; 
+            font-size: 13px; 
+            outline: none; 
+            vertical-align: middle; 
+            position: relative; 
+            overflow: visible; 
+            box-sizing: border-box; 
+        }
         
-        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 10; user-select: none; height: 22px; }
+        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 10; user-select: none; height: 24px; }
         tr th:first-child { position: sticky; left: 0; z-index: 15; background-color: #f1f1f1; }
         
         .row-number-cell { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 5; height: 100%; }
         
-/* Парящий слой текста: не меняет геометрию ячейки, "выплывает" вправо */
-.cell-content {
+        /* Парящий контейнер для текста: берет размер в ch от родителя, но позволяет тексту выходить вправо */
+        .cell-content {
             position: absolute;
-            left: 6px;
-            right: 6px;
+            left: 5px;
             top: 0;
             height: 100%;
             display: flex;
@@ -61,11 +70,11 @@
 
         let colGroup = document.createElement('colgroup');
         let colFirst = document.createElement('col');
-        colFirst.style.width = "35px";
+        colFirst.style.width = "40px";
         colGroup.appendChild(colFirst);
         for (let c = 0; c < defaultCols; c++) {
             let col = document.createElement('col');
-            col.style.width = "75px";
+            col.style.width = "10ch"; // 10 символов по умолчанию
             colGroup.appendChild(col);
         }
         table.appendChild(colGroup);
@@ -82,7 +91,7 @@
 
         for (let r = 0; r < defaultRows; r++) {
             let tr = document.createElement('tr');
-            tr.style.height = "18px"; 
+            tr.style.height = "22px"; 
             let rowTh = document.createElement('td');
             rowTh.className = "row-number-cell";
             rowTh.innerText = r + 1;
@@ -115,7 +124,7 @@
             const payload = JSON.parse(decodedString);
             const rows = payload.matrix;
             const merges = payload.merges || [];
-            const widths = payload.widths || [];
+            const widths = payload.widths || []; // Теперь здесь чистые значения в количестве символов (например, 10 или 8.43)
             const heights = payload.heights || [];
             
             const table = document.getElementById('excel-table');
@@ -129,14 +138,15 @@
             currentData = [];
             let colsCount = rows[0].length;
 
+            // УСТАНАВЛИВАЕМ НАВТИВНУЮ ШИРИНУ В ЕДИНИЦАХ СИМВОЛОВ (ch) + небольшой запас под отступы ячейки (+1.5)
             let colGroup = document.createElement('colgroup');
             let colFirst = document.createElement('col');
-            colFirst.style.width = "35px";
+            colFirst.style.width = "45px"; 
             colGroup.appendChild(colFirst);
             for (let c = 0; c < colsCount; c++) {
                 let col = document.createElement('col');
-                let w = widths[c] ? widths[c] + "px" : "75px";
-                col.style.width = w;
+                let charWidth = widths[c] ? (widths[c] + 1.5) : 10;
+                col.style.width = charWidth + "ch"; 
                 colGroup.appendChild(col);
             }
             table.appendChild(colGroup);
@@ -166,7 +176,7 @@
 
             for (let r = 0; r < rows.length; r++) {
                 let tr = document.createElement('tr');
-                tr.style.height = heights[r] ? heights[r] + "px" : "18px";
+                tr.style.height = heights[r] ? heights[r] + "px" : "22px";
 
                 let rowTh = document.createElement('td');
                 rowTh.className = "row-number-cell";
