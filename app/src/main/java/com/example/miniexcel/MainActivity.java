@@ -171,17 +171,28 @@ public class MainActivity extends AppCompatActivity {
 
             int defaultColWidthInPx = 110; 
 
-// ПЕРЕДАЕМ ОРИГИНАЛЬНУЮ ШИРИНУ EXCEL (КОЛИЧЕСТВО СИМВОЛОВ) В HTML
+// Официальный алгоритм Microsoft Excel для конвертации единиц ширины (1/256 символа) в пиксели при 96 DPI
+            int defaultColWidthInPx = 80; 
             JSONArray jsonColWidths = new JSONArray();
+            
             for (int c = 0; c < maxCellCount; c++) {
                 int poiWidth = sheet.getColumnWidth(c);
-                double characters = (double) poiWidth / 256.0;
+                int widthInPx;
                 
-                // Если ширина не задана (или дефолтная пустая колонка), ставим стандартные 8.43 символа Excel
-                if (poiWidth == 2048 || characters <= 0) {
-                    characters = 8.43;
+                if (poiWidth == 2048) {
+                    widthInPx = defaultColWidthInPx;
+                } else {
+                    double characters = (double) poiWidth / 256.0;
+                    // Формула Excel: если ширина > 1, то Пиксели = trunc((отступы_шрифта + символы) * 7)
+                    if (characters > 1) {
+                        widthInPx = (int) (characters * 7 + 5);
+                    } else {
+                        widthInPx = (int) (characters * (7 + 5));
+                    }
                 }
-                jsonColWidths.put(characters);
+                
+                if (widthInPx < 30) widthInPx = defaultColWidthInPx;
+                jsonColWidths.put(widthInPx);
             }
 
             DataFormatter formatter = new DataFormatter();
