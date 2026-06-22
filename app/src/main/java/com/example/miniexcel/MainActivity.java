@@ -48,10 +48,18 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
+        // ЖЕСТКИЙ СБРОС КЭША WEBVIEW (Уничтожает старые версии интерфейса в памяти смартфона)
+        tableWebView.clearCache(true);
+        tableWebView.clearHistory();
+        tableWebView.clearFormData();
+
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
+        
+        // Отключаем кэширование на уровне настроек
+        webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
@@ -164,12 +172,13 @@ public class MainActivity extends AppCompatActivity {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
-            // Вычисляем ширину каждого столбца (переводим из попугаев Excel в пиксели)
+            // Конвертация ширины столбцов (уменьшаем коэффициент, чтобы убрать гигантизм)
             JSONArray jsonColWidths = new JSONArray();
             for (int c = 0; c < maxCellCount; c++) {
-                int widthInPoints = sheet.getColumnWidth(c) / 32; // Конвертация POI ширины колонок
-                if (widthInPoints < 40) widthInPoints = 75; // Минимальный порог, если колонка пустая
-                jsonColWidths.put(widthInPoints);
+                int poiWidth = sheet.getColumnWidth(c);
+                int widthInPx = (int) (poiWidth / 36); // Более плотное сжатие колонок
+                if (widthInPx < 40) widthInPx = 75; 
+                jsonColWidths.put(widthInPx);
             }
 
             DataFormatter formatter = new DataFormatter();
@@ -179,10 +188,9 @@ public class MainActivity extends AppCompatActivity {
                 Row row = null;
                 try { row = sheet.getRow(r); } catch (Throwable ignored) {}
                 
-                // Считываем высоту конкретной строки из файла
-                int heightInPx = 20; // Высота по умолчанию (около 3мм)
+                int heightInPx = 18; // Сжатая высота (~3мм)
                 if (row != null && row.getHeightInPoints() > 0) {
-                    heightInPx = (int) (row.getHeightInPoints() * 1.15); // Пропорциональный перевод в px
+                    heightInPx = (int) (row.getHeightInPoints() * 1.05); 
                 }
                 jsonRowHeights.put(heightInPx);
 
@@ -266,8 +274,8 @@ public class MainActivity extends AppCompatActivity {
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
             payload.put("merges", jsonMerges);
-            payload.put("widths", jsonColWidths); // Передаем ширину колонок
-            payload.put("heights", jsonRowHeights); // Передаем высоту строк
+            payload.put("widths", jsonColWidths);
+            payload.put("heights", jsonRowHeights);
 
             String jsonString = payload.toString();
             String base64Payload = Base64.encodeToString(jsonString.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
