@@ -2,21 +2,21 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes">
-    <title>MiniExcel Pro Grid</title>
+    <meta name="viewport" content="width=device-width, initial-scale=0.4, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes">
+    <title>MiniExcel Scaled Grid</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #fff; }
         .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
         table { border-collapse: collapse; table-layout: fixed; width: max-content; background: white; }
         
-        /* Пропорциональные размеры ячеек по умолчанию */
-        th, td { border: 0.5px solid #d4d4d4; padding: 2px 5px; font-size: 11px; height: 18px; min-height: 18px; max-height: 18px; outline: none; vertical-align: middle; word-break: normal; white-space: nowrap; width: 75px; min-width: 75px; }
+        /* Базовые стили ячеек */
+        th, td { border: 0.5px solid #d4d4d4; padding: 2px 4px; font-size: 11px; outline: none; vertical-align: middle; word-break: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 2; user-select: none; }
         tr th:first-child { position: sticky; left: 0; z-index: 3; background-color: #f1f1f1; }
         
-        /* Узкая колонка номеров строк */
-        td:first-child { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; min-width: 30px !important; width: 30px !important; max-width: 30px !important; }
+        /* Колонка номеров строк (фиксированная узкая) */
+        td:first-child { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; min-width: 35px !important; width: 35px !important; max-width: 35px !important; }
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 5; position: relative; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
     </style>
@@ -32,28 +32,32 @@
     let maxRows = 50;
     let maxCols = 15;
 
+    // Генерация красивой пустой сетки при первом запуске (строго стандартные пропорции Excel)
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
         table.innerHTML = '';
-        table.style.tableLayout = "fixed"; // Пустая сетка имеет фиксированные пропорции ячеек Excel
 
         let headerRow = document.createElement('tr');
+        headerRow.style.height = "20px";
         let emptyTh = document.createElement('th');
-        emptyTh.style.width = "30px";
+        emptyTh.style.width = "35px";
         headerRow.appendChild(emptyTh);
+        
         for (let c = 0; c < maxCols; c++) {
             let th = document.createElement('th');
             th.innerText = String.fromCharCode(65 + c);
-            th.style.width = "75px";
+            th.style.width = "75px"; // Стандартная ширина колонки
             headerRow.appendChild(th);
         }
         table.appendChild(headerRow);
 
         for (let r = 0; r < maxRows; r++) {
             let tr = document.createElement('tr');
+            tr.style.height = "18px"; // Стандартная компактная высота строки (~3мм)
             let rowTh = document.createElement('td');
             rowTh.innerText = r + 1;
             tr.appendChild(rowTh);
+            
             currentData[r] = [];
             for (let c = 0; c < maxCols; c++) {
                 let td = document.createElement('td');
@@ -61,6 +65,7 @@
                 td.dataset.row = r;
                 td.dataset.col = c;
                 currentData[r][c] = "";
+                td.style.width = "75px";
                 td.addEventListener('blur', function() {
                     currentData[this.dataset.row][this.dataset.col] = this.innerText;
                 });
@@ -70,6 +75,7 @@
         }
     }
 
+    // Загрузка реального файла с соблюдением всех оригинальных пропорций
     function loadExcelFromBytes(base64Data) {
         try {
             const binaryString = atob(base64Data);
@@ -81,11 +87,12 @@
             const payload = JSON.parse(decodedString);
             const rows = payload.matrix;
             const merges = payload.merges || [];
+            const widths = payload.widths || [];
+            const heights = payload.heights || [];
             
             const table = document.getElementById('excel-table');
             table.innerHTML = '';
-            table.style.tableLayout = "auto"; // Открытый файл подстраивается под текст автоматически
-
+            
             if (!rows || rows.length === 0) {
                 createEmptyGrid();
                 return;
@@ -94,14 +101,20 @@
             currentData = [];
             let colsCount = rows[0].length;
 
+            // Создаем шапку колонок с оригинальной шириной из файла
             let headerRow = document.createElement('tr');
+            headerRow.style.height = "22px";
             let firstTh = document.createElement('th');
-            firstTh.style.width = "30px";
+            firstTh.style.width = "35px";
             headerRow.appendChild(firstTh);
             for (let c = 0; c < colsCount; c++) {
                 let th = document.createElement('th');
                 th.innerText = String.fromCharCode(65 + c);
-                th.style.width = "auto";
+                // Применяем точную ширину колонки из Excel
+                let w = widths[c] ? widths[c] + "px" : "75px";
+                th.style.width = w;
+                th.style.minWidth = w;
+                th.style.maxWidth = w;
                 headerRow.appendChild(th);
             }
             table.appendChild(headerRow);
@@ -121,6 +134,10 @@
 
             for (let r = 0; r < rows.length; r++) {
                 let tr = document.createElement('tr');
+                // Применяем точную высоту строки из Excel
+                let h = heights[r] ? heights[r] + "px" : "18px";
+                tr.style.height = h;
+
                 let rowTh = document.createElement('td');
                 rowTh.innerText = r + 1;
                 tr.appendChild(rowTh);
@@ -137,6 +154,12 @@
                     let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
                     td.innerText = textValue;
                     currentData[r][c] = textValue;
+
+                    // Установка точных размеров для ячейки в соответствии с ее колонкой
+                    let cellW = widths[c] ? widths[c] + "px" : "75px";
+                    td.style.width = cellW;
+                    td.style.minWidth = cellW;
+                    td.style.maxWidth = cellW;
 
                     if (cellData) {
                         if (cellData.bg) td.style.backgroundColor = cellData.bg;
