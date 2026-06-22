@@ -3,21 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=0.5, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes">
-    <title>MiniExcel Rigid Grid</title>
+    <title>MiniExcel Perfect Grid</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #fff; }
         .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
         
-        /* Жесткая фиксация разметки */
+        /* table-layout: fixed ОБЯЗАТЕЛЕН. Он берет ширину только из colgroup */
         table { border-collapse: collapse; table-layout: fixed; width: max-content; background: white; box-sizing: border-box; }
         
-        th, td { border: 0.5px solid #d4d4d4; padding: 2px 4px; font-size: 11px; outline: none; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
+        /* ВАЖНО: Разрешаем тексту выходить за границы ячейки (overflow: visible) */
+        th, td { border: 0.5px solid #d4d4d4; padding: 0; font-size: 11px; outline: none; vertical-align: middle; position: relative; overflow: visible; box-sizing: border-box; }
         
-        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 2; user-select: none; }
-        tr th:first-child { position: sticky; left: 0; z-index: 3; background-color: #f1f1f1; }
+        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 10; user-select: none; height: 22px; }
+        tr th:first-child { position: sticky; left: 0; z-index: 15; background-color: #f1f1f1; }
         
-        .row-number-cell { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; }
-        td:focus { outline: 1.5px solid #107c41 !important; z-index: 5; position: relative; background-color: #f3f9f5 !important; }
+        .row-number-cell { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 5; height: 100%; }
+        
+        /* Контейнер для текста внутри ячейки, который имитирует Excel */
+        .cell-content {
+            position: absolute;
+            left: 4px;
+            top: 0;
+            height: 100%;
+            display: flex;
+            align-items: middle;
+            line-height: normal;
+            white-space: nowrap;
+            overflow: visible; /* Позволяет тексту плыть поверх пустых ячеек справа */
+            z-index: 1;
+            pointer-events: none; /* Чтобы клик по выплывшему тексту активировал нужную ячейку под ним */
+            width: max-content;
+        }
+
+        /* Чтобы при редактировании мы кликали именно на ячейку, а текст вводился корректно */
+        td[contenteditable="true"] {
+            -webkit-user-select: text;
+            user-select: text;
+        }
+        
+        td:focus { outline: 1.5px solid #107c41 !important; z-index: 20; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
     </style>
 </head>
@@ -32,6 +56,7 @@
     let defaultRows = 50;
     let defaultCols = 15;
 
+    // Сетка чистого запуска
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
         table.innerHTML = '';
@@ -48,10 +73,8 @@
         table.appendChild(colGroup);
 
         let headerRow = document.createElement('tr');
-        headerRow.style.height = "22px";
         let emptyTh = document.createElement('th');
         headerRow.appendChild(emptyTh);
-        
         for (let c = 0; c < defaultCols; c++) {
             let th = document.createElement('th');
             th.innerText = String.fromCharCode(65 + c);
@@ -83,6 +106,7 @@
         }
     }
 
+    // Рендеринг реального файла с жесткой фиксацией колонок и «парящим» текстом
     function loadExcelFromBytes(base64Data) {
         try {
             const binaryString = atob(base64Data);
@@ -108,6 +132,7 @@
             currentData = [];
             let colsCount = rows[0].length;
 
+            // СТРОЖАЙШАЯ ФИКСАЦИЯ ШИРИНЫ КОЛОНОК ЧЕРЕЗ COLGROUP
             let colGroup = document.createElement('colgroup');
             let colFirst = document.createElement('col');
             colFirst.style.width = "35px";
@@ -120,8 +145,8 @@
             }
             table.appendChild(colGroup);
 
+            // Шапка
             let headerRow = document.createElement('tr');
-            headerRow.style.height = "22px";
             let firstTh = document.createElement('th');
             headerRow.appendChild(firstTh);
             for (let c = 0; c < colsCount; c++) {
@@ -163,19 +188,42 @@
                     td.dataset.col = c;
                     
                     let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
-                    td.innerText = textValue;
                     currentData[r][c] = textValue;
+
+                    // Помещаем текст внутрь специального парящего контейнера .cell-content
+                    if (textValue !== "") {
+                        let contentDiv = document.createElement('div');
+                        contentDiv.className = "cell-content";
+                        contentDiv.innerText = textValue;
+                        td.appendChild(contentDiv);
+                    }
 
                     if (cellData) {
                         if (cellData.bg) td.style.backgroundColor = cellData.bg;
-                        // ИСПРАВЛЕНО: удалена опечатка со вторым знаком равенства
                         if (cellData.color) td.style.color = cellData.color;
                         if (cellData.bold) td.style.fontWeight = "bold";
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
 
+                    // Обработка сохранения изменений при ручном вводе
                     td.addEventListener('blur', function() {
-                        currentData[this.dataset.row][this.dataset.col] = this.innerText;
+                        let innerText = this.innerText;
+                        currentData[this.dataset.row][this.dataset.col] = innerText;
+                        
+                        // Перерисовываем контейнер при выходе из редактирования ячейки
+                        this.innerHTML = "";
+                        if (innerText !== "") {
+                            let contentDiv = document.createElement('div');
+                            contentDiv.className = "cell-content";
+                            contentDiv.innerText = innerText;
+                            this.appendChild(contentDiv);
+                        }
+                    });
+
+                    // Обработка фокуса (очищаем контейнер для удобного ввода текста)
+                    td.addEventListener('focus', function() {
+                        let val = currentData[this.dataset.row][this.dataset.col];
+                        this.innerText = val;
                     });
 
                     let mergeInfo = mergeMap[`${r}_${c}`];
