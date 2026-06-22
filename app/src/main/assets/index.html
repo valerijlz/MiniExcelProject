@@ -8,10 +8,9 @@
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #fff; }
         .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
         
-        /* table-layout: fixed ОБЯЗАТЕЛЕН. Он берет ширину только из colgroup */
         table { border-collapse: collapse; table-layout: fixed; width: max-content; background: white; box-sizing: border-box; }
         
-        /* ВАЖНО: Разрешаем тексту выходить за границы ячейки (overflow: visible) */
+        /* Устанавливаем overflow: visible, разрешая вылет текста за рамку ячейки */
         th, td { border: 0.5px solid #d4d4d4; padding: 0; font-size: 11px; outline: none; vertical-align: middle; position: relative; overflow: visible; box-sizing: border-box; }
         
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 10; user-select: none; height: 22px; }
@@ -19,23 +18,22 @@
         
         .row-number-cell { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 5; height: 100%; }
         
-        /* Контейнер для текста внутри ячейки, который имитирует Excel */
+        /* Парящий слой текста: не меняет геометрию ячейки, "выплывает" вправо */
         .cell-content {
             position: absolute;
             left: 4px;
             top: 0;
             height: 100%;
             display: flex;
-            align-items: middle;
-            line-height: normal;
+            align-items: center;
             white-space: nowrap;
-            overflow: visible; /* Позволяет тексту плыть поверх пустых ячеек справа */
+            overflow: visible;
             z-index: 1;
-            pointer-events: none; /* Чтобы клик по выплывшему тексту активировал нужную ячейку под ним */
+            pointer-events: none; 
             width: max-content;
+            background: transparent;
         }
 
-        /* Чтобы при редактировании мы кликали именно на ячейку, а текст вводился корректно */
         td[contenteditable="true"] {
             -webkit-user-select: text;
             user-select: text;
@@ -56,7 +54,6 @@
     let defaultRows = 50;
     let defaultCols = 15;
 
-    // Сетка чистого запуска
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
         table.innerHTML = '';
@@ -106,7 +103,6 @@
         }
     }
 
-    // Рендеринг реального файла с жесткой фиксацией колонок и «парящим» текстом
     function loadExcelFromBytes(base64Data) {
         try {
             const binaryString = atob(base64Data);
@@ -132,7 +128,6 @@
             currentData = [];
             let colsCount = rows[0].length;
 
-            // СТРОЖАЙШАЯ ФИКСАЦИЯ ШИРИНЫ КОЛОНОК ЧЕРЕЗ COLGROUP
             let colGroup = document.createElement('colgroup');
             let colFirst = document.createElement('col');
             colFirst.style.width = "35px";
@@ -145,7 +140,6 @@
             }
             table.appendChild(colGroup);
 
-            // Шапка
             let headerRow = document.createElement('tr');
             let firstTh = document.createElement('th');
             headerRow.appendChild(firstTh);
@@ -190,7 +184,6 @@
                     let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
                     currentData[r][c] = textValue;
 
-                    // Помещаем текст внутрь специального парящего контейнера .cell-content
                     if (textValue !== "") {
                         let contentDiv = document.createElement('div');
                         contentDiv.className = "cell-content";
@@ -205,12 +198,10 @@
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
 
-                    // Обработка сохранения изменений при ручном вводе
                     td.addEventListener('blur', function() {
                         let innerText = this.innerText;
                         currentData[this.dataset.row][this.dataset.col] = innerText;
                         
-                        // Перерисовываем контейнер при выходе из редактирования ячейки
                         this.innerHTML = "";
                         if (innerText !== "") {
                             let contentDiv = document.createElement('div');
@@ -220,7 +211,6 @@
                         }
                     });
 
-                    // Обработка фокуса (очищаем контейнер для удобного ввода текста)
                     td.addEventListener('focus', function() {
                         let val = currentData[this.dataset.row][this.dataset.col];
                         this.innerText = val;
