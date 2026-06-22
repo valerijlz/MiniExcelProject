@@ -18,7 +18,7 @@
         
         .row-number-cell { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 5; height: 100%; }
         
-        /* Парящий слой текста: не меняет геометрию ячейки, "выплывает" вправо */
+/* Парящий слой текста: не меняет геометрию ячейки, "выплывает" вправо */
         .cell-content {
             position: absolute;
             left: 4px;
@@ -28,7 +28,7 @@
             align-items: center;
             white-space: nowrap;
             overflow: visible;
-            z-index: 1;
+            z-index: 2; /* Приподнимаем текст, чтобы он беспрепятственно заплывал на соседей */
             pointer-events: none; 
             width: max-content;
             background: transparent;
