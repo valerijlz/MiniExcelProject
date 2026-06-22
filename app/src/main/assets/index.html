@@ -2,13 +2,13 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=0.4, minimum-scale=0.05, maximum-scale=5.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=0.5, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes">
     <title>MiniExcel Rigid Grid</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background-color: #fff; }
         .table-wrapper { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
         
-        /* Бескомпромиссный fixed layout: колонки будут иметь СТРОГО ту ширину, которую мы им дадим */
+        /* Жесткая фиксация разметки */
         table { border-collapse: collapse; table-layout: fixed; width: max-content; background: white; box-sizing: border-box; }
         
         th, td { border: 0.5px solid #d4d4d4; padding: 2px 4px; font-size: 11px; outline: none; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; }
@@ -16,9 +16,7 @@
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 2; user-select: none; }
         tr th:first-child { position: sticky; left: 0; z-index: 3; background-color: #f1f1f1; }
         
-        /* Жесткие рамки для сервисной колонки строк */
         .row-number-cell { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 1; }
-        
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 5; position: relative; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
     </style>
@@ -34,12 +32,10 @@
     let defaultRows = 50;
     let defaultCols = 15;
 
-    // Сетка чистого запуска: строгие, аккуратные и компактные пропорции Excel (~18px высота, ~75px ширина)
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
         table.innerHTML = '';
 
-        // Задаем жесткую ширину колонок через colgroup
         let colGroup = document.createElement('colgroup');
         let colFirst = document.createElement('col');
         colFirst.style.width = "35px";
@@ -87,7 +83,6 @@
         }
     }
 
-    // Рендеринг реального файла с принудительным сохранением пропорций из Excel
     function loadExcelFromBytes(base64Data) {
         try {
             const binaryString = atob(base64Data);
@@ -113,7 +108,6 @@
             currentData = [];
             let colsCount = rows[0].length;
 
-            // КЛЮЧЕВОЙ МОМЕНТ: Принудительно фиксируем ширину колонок через COLGROUP под размеры из Excel
             let colGroup = document.createElement('colgroup');
             let colFirst = document.createElement('col');
             colFirst.style.width = "35px";
@@ -126,7 +120,6 @@
             }
             table.appendChild(colGroup);
 
-            // Шапка колонок
             let headerRow = document.createElement('tr');
             headerRow.style.height = "22px";
             let firstTh = document.createElement('th');
@@ -175,7 +168,8 @@
 
                     if (cellData) {
                         if (cellData.bg) td.style.backgroundColor = cellData.bg;
-                        if (cellData.color) td.style.color = cellColor = cellData.color;
+                        // ИСПРАВЛЕНО: удалена опечатка со вторым знаком равенства
+                        if (cellData.color) td.style.color = cellData.color;
                         if (cellData.bold) td.style.fontWeight = "bold";
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
