@@ -48,7 +48,6 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
-        // ЖЕСТКИЙ СБРОС КЭША WEBVIEW (Уничтожает старые версии интерфейса в памяти смартфона)
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
@@ -57,8 +56,6 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
-        
-        // Отключаем кэширование на уровне настроек
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
         webSettings.setSupportZoom(true);
@@ -145,7 +142,7 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
-private void pipeExcelToWebView(Uri uri) {
+    private void pipeExcelToWebView(Uri uri) {
         try {
             Workbook workbook;
             try (InputStream is = getContentResolver().openInputStream(uri)) {
@@ -172,46 +169,33 @@ private void pipeExcelToWebView(Uri uri) {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
-            // ПОЛУЧАЕМ СТАНДАРТНУЮ ШИРИНУ КОЛОНКИ ЛИСТА (если явная ширина не задана в Excel)
-            // В POI getDefaultColumnWidth() возвращает ширину в символах (например, 8). 
-            // Порог стандартной ширины (если в Excel стоит дефолт, это обычно 8.43 символа)
             int defaultColWidthInPx = 110; 
 
-            // ТОЧНАЯ КАЛИБРОВКА ШИРИНЫ КОЛОНОК ПОД WEBVIEW
             JSONArray jsonColWidths = new JSONArray();
             for (int c = 0; c < maxCellCount; c++) {
                 int poiWidth = sheet.getColumnWidth(c);
-                
                 int widthInPx;
-                // Значение 2048 часто возвращается для неинициализированных пустых колонок
+                
                 if (poiWidth == 2048) {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Корректирующий коэффициент под мобильный рендеринг:
-                    // Ширина 10 в Excel превратится примерно в 114 пикселей
                     widthInPx = (int) (characters * 10.5 + 9);
                 }
                 
-                // Защита от слишком узких колонок
                 if (widthInPx < 45) widthInPx = defaultColWidthInPx;
-                jsonColWidths.put(widthInPx);
-            }
-                
-                // Предотвращаем схлопывание колонок
-                if (widthInPx < 30) widthInPx = defaultColWidthInPx;
                 jsonColWidths.put(widthInPx);
             }
 
             DataFormatter formatter = new DataFormatter();
-JSONArray jsonRowHeights = new JSONArray();
+            JSONArray jsonRowHeights = new JSONArray();
+
             for (int r = 0; r <= totalRows; r++) {
                 Row row = null;
                 try { row = sheet.getRow(r); } catch (Throwable ignored) {}
                 
-                int heightInPx = 24; // Комфортная дефолтная высота строки в px
+                int heightInPx = 24; 
                 if (row != null && row.getHeightInPoints() > 0) {
-                    // Коэффициент перевода высоты строк
                     heightInPx = (int) (row.getHeightInPoints() * 1.45); 
                 }
                 jsonRowHeights.put(heightInPx);
