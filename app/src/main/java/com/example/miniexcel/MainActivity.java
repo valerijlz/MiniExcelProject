@@ -53,12 +53,10 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
         
-        // Включаем полноценный аппаратный зум во все стороны
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
         webSettings.setDisplayZoomControls(false); 
         
-        // КЛЮЧЕВОЙ ФИКС ДЛЯ ЗУМА НАЗАД: Имитируем экран огромного десктопа ПК
         webSettings.setUseWideViewPort(true);
         webSettings.setLoadWithOverviewMode(true);
         webSettings.setTextZoom(100);
@@ -140,7 +138,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void pipeExcelToWebView(Uri uri) {
-        // МАКСИМАЛЬНАЯ ИЗОЛЯЦИЯ ВСЕГО ЦИКЛА ЧТЕНИЯ ДЛЯ ЗАЩИТЫ СТАРЫХ ФАЙЛОВ .XLS
         try {
             Workbook workbook;
             try (InputStream is = getContentResolver().openInputStream(uri)) {
@@ -167,13 +164,29 @@ public class MainActivity extends AppCompatActivity {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
+            // Вычисляем ширину каждого столбца (переводим из попугаев Excel в пиксели)
+            JSONArray jsonColWidths = new JSONArray();
+            for (int c = 0; c < maxCellCount; c++) {
+                int widthInPoints = sheet.getColumnWidth(c) / 32; // Конвертация POI ширины колонок
+                if (widthInPoints < 40) widthInPoints = 75; // Минимальный порог, если колонка пустая
+                jsonColWidths.put(widthInPoints);
+            }
+
             DataFormatter formatter = new DataFormatter();
+            JSONArray jsonRowHeights = new JSONArray();
 
             for (int r = 0; r <= totalRows; r++) {
                 Row row = null;
                 try { row = sheet.getRow(r); } catch (Throwable ignored) {}
-                JSONArray jsonRow = new JSONArray();
                 
+                // Считываем высоту конкретной строки из файла
+                int heightInPx = 20; // Высота по умолчанию (около 3мм)
+                if (row != null && row.getHeightInPoints() > 0) {
+                    heightInPx = (int) (row.getHeightInPoints() * 1.15); // Пропорциональный перевод в px
+                }
+                jsonRowHeights.put(heightInPx);
+
+                JSONArray jsonRow = new JSONArray();
                 for (int c = 0; c < maxCellCount; c++) {
                     JSONObject cellObj = new JSONObject();
                     cellObj.put("v", "");
@@ -253,6 +266,8 @@ public class MainActivity extends AppCompatActivity {
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
             payload.put("merges", jsonMerges);
+            payload.put("widths", jsonColWidths); // Передаем ширину колонок
+            payload.put("heights", jsonRowHeights); // Передаем высоту строк
 
             String jsonString = payload.toString();
             String base64Payload = Base64.encodeToString(jsonString.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
@@ -310,13 +325,10 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    // НАДЕЖНЫЙ СТАНДАРТНЫЙ ФИКС: Используем FileChannel для принудительного усечения (очистки) файла перед записью
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
                          FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
-                        
                         FileChannel channel = fos.getChannel();
-                        channel.truncate(0); // Безопасно очищаем файл на уровне Java NIO канала
-                        
+                        channel.truncate(0); 
                         workbook.write(fos);
                         fos.flush();
                     }
