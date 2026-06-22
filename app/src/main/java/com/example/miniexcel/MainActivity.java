@@ -171,20 +171,17 @@ public class MainActivity extends AppCompatActivity {
 
             int defaultColWidthInPx = 110; 
 
+// ПЕРЕДАЕМ ОРИГИНАЛЬНУЮ ШИРИНУ EXCEL (КОЛИЧЕСТВО СИМВОЛОВ) В HTML
             JSONArray jsonColWidths = new JSONArray();
             for (int c = 0; c < maxCellCount; c++) {
                 int poiWidth = sheet.getColumnWidth(c);
-                int widthInPx;
+                double characters = (double) poiWidth / 256.0;
                 
-                if (poiWidth == 2048) {
-                    widthInPx = defaultColWidthInPx;
-                } else {
-                    double characters = (double) poiWidth / 256.0;
-                    widthInPx = (int) (characters * 10.5 + 9);
+                // Если ширина не задана (или дефолтная пустая колонка), ставим стандартные 8.43 символа Excel
+                if (poiWidth == 2048 || characters <= 0) {
+                    characters = 8.43;
                 }
-                
-                if (widthInPx < 45) widthInPx = defaultColWidthInPx;
-                jsonColWidths.put(widthInPx);
+                jsonColWidths.put(characters);
             }
 
             DataFormatter formatter = new DataFormatter();
