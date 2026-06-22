@@ -58,6 +58,7 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setAllowFileAccess(true);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
+        // Включаем поддержку зума на уровне WebView (будет работать в паре с нашим CSS)
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
         webSettings.setDisplayZoomControls(false); 
@@ -169,12 +170,11 @@ public class MainActivity extends AppCompatActivity {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
-            int defaultColWidthInPx = 110; 
-
-// Официальный алгоритм Microsoft Excel для конвертации единиц ширины (1/256 символа) в пиксели при 96 DPI
+            // Единое объявление переменной дефолтной ширины ячеек
             int defaultColWidthInPx = 80; 
+
+            // Официальный алгоритм Microsoft Excel для конвертации единиц ширины (1/256 символа) в пиксели при 96 DPI
             JSONArray jsonColWidths = new JSONArray();
-            
             for (int c = 0; c < maxCellCount; c++) {
                 int poiWidth = sheet.getColumnWidth(c);
                 int widthInPx;
@@ -183,7 +183,7 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Формула Excel: если ширина > 1, то Пиксели = trunc((отступы_шрифта + символы) * 7)
+                    // Официальная калибровка формулы Microsoft:
                     if (characters > 1) {
                         widthInPx = (int) (characters * 7 + 5);
                     } else {
@@ -202,9 +202,9 @@ public class MainActivity extends AppCompatActivity {
                 Row row = null;
                 try { row = sheet.getRow(r); } catch (Throwable ignored) {}
                 
-                int heightInPx = 24; 
+                int heightInPx = 20; 
                 if (row != null && row.getHeightInPoints() > 0) {
-                    heightInPx = (int) (row.getHeightInPoints() * 1.45); 
+                    heightInPx = (int) (row.getHeightInPoints() * 1.33); 
                 }
                 jsonRowHeights.put(heightInPx);
 
