@@ -331,19 +331,16 @@ public class MainActivity extends AppCompatActivity {
                             Cell cell = row.getCell(c);
                             if (cell == null) cell = row.createCell(c);
                             
-                            // ПРЯМАЯ ИБЕЗОПАСНАЯ ПЕРЕЗАПИСЬ ТИПОВ ДАННЫХ (Без зануления стилей)
+                            // БЕЗОПАСНАЯ И ПРЯМАЯ ЗАПИСЬ ЗНАЧЕНИЙ БЕЗ СМЕНЫ CELL_TYPE (Исключает сбой POI)
                             try {
                                 double num = Double.parseDouble(value);
-                                cell.setCellType(CellType.NUMERIC);
                                 cell.setCellValue(num);
                             } catch (NumberFormatException e) {
-                                cell.setCellType(CellType.STRING);
                                 cell.setCellValue(value);
                             }
                         }
                     }
 
-                    // Перезаписываем оригинальный файл через дескриптор с принудительной очисткой потока
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
                          FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
                         FileChannel channel = fos.getChannel();
