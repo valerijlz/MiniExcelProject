@@ -180,8 +180,8 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Оптимальное плотное сжатие ячеек (убираем разрастание листа вширь)
-                    widthInPx = (int) (characters * 6.2 + 2);
+                    // Идеальный коэффициент под авто-верстку HTML5
+                    widthInPx = (int) (characters * 5.0 + 2);
                 }
                 
                 if (widthInPx < 25) widthInPx = defaultColWidthInPx;
