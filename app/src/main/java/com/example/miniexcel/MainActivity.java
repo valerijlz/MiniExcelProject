@@ -12,9 +12,9 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.Toast;
+import androidx.appcompat.app.AppCompatActivity;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.appcompat.app.AppCompatActivity;
 
 import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
@@ -26,7 +26,6 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends AppCompatActivity {
@@ -58,6 +57,7 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setAllowFileAccess(true);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
+        // ВКЛЮЧАЕМ НАСТОЯЩИЙ АППАРАТНЫЙ ЗУМ (Без CSS трансформ и лагов)
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
         webSettings.setDisplayZoomControls(false); 
@@ -180,8 +180,8 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Данный коэффициент гарантирует точность отображения колонок без раздувания листа
-                    widthInPx = (int) (characters * 6.5 + 5);
+                    // Откалиброванный коэффициент 6.0 убирает горизонтальное раздувание листа
+                    widthInPx = (int) (characters * 6.0 + 3);
                 }
                 
                 if (widthInPx < 25) widthInPx = defaultColWidthInPx;
@@ -195,7 +195,7 @@ public class MainActivity extends AppCompatActivity {
                 Row row = null;
                 try { row = sheet.getRow(r); } catch (Throwable ignored) {}
                 
-                int heightInPx = 20; 
+                int heightInPx = 22; 
                 if (row != null && row.getHeightInPoints() > 0) {
                     heightInPx = (int) (row.getHeightInPoints() * 1.33); 
                 }
@@ -331,7 +331,6 @@ public class MainActivity extends AppCompatActivity {
                             Cell cell = row.getCell(c);
                             if (cell == null) cell = row.createCell(c);
                             
-                            // БЕЗОПАСНАЯ И ПРЯМАЯ ЗАПИСЬ ЗНАЧЕНИЙ БЕЗ СМЕНЫ CELL_TYPE (Исключает сбой POI)
                             try {
                                 double num = Double.parseDouble(value);
                                 cell.setCellValue(num);
@@ -341,14 +340,17 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
+                    // НАДЕЖНЫЙ МЕТОД ПЕРЕЗАПИСИ: Через изолированный ByteArray-поток
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    workbook.write(baos);
+                    byte[] workbookBytes = baos.toByteArray();
+                    workbook.close();
+
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
                          FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
-                        FileChannel channel = fos.getChannel();
-                        channel.truncate(0); 
-                        workbook.write(fos);
+                        fos.write(workbookBytes);
                         fos.flush();
                     }
-                    workbook.close();
 
                     Toast.makeText(MainActivity.this, "Изменения успешно сохранены!", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
