@@ -173,7 +173,9 @@ public class MainActivity extends AppCompatActivity {
             // Единое объявление переменной дефолтной ширины ячеек
             int defaultColWidthInPx = 80; 
 
-            // Официальный алгоритм Microsoft Excel для конвертации единиц ширины (1/256 символа) в пиксели при 96 DPI
+// Сбалансированный дефолтный размер для пустых колонок
+            int defaultColWidthInPx = 65; 
+
             JSONArray jsonColWidths = new JSONArray();
             for (int c = 0; c < maxCellCount; c++) {
                 int poiWidth = sheet.getColumnWidth(c);
@@ -183,15 +185,11 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Официальная калибровка формулы Microsoft:
-                    if (characters > 1) {
-                        widthInPx = (int) (characters * 7 + 5);
-                    } else {
-                        widthInPx = (int) (characters * (7 + 5));
-                    }
+                    // Оптимизированный коэффициент под размер шрифта 11px в WebView:
+                    widthInPx = (int) (characters * 5.6 + 4);
                 }
                 
-                if (widthInPx < 30) widthInPx = defaultColWidthInPx;
+                if (widthInPx < 25) widthInPx = defaultColWidthInPx;
                 jsonColWidths.put(widthInPx);
             }
 
@@ -338,6 +336,8 @@ public class MainActivity extends AppCompatActivity {
                             Cell cell = row.getCell(c);
                             if (cell == null) cell = row.createCell(c);
                             
+                            // Сбрасываем тип ячейки на BLANK перед перезаписью, чтобы избежать конфликтов типов данных
+                            cell.setBlank(); 
                             try {
                                 double num = Double.parseDouble(value);
                                 cell.setCellValue(num);
