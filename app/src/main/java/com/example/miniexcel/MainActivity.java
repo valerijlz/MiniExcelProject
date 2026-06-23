@@ -58,7 +58,6 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setAllowFileAccess(true);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
-        // Включаем поддержку зума на уровне WebView (будет работать в паре с нашим CSS)
         webSettings.setSupportZoom(true);
         webSettings.setBuiltInZoomControls(true);
         webSettings.setDisplayZoomControls(false); 
@@ -170,10 +169,7 @@ public class MainActivity extends AppCompatActivity {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
-            // Единое объявление переменной дефолтной ширины ячеек
-            int defaultColWidthInPx = 80; 
-
-// Сбалансированный дефолтный размер для пустых колонок
+            // Единственное объявление дефолтной ширины, откалиброванное под 65px
             int defaultColWidthInPx = 65; 
 
             JSONArray jsonColWidths = new JSONArray();
@@ -185,7 +181,7 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Оптимизированный коэффициент под размер шрифта 11px в WebView:
+                    // Оптимизированный коэффициент 5.6 для устранения разрастания сетки
                     widthInPx = (int) (characters * 5.6 + 4);
                 }
                 
@@ -336,7 +332,6 @@ public class MainActivity extends AppCompatActivity {
                             Cell cell = row.getCell(c);
                             if (cell == null) cell = row.createCell(c);
                             
-                            // Сбрасываем тип ячейки на BLANK перед перезаписью, чтобы избежать конфликтов типов данных
                             cell.setBlank(); 
                             try {
                                 double num = Double.parseDouble(value);
