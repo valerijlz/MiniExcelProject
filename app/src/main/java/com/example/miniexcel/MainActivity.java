@@ -180,8 +180,8 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Идеальный коэффициент под авто-верстку HTML5
-                    widthInPx = (int) (characters * 5.0 + 2);
+                    // Данный коэффициент гарантирует точность отображения колонок без раздувания листа
+                    widthInPx = (int) (characters * 6.5 + 5);
                 }
                 
                 if (widthInPx < 25) widthInPx = defaultColWidthInPx;
