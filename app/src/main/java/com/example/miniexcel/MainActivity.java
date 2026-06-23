@@ -169,7 +169,6 @@ public class MainActivity extends AppCompatActivity {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
-            // Единственное объявление дефолтной ширины, откалиброванное под 65px
             int defaultColWidthInPx = 65; 
 
             JSONArray jsonColWidths = new JSONArray();
@@ -181,8 +180,8 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Оптимизированный коэффициент 5.6 для устранения разрастания сетки
-                    widthInPx = (int) (characters * 5.6 + 4);
+                    // Оптимальное плотное сжатие ячеек (убираем разрастание листа вширь)
+                    widthInPx = (int) (characters * 6.2 + 2);
                 }
                 
                 if (widthInPx < 25) widthInPx = defaultColWidthInPx;
@@ -332,16 +331,19 @@ public class MainActivity extends AppCompatActivity {
                             Cell cell = row.getCell(c);
                             if (cell == null) cell = row.createCell(c);
                             
-                            cell.setBlank(); 
+                            // ПРЯМАЯ ИБЕЗОПАСНАЯ ПЕРЕЗАПИСЬ ТИПОВ ДАННЫХ (Без зануления стилей)
                             try {
                                 double num = Double.parseDouble(value);
+                                cell.setCellType(CellType.NUMERIC);
                                 cell.setCellValue(num);
                             } catch (NumberFormatException e) {
+                                cell.setCellType(CellType.STRING);
                                 cell.setCellValue(value);
                             }
                         }
                     }
 
+                    // Перезаписываем оригинальный файл через дескриптор с принудительной очисткой потока
                     try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
                          FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
                         FileChannel channel = fos.getChannel();
@@ -354,7 +356,7 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(MainActivity.this, "Изменения успешно сохранены!", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
                     e.printStackTrace();
-                    Toast.makeText(MainActivity.this, "Ошибка записи: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    Toast.makeText(MainActivity.this, "Ошибка сохранения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
                 }
             });
         }
