@@ -3,64 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Pro Grid</title>
+    <title>MiniExcel Perfect Grid</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
         
+        /* Главный контейнер скролла */
         .viewport-container { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; position: relative; }
         
         .zoom-layer {
             transform-origin: 0 0;
             width: max-content;
             height: max-content;
-            transition: transform 0.02s ease-out;
         }
         
-        table { border-collapse: collapse; table-layout: fixed; background: white; box-sizing: border-box; }
+        /* Мягкая адаптивная раскладка вместо жесткой fixed, чтобы лист не раздувало вширь */
+        table { border-collapse: collapse; table-layout: auto; background: white; box-sizing: border-box; }
         
         th, td { 
             border: 0.5px solid #d4d4d4; 
-            padding: 0; 
+            padding: 0 4px; 
             font-size: 11px; 
             outline: none; 
             vertical-align: middle; 
             position: relative; 
-            overflow: visible; 
             box-sizing: border-box; 
+            height: 22px;
+            /* Ограничиваем паразитное разрастание пустых или слишком длинных ячеек */
+            max-width: 280px;
+            white-space: nowrap;
         }
         
-        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 10; user-select: none; height: 22px; }
+        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; }
         
-        /* Исправленный скролл: возвращаем независимый sticky для заголовка «А» */
-        tr th:first-child { position: sticky; left: 0; z-index: 15; background-color: #f1f1f1; }
-        
-        /* Номера строк двигаются корректно вместе со скроллом, но не улетают за границы */
-        .row-number-cell { 
-            background-color: #f9f9f9; 
+        /* Изолируем первую колонку от CSS-sticky, двигать её будем через JS */
+        .row-number-cell, tr th:first-child { 
+            background-color: #f1f1f1 !important; 
             text-align: center; 
             font-weight: bold; 
             color: #666; 
             font-size: 10px;
-            position: sticky;
-            left: 0;
             z-index: 5;
             user-select: none;
+            position: relative;
+            will-change: transform;
         }
         
-        .cell-content {
-            position: absolute;
-            left: 4px;
-            top: 0;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            white-space: nowrap;
-            overflow: visible;
-            z-index: 2;
-            pointer-events: none; 
-            width: max-content;
-            background: transparent;
-        }
+        tr th:first-child { z-index: 10; }
 
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 20; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
@@ -86,22 +74,18 @@
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
         table.innerHTML = '';
-        let colGroup = document.createElement('colgroup');
-        let colFirst = document.createElement('col'); colFirst.style.width = "35px"; colGroup.appendChild(colFirst);
-        for (let c = 0; c < defaultCols; c++) {
-            let col = document.createElement('col'); col.style.width = "75px"; colGroup.appendChild(col);
-        }
-        table.appendChild(colGroup);
 
         let headerRow = document.createElement('tr');
-        let emptyTh = document.createElement('th'); headerRow.appendChild(emptyTh);
+        let emptyTh = document.createElement('th'); 
+        emptyTh.style.width = "35px";
+        headerRow.appendChild(emptyTh);
         for (let c = 0; c < defaultCols; c++) {
-            let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); headerRow.appendChild(th);
+            let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); th.style.width = "75px"; headerRow.appendChild(th);
         }
         table.appendChild(headerRow);
 
         for (let r = 0; r < defaultRows; r++) {
-            let tr = document.createElement('tr'); tr.style.height = "20px";
+            let tr = document.createElement('tr');
             let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; tr.appendChild(rowTh);
             currentData[r] = [];
             for (let c = 0; c < defaultCols; c++) {
@@ -111,7 +95,7 @@
             }
             table.appendChild(tr);
         }
-        initPinchZoom();
+        initPinchZoomAndScroll();
     }
 
     function loadExcelFromBytes(base64Data) {
@@ -135,19 +119,17 @@
             currentData = [];
             let colsCount = rows[0].length;
 
-            let colGroup = document.createElement('colgroup');
-            let colFirst = document.createElement('col'); colFirst.style.width = "35px"; colGroup.appendChild(colFirst);
-            for (let c = 0; c < colsCount; c++) {
-                let col = document.createElement('col');
-                col.style.width = (widths[c] || 65) + "px";
-                colGroup.appendChild(col);
-            }
-            table.appendChild(colGroup);
-
             let headerRow = document.createElement('tr');
-            let firstTh = document.createElement('th'); headerRow.appendChild(firstTh);
+            let firstTh = document.createElement('th'); 
+            firstTh.style.width = "35px"; 
+            headerRow.appendChild(firstTh);
+            
             for (let c = 0; c < colsCount; c++) {
-                let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); headerRow.appendChild(th);
+                let th = document.createElement('th'); 
+                th.innerText = String.fromCharCode(65 + c); 
+                // Задаем ширину, пропорциональную оригиналу
+                th.style.width = (widths[c] || 65) + "px";
+                headerRow.appendChild(th);
             }
             table.appendChild(headerRow);
 
@@ -164,7 +146,7 @@
 
             for (let r = 0; r < rows.length; r++) {
                 let tr = document.createElement('tr');
-                tr.style.height = (heights[r] || 20) + "px";
+                tr.style.height = (heights[r] || 22) + "px";
 
                 let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; tr.appendChild(rowTh);
                 currentData[r] = [];
@@ -175,11 +157,7 @@
                     td.contentEditable = true; td.dataset.row = r; td.dataset.col = c;
                     let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
                     currentData[r][c] = textValue;
-
-                    if (textValue !== "") {
-                        let contentDiv = document.createElement('div');
-                        contentDiv.className = "cell-content"; contentDiv.innerText = textValue; td.appendChild(contentDiv);
-                    }
+                    td.innerText = textValue;
 
                     if (cellData) {
                         if (cellData.bg) td.style.backgroundColor = cellData.bg;
@@ -189,13 +167,8 @@
                     }
 
                     td.addEventListener('blur', function() {
-                        let innerText = this.innerText; currentData[this.dataset.row][this.dataset.col] = innerText;
-                        this.innerHTML = "";
-                        if (innerText !== "") {
-                            let contentDiv = document.createElement('div'); contentDiv.className = "cell-content"; contentDiv.innerText = innerText; this.appendChild(contentDiv);
-                        }
+                        currentData[this.dataset.row][this.dataset.col] = this.innerText;
                     });
-                    td.addEventListener('focus', function() { this.innerText = currentData[this.dataset.row][this.dataset.col]; });
 
                     let mergeInfo = mergeMap[`${r}_${c}`];
                     if (mergeInfo) {
@@ -208,14 +181,33 @@
                 }
                 table.appendChild(tr);
             }
-            initPinchZoom();
+            initPinchZoomAndScroll();
             AndroidBridge.onStatus("Файл успешно визуализирован!");
         } catch (e) { AndroidBridge.onStatus("Ошибка отрисовки: " + e.message); }
     }
 
-    function initPinchZoom() {
+    // ИНТЕЛЛЕКТУАЛЬНЫЙ СИНХРОННЫЙ СКРОЛЛ КОЛОНКИ НОМЕРОВ
+    function syncStickyColumns() {
+        const scrollView = document.getElementById('scroll-view');
+        // Рассчитываем точную компенсацию сдвига с учетом текущего уровня зума
+        const scrollLeftCompensated = scrollView.scrollLeft / currentScale;
+        
+        // Находим все элементы первой колонки (номера строк + пустой левый верхний угол)
+        const stickyCells = document.querySelectorAll('.row-number-cell, tr th:first-child');
+        
+        // Сдвигаем их физически на величину скролла внутри трансформированного контейнера
+        stickyCells.forEach(cell => {
+            cell.style.transform = `translateX(${scrollLeftCompensated}px)`;
+        });
+    }
+
+    function initPinchZoomAndScroll() {
         const scrollView = document.getElementById('scroll-view');
         const zoomContainer = document.getElementById('zoom-container');
+
+        // Вызываем синхронизацию при любом скролле таблицы
+        scrollView.removeEventListener('scroll', syncStickyColumns);
+        scrollView.addEventListener('scroll', syncStickyColumns);
 
         scrollView.addEventListener('touchstart', function(e) {
             if (e.touches.length === 2) {
@@ -233,16 +225,22 @@
                     let scaleFactor = dist / startTouchDist;
                     let targetScale = startScale * scaleFactor;
                     
-                    if (targetScale < 0.2) targetScale = 0.2;
-                    if (targetScale > 3.0) targetScale = 3.0;
+                    if (targetScale < 0.25) targetScale = 0.25;
+                    if (targetScale > 2.5) targetScale = 2.5;
                     
                     currentScale = targetScale;
                     zoomContainer.style.transform = `scale(${currentScale})`;
+                    
+                    // Пересчитываем положение номеров сразу во время зума
+                    syncStickyColumns();
                 }
             }
         }, { passive: false });
         
         scrollView.addEventListener('touchend', function(e) { if (e.touches.length < 2) { startTouchDist = 0; } });
+        
+        // Стартовый сброс позиций
+        syncStickyColumns();
     }
 
     function exportExcelToAndroid() {
