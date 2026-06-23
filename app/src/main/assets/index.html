@@ -3,19 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Infinite Scale Canvas</title>
+    <title>MiniExcel Pro Grid</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
         
-        /* Контейнер для прокрутки */
         .viewport-container { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; position: relative; }
         
-        /* Слой трансформации, который позволяет сжимать таблицу до любых размеров */
         .zoom-layer {
             transform-origin: 0 0;
             width: max-content;
             height: max-content;
-            transition: transform 0.05s ease-out;
+            transition: transform 0.02s ease-out;
         }
         
         table { border-collapse: collapse; table-layout: fixed; background: white; box-sizing: border-box; }
@@ -31,15 +29,21 @@
             box-sizing: border-box; 
         }
         
-        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; height: 22px; }
+        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 10; user-select: none; height: 22px; }
         
-        /* Убираем sticky, возвращаем стабильное нативное позиционирование */
+        /* Исправленный скролл: возвращаем независимый sticky для заголовка «А» */
+        tr th:first-child { position: sticky; left: 0; z-index: 15; background-color: #f1f1f1; }
+        
+        /* Номера строк двигаются корректно вместе со скроллом, но не улетают за границы */
         .row-number-cell { 
             background-color: #f9f9f9; 
             text-align: center; 
             font-weight: bold; 
             color: #666; 
             font-size: 10px;
+            position: sticky;
+            left: 0;
+            z-index: 5;
             user-select: none;
         }
         
@@ -75,7 +79,6 @@
     let defaultRows = 50;
     let defaultCols = 15;
     
-    // Переменные для кастомного зума
     let currentScale = 1.0;
     let startTouchDist = 0;
     let startScale = 1.0;
@@ -133,10 +136,10 @@
             let colsCount = rows[0].length;
 
             let colGroup = document.createElement('colgroup');
-            let colFirst = document.createElement('col'); colFirst.style.width = "40px"; colGroup.appendChild(colFirst);
+            let colFirst = document.createElement('col'); colFirst.style.width = "35px"; colGroup.appendChild(colFirst);
             for (let c = 0; c < colsCount; c++) {
                 let col = document.createElement('col');
-                col.style.width = (widths[c] || 80) + "px";
+                col.style.width = (widths[c] || 65) + "px";
                 colGroup.appendChild(col);
             }
             table.appendChild(colGroup);
@@ -161,7 +164,7 @@
 
             for (let r = 0; r < rows.length; r++) {
                 let tr = document.createElement('tr');
-                tr.style.height = (heights[r] || 22) + "px";
+                tr.style.height = (heights[r] || 20) + "px";
 
                 let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; tr.appendChild(rowTh);
                 currentData[r] = [];
@@ -210,7 +213,6 @@
         } catch (e) { AndroidBridge.onStatus("Ошибка отрисовки: " + e.message); }
     }
 
-    // РЕАЛИЗАЦИЯ БЕСКОНЕЧНОГО ЗУМА ЧЕРЕЗ ТРАНСФОРМАЦИЮ СЛОЯ
     function initPinchZoom() {
         const scrollView = document.getElementById('scroll-view');
         const zoomContainer = document.getElementById('zoom-container');
@@ -231,8 +233,7 @@
                     let scaleFactor = dist / startTouchDist;
                     let targetScale = startScale * scaleFactor;
                     
-                    // Порог зума: от супер-миниатюры (0.15) до увеличения (3.0)
-                    if (targetScale < 0.15) targetScale = 0.15;
+                    if (targetScale < 0.2) targetScale = 0.2;
                     if (targetScale > 3.0) targetScale = 3.0;
                     
                     currentScale = targetScale;
