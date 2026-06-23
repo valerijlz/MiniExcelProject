@@ -31,10 +31,17 @@
             box-sizing: border-box; 
         }
         
-        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; position: sticky; top: 0; z-index: 10; user-select: none; height: 22px; }
-        tr th:first-child { position: sticky; left: 0; z-index: 15; background-color: #f1f1f1; }
+        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; height: 22px; }
         
-        .row-number-cell { background-color: #f9f9f9; text-align: center; font-weight: bold; color: #666; position: sticky; left: 0; z-index: 5; }
+        /* Убираем sticky, возвращаем стабильное нативное позиционирование */
+        .row-number-cell { 
+            background-color: #f9f9f9; 
+            text-align: center; 
+            font-weight: bold; 
+            color: #666; 
+            font-size: 10px;
+            user-select: none;
+        }
         
         .cell-content {
             position: absolute;
