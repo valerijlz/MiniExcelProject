@@ -2,26 +2,18 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Perfect Sync Grid</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiniExcel Native Grid</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; }
         
-        /* Единое окно прокрутки для всего интерфейса */
-        .viewport-container { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; position: relative; }
+        .viewport-container { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
         
-        /* Контейнер масштабирует всё содержимое вместе, исключая рассинхронизацию строк */
-        .zoom-layer {
-            transform-origin: 0 0;
-            width: max-content;
-            height: max-content;
-        }
-        
-        table { border-collapse: collapse; table-layout: fixed; background: white; box-sizing: border-box; }
+        table { border-collapse: collapse; table-layout: fixed; background: white; box-sizing: border-box; width: max-content; }
         
         th, td { 
             border: 0.5px solid #d4d4d4; 
-            padding: 0 5px; 
+            padding: 0 4px; 
             font-size: 11px; 
             outline: none; 
             vertical-align: middle; 
@@ -31,10 +23,10 @@
             overflow: hidden;
         }
         
-        /* Заголовки колонок (A, B, C) */
+        /* Нативный аппаратный sticky сверху */
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; position: sticky; top: 0; z-index: 10; }
         
-        /* Жесткая фиксация номеров строк без эффекта пружины и рассинхрона */
+        /* Нативный аппаратный sticky слева: СТОИТ КАК ВКОПАННЫЙ, без пружин */
         .row-number-cell { 
             background-color: #f1f1f1 !important; 
             text-align: center; 
@@ -42,13 +34,13 @@
             color: #666; 
             font-size: 10px;
             user-select: none;
-            position: relative;
+            position: sticky;
+            left: 0;
             z-index: 5;
-            will-change: transform;
         }
         
-        /* Левый верхний пустой угол таблицы */
-        tr:first-child th:first-child { z-index: 15; position: relative; will-change: transform; }
+        /* Левый верхний угол */
+        tr:first-child th:first-child { z-index: 15; position: sticky; left: 0; }
 
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 20; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
@@ -56,20 +48,14 @@
 </head>
 <body>
 
-<div class="viewport-container" id="scroll-view">
-    <div class="zoom-layer" id="zoom-container">
-        <table id="excel-table"></table>
-    </div>
+<div class="viewport-container">
+    <table id="excel-table"></table>
 </div>
 
 <script>
     let currentData = [];
     let defaultRows = 50;
     let defaultCols = 15;
-    
-    let currentScale = 1.0;
-    let startTouchDist = 0;
-    let startScale = 1.0;
 
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
@@ -94,7 +80,6 @@
             }
             table.appendChild(tr);
         }
-        initPinchAndScroll();
     }
 
     function loadExcelFromBytes(base64Data) {
@@ -169,7 +154,6 @@
                     }
 
                     td.addEventListener('blur', function() {
-                        // Чистим текст от мусорных символов веб-движка перед сохранением
                         let cleanText = this.innerText.replace(/\n/g, '').replace(/\r/g, '').trim();
                         currentData[this.dataset.row][this.dataset.col] = cleanText;
                     });
@@ -185,57 +169,8 @@
                 }
                 table.appendChild(tr);
             }
-            initPinchAndScroll();
             AndroidBridge.onStatus("Файл успешно визуализирован!");
         } catch (e) { AndroidBridge.onStatus("Ошибка отрисовки: " + e.message); }
-    }
-
-    // Фиксация первой колонки при горизонтальном смещении листа
-    function keepNumbersSticky() {
-        const scrollView = document.getElementById('scroll-view');
-        const xOffset = scrollView.scrollLeft / currentScale;
-        
-        const stickyElements = document.querySelectorAll('.row-number-cell, tr:first-child th:first-child');
-        stickyElements.forEach(el => {
-            el.style.transform = `translateX(${xOffset}px)`;
-        });
-    }
-
-    function initPinchAndScroll() {
-        const scrollView = document.getElementById('scroll-view');
-        const zoomContainer = document.getElementById('zoom-container');
-
-        scrollView.removeEventListener('scroll', keepNumbersSticky);
-        scrollView.addEventListener('scroll', keepNumbersSticky);
-
-        scrollView.addEventListener('touchstart', function(e) {
-            if (e.touches.length === 2) {
-                e.preventDefault();
-                startTouchDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                startScale = currentScale;
-            }
-        }, { passive: false });
-
-        scrollView.addEventListener('touchmove', function(e) {
-            if (e.touches.length === 2) {
-                e.preventDefault();
-                const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                if (startTouchDist > 0) {
-                    let targetScale = startScale * (dist / startTouchDist);
-                    
-                    if (targetScale < 0.3) targetScale = 0.3;
-                    if (targetScale > 2.5) targetScale = 2.5;
-                    
-                    currentScale = targetScale;
-                    zoomContainer.style.transform = `scale(${currentScale})`;
-                    
-                    keepNumbersSticky();
-                }
-            }
-        }, { passive: false });
-        
-        scrollView.addEventListener('touchend', function(e) { if (e.touches.length < 2) { startTouchDist = 0; } });
-        keepNumbersSticky();
     }
 
     function exportExcelToAndroid() {
