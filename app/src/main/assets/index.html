@@ -2,18 +2,35 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MiniExcel Native Grid</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MiniExcel Zero Lag Grid</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
         
-        .viewport-container { width: 100%; height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
+        /* Основной контейнер скролла */
+        .viewport-container { 
+            width: 100%; 
+            height: 100%; 
+            overflow: auto; 
+            -webkit-overflow-scrolling: touch; 
+            position: relative;
+            /* Изолируем перерисовку, убирая микро-лаги и эффект пружины */
+            contain: paint; 
+        }
         
-        table { border-collapse: collapse; table-layout: fixed; background: white; box-sizing: border-box; width: max-content; }
+        .zoom-layer {
+            transform-origin: 0 0;
+            width: max-content;
+            height: max-content;
+            will-change: transform;
+        }
+        
+        /* Строго фиксированная сетка, которая 100% слушается заданных в Java пикселей */
+        table { border-collapse: collapse; table-layout: fixed; background: white; box-sizing: border-box; }
         
         th, td { 
             border: 0.5px solid #d4d4d4; 
-            padding: 0 4px; 
+            padding: 0 5px; 
             font-size: 11px; 
             outline: none; 
             vertical-align: middle; 
@@ -23,24 +40,22 @@
             overflow: hidden;
         }
         
-        /* Нативный аппаратный sticky сверху */
-        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; position: sticky; top: 0; z-index: 10; }
+        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; }
         
-        /* Нативный аппаратный sticky слева: СТОИТ КАК ВКОПАННЫЙ, без пружин */
-        .row-number-cell { 
+        /* Фиксация колонки номеров строк через чистый аппаратный сдвиг */
+        .row-number-cell, tr th:first-child { 
             background-color: #f1f1f1 !important; 
             text-align: center; 
             font-weight: bold; 
             color: #666; 
             font-size: 10px;
-            user-select: none;
-            position: sticky;
-            left: 0;
             z-index: 5;
+            user-select: none;
+            position: relative;
+            will-change: transform;
         }
         
-        /* Левый верхний угол */
-        tr:first-child th:first-child { z-index: 15; position: sticky; left: 0; }
+        tr th:first-child { z-index: 10; }
 
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 20; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
@@ -48,14 +63,20 @@
 </head>
 <body>
 
-<div class="viewport-container">
-    <table id="excel-table"></table>
+<div class="viewport-container" id="scroll-view">
+    <div class="zoom-layer" id="zoom-container">
+        <table id="excel-table"></table>
+    </div>
 </div>
 
 <script>
     let currentData = [];
     let defaultRows = 50;
     let defaultCols = 15;
+    
+    let currentScale = 1.0;
+    let startTouchDist = 0;
+    let startScale = 1.0;
 
     function createEmptyGrid() {
         const table = document.getElementById('excel-table');
@@ -70,16 +91,22 @@
         table.appendChild(headerRow);
 
         for (let r = 0; r < defaultRows; r++) {
-            let tr = document.createElement('tr'); tr.style.height = "22px";
+            let tr = document.createElement('tr');
             let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; tr.appendChild(rowTh);
             currentData[r] = [];
             for (let c = 0; c < defaultCols; c++) {
                 let td = document.createElement('td'); td.contentEditable = true; td.dataset.row = r; td.dataset.col = c; currentData[r][c] = "";
-                td.addEventListener('blur', function() { currentData[this.dataset.row][this.dataset.col] = this.innerText.trim(); });
+                td.addEventListener('blur', function() { saveCell(this); });
                 tr.appendChild(td);
             }
             table.appendChild(tr);
         }
+        initPinchZoomAndScroll();
+    }
+
+    function saveCell(cell) {
+        let cleanText = cell.innerText.replace(/\n/g, '').replace(/\r/g, '').trim();
+        currentData[cell.dataset.row][cell.dataset.col] = cleanText;
     }
 
     function loadExcelFromBytes(base64Data) {
@@ -153,10 +180,7 @@
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
 
-                    td.addEventListener('blur', function() {
-                        let cleanText = this.innerText.replace(/\n/g, '').replace(/\r/g, '').trim();
-                        currentData[this.dataset.row][this.dataset.col] = cleanText;
-                    });
+                    td.addEventListener('blur', function() { saveCell(this); });
 
                     let mergeInfo = mergeMap[`${r}_${c}`];
                     if (mergeInfo) {
@@ -169,16 +193,72 @@
                 }
                 table.appendChild(tr);
             }
+            initPinchZoomAndScroll();
             AndroidBridge.onStatus("Файл успешно визуализирован!");
         } catch (e) { AndroidBridge.onStatus("Ошибка отрисовки: " + e.message); }
     }
 
+    // Мгновенный сдвиг колонки номеров без анимационного дрожания
+    function syncStickyColumns() {
+        const scrollView = document.getElementById('scroll-view');
+        const scrollLeftCompensated = scrollView.scrollLeft / currentScale;
+        
+        const stickyCells = document.querySelectorAll('.row-number-cell, tr th:first-child');
+        stickyCells.forEach(cell => {
+            cell.style.transform = `translateX(${scrollLeftCompensated}px)`;
+        });
+    }
+
+    function initPinchZoomAndScroll() {
+        const scrollView = document.getElementById('scroll-view');
+        const zoomContainer = document.getElementById('zoom-container');
+
+        scrollView.removeEventListener('scroll', syncStickyColumns);
+        scrollView.addEventListener('scroll', syncStickyColumns);
+
+        scrollView.addEventListener('touchstart', function(e) {
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                startTouchDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                startScale = currentScale;
+            }
+        }, { passive: false });
+
+        scrollView.addEventListener('touchmove', function(e) {
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                if (startTouchDist > 0) {
+                    let targetScale = startScale * (dist / startTouchDist);
+                    
+                    if (targetScale < 0.3) targetScale = 0.3;
+                    if (targetScale > 2.2) targetScale = 2.2;
+                    
+                    currentScale = targetScale;
+                    zoomContainer.style.transform = `scale(${currentScale})`;
+                    syncStickyColumns();
+                }
+            }
+        }, { passive: false });
+        
+        scrollView.addEventListener('touchend', function(e) { if (e.touches.length < 2) { startTouchDist = 0; } });
+        syncStickyColumns();
+    }
+
     function exportExcelToAndroid() {
         try {
-            const jsonString = JSON.stringify(currentData);
-            const encoder = new TextEncoder(); const bytes = encoder.encode(jsonString);
-            let binary = ''; for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
-            AndroidBridge.saveFileData(btoa(binary));
+            // ПРИНУДИТЕЛЬНО снимаем фокус с активной ячейки, чтобы применить изменения перед отправкой в Java
+            if (document.activeElement && document.activeElement.tagName === 'TD') {
+                saveCell(document.activeElement);
+                document.activeElement.blur();
+            }
+            
+            setTimeout(function() {
+                const jsonString = JSON.stringify(currentData);
+                const encoder = new TextEncoder(); const bytes = encoder.encode(jsonString);
+                let binary = ''; for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
+                AndroidBridge.saveFileData(btoa(binary));
+            }, 50); // Небольшая задержка, чтобы JS гарантированно обновил массив данных
         } catch (e) { AndroidBridge.onStatus("Ошибка экспорта: " + e.message); }
     }
 
