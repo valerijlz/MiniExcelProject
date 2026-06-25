@@ -168,7 +168,7 @@ public class MainActivity extends AppCompatActivity {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
-            int defaultColWidthInPx = 65; 
+            int defaultColWidthInPx = 55; 
 
             JSONArray jsonColWidths = new JSONArray();
             for (int c = 0; c < maxCellCount; c++) {
@@ -179,11 +179,11 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Оптимальный баланс: ячейки не раздуваются и соответствуют оригиналу Excel
-                    widthInPx = (int) (characters * 6.2 + 4);
+                    // Новый уменьшенный коэффициент возвращает компактность оригинального листа
+                    widthInPx = (int) (characters * 4.1 + 2);
                 }
                 
-                if (widthInPx < 25) widthInPx = defaultColWidthInPx;
+                if (widthInPx < 20) widthInPx = defaultColWidthInPx;
                 jsonColWidths.put(widthInPx);
             }
 
