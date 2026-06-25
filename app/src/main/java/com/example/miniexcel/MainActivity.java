@@ -168,20 +168,21 @@ public class MainActivity extends AppCompatActivity {
             if (maxCellCount < 15) maxCellCount = 15;
             if (totalRows == 0) totalRows = 40;
 
-            int defaultColWidthInPx = 55; 
+            int defaultColWidthInPx = 45; 
 
             JSONArray jsonColWidths = new JSONArray();
+            // Гарантируем, что мы берем реальное количество колонок
             for (int c = 0; c < maxCellCount; c++) {
-                int poiWidth = sheet.getColumnWidth(c);
-                int widthInPx;
-                
-                if (poiWidth == 2048) {
-                    widthInPx = defaultColWidthInPx;
-                } else {
-                    double characters = (double) poiWidth / 256.0;
-                    // Окончательно уплотненный коэффициент 3.3 возвращает оригинальные размеры ячеек
-                    widthInPx = (int) (characters * 3.3 + 2);
-                }
+                int widthInPx = defaultColWidthInPx;
+                try {
+                    int poiWidth = sheet.getColumnWidth(c);
+                    // Если колонка имеет стандартный размер Excel (2048 или дефолт)
+                    if (poiWidth > 0 && poiWidth != 2048) {
+                        double characters = (double) poiWidth / 256.0;
+                        // Коэффициент 4.0 для плотного отображения
+                        widthInPx = (int) (characters * 4.0);
+                    }
+                } catch (Throwable ignored) {}
                 
                 if (widthInPx < 20) widthInPx = defaultColWidthInPx;
                 jsonColWidths.put(widthInPx);
