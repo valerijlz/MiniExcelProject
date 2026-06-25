@@ -127,7 +127,7 @@
             const heights = payload.heights || [];
             
             const table = document.getElementById('excel-table');
-            table.innerHTML = '';
+            table.innerHTML = ''; // Полностью чистим старую дефолтную сетку!
             
             if (!rows || rows.length === 0) { createEmptyGrid(); return; }
             currentData = [];
@@ -135,11 +135,13 @@
             let colsCount = rows[0].length;
             let rowsCount = rows.length;
 
+            // Жестко управляем тегами col
             let colGroup = document.createElement('colgroup');
             let colFirst = document.createElement('col'); colFirst.style.width = "35px"; colGroup.appendChild(colFirst);
             for (let c = 0; c < colsCount; c++) {
                 let col = document.createElement('col');
-                col.style.width = (widths[c] || 55) + "px";
+                let w = (widths[c] || 45) + "px";
+                col.style.width = w;
                 colGroup.appendChild(col);
             }
             table.appendChild(colGroup);
@@ -149,12 +151,10 @@
             for (let c = 0; c < colsCount; c++) {
                 let th = document.createElement('th'); 
                 th.innerText = String.fromCharCode(65 + c); 
-                let w = (widths[c] || 55) + "px";
+                let w = (widths[c] || 45) + "px";
                 th.style.width = w; th.style.maxWidth = w; th.style.minWidth = w;
                 
-                // РАМКА: Строго на последней колонке данных оригинального файла
                 if (c === colsCount - 1) th.classList.add('doc-right-boundary');
-                
                 headerRow.appendChild(th);
             }
             table.appendChild(headerRow);
@@ -221,7 +221,11 @@
             }
             initPinchZoomAndScroll();
             AndroidBridge.onStatus("Файл успешно визуализирован!");
-        } catch (e) { AndroidBridge.onStatus("Ошибка отрисовки: " + e.message); }
+        } catch (e) { 
+            // Вместо тихого сброса выводимalert, чтобы поймать ошибку парсинга структуры
+            alert("Критическая ошибка парсинга JSON: " + e.message);
+            AndroidBridge.onStatus("Ошибка отрисовки: " + e.message); 
+        }
     }
 
     function syncStickyColumns() {
