@@ -35,12 +35,17 @@
 
         /* Строго фиксированная сетка, которая 100% слушается заданных в Java пикселей */
         /* Строго фиксированная сетка */
-        table {
-            border-collapse: collapse;
-            table-layout: fixed !important;
-            background: white;
-            box-sizing: border-box;
+        /* Строго фиксированная сетка с синей границей документа */
+        table { 
+            border-collapse: collapse; 
+            table-layout: fixed !important; 
+            background: white; 
+            box-sizing: border-box; 
             width: max-content;
+            /* Тонкая синяя рамка вокруг всего документа */
+            border: 2px solid #107c41; /* Можно #0f62fe для ярко-синего, но #107c41 — это классический Excel-стиль. Если нужен именно строго синий: 2px solid #0f62fe; */
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            margin: 10px;
         }
 
         th, td {
