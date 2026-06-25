@@ -26,9 +26,16 @@
         }
         
         /* Строго фиксированная сетка, которая 100% слушается заданных в Java пикселей */
-        table { border-collapse: collapse; table-layout: fixed; background: white; box-sizing: border-box; }
+        /* Строго фиксированная сетка */
+        table { 
+            border-collapse: collapse; 
+            table-layout: fixed !important; 
+            background: white; 
+            box-sizing: border-box; 
+            width: max-content;
+        }
         
-        th, td { 
+        th, td {
             border: 0.5px solid #d4d4d4; 
             padding: 0 5px; 
             font-size: 11px; 
@@ -38,6 +45,9 @@
             height: 22px;
             white-space: nowrap;
             overflow: hidden;
+            /* ЖЕСТКИЙ БЛОК: Запрещаем тексту распирать ширину ячейки наружу */
+            text-overflow: ellipsis;
+            max-width: inherit; 
         }
         
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; }
@@ -142,7 +152,16 @@
             let headerRow = document.createElement('tr');
             let firstTh = document.createElement('th'); headerRow.appendChild(firstTh);
             for (let c = 0; c < colsCount; c++) {
-                let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); headerRow.appendChild(th);
+                let th = document.createElement('th'); 
+                th.innerText = String.fromCharCode(65 + c); 
+                
+                // Фиксируем ширину заголовков со всех сторон, чтобы таблица не разъезжалась
+                let w = (widths[c] || 65) + "px";
+                th.style.width = w;
+                th.style.maxWidth = w;
+                th.style.minWidth = w;
+                
+                headerRow.appendChild(th);
             }
             table.appendChild(headerRow);
 
