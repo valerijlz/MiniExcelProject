@@ -3,120 +3,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Zero Lag Grid</title>
+    <title>MiniExcel Perfect Fixed Grid</title>
     <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            font-family: Arial, sans-serif;
-            background-color: #f3f3f3;
-            overflow: hidden;
-        }
-
-        /* Основной контейнер скролла */
-        .viewport-container {
-            width: 100%;
-            height: 100%;
-            overflow: auto;
-            -webkit-overflow-scrolling: touch;
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
+        
+        .viewport-container { 
+            width: 100%; 
+            height: 100%; 
+            overflow: auto; 
+            -webkit-overflow-scrolling: touch; 
             position: relative;
-            /* Изолируем перерисовку, убирая микро-лаги и эффект пружины */
-            contain: paint;
+            contain: paint; 
         }
-
+        
         .zoom-layer {
             transform-origin: 0 0;
             width: max-content;
             height: max-content;
             will-change: transform;
         }
-
-        /* Строго фиксированная сетка, которая 100% слушается заданных в Java пикселей */
-        /* Строго фиксированная сетка */
-        /* Строго фиксированная сетка с синей границей документа */
-        table { 
-            border-collapse: collapse; 
-            table-layout: fixed !important; 
-            background: white; 
+        
+        /* Возвращаем таблицу в исходное состояние без внешних рамок, ломающих sticky */
+        table { border-collapse: collapse; table-layout: fixed !important; background: white; box-sizing: border-box; width: max-content; }
+        
+        th, td { 
+            border: 0.5px solid #d4d4d4; 
+            padding: 0 5px; 
+            font-size: 11px; 
+            outline: none; 
+            vertical-align: middle; 
             box-sizing: border-box; 
-            width: max-content;
-            /* Тонкая синяя рамка вокруг всего документа */
-            border: 2px solid #107c41; /* Можно #0f62fe для ярко-синего, но #107c41 — это классический Excel-стиль. Если нужен именно строго синий: 2px solid #0f62fe; */
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            margin: 10px;
-        }
-
-        th, td {
-            border: 0.5px solid #d4d4d4;
-            padding: 0 5px;
-            font-size: 11px;
-            outline: none;
-            vertical-align: middle;
-            box-sizing: border-box;
             height: 22px;
             white-space: nowrap;
             overflow: hidden;
-            /* ЖЕСТКИЙ БЛОК: Запрещаем тексту распирать ширину ячейки наружу */
             text-overflow: ellipsis;
-            max-width: inherit;
+            max-width: inherit; 
         }
-
-        th {
-            background-color: #f1f1f1;
-            font-weight: bold;
-            text-align: center;
-            color: #444;
-            user-select: none;
-        }
-
-        /* Фиксация колонки номеров строк через чистый аппаратный сдвиг */
-        .row-number-cell, tr th:first-child {
-            background-color: #f1f1f1 !important;
-            text-align: center;
-            font-weight: bold;
-            color: #666;
+        
+        th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; }
+        
+        /* Жесткая фиксация номеров строк */
+        .row-number-cell, tr th:first-child { 
+            background-color: #f1f1f1 !important; 
+            text-align: center; 
+            font-weight: bold; 
+            color: #666; 
             font-size: 10px;
             z-index: 5;
             user-select: none;
             position: relative;
             will-change: transform;
         }
+        
+        tr th:first-child { z-index: 10; }
 
-        tr th:first-child {
-            z-index: 10;
-        }
+        td:focus { outline: 1.5px solid #107c41 !important; z-index: 20; background-color: #f3f9f5 !important; }
+        .hidden-merged-cell { display: none; }
 
-        td:focus {
-            outline: 1.5px solid #107c41 !important;
-            z-index: 20;
-            background-color: #f3f9f5 !important;
-        }
-
-        .hidden-merged-cell {
-            display: none;
-        }
+        /* Стили для визуального обозначения правого и нижнего края оригинального документа */
+        .doc-right-boundary { border-right: 2px solid #0f62fe !important; }
+        .doc-bottom-boundary { border-bottom: 2px solid #0f62fe !important; }
     </style>
 </head>
 <body>
 
-    <div class="viewport-container" id="scroll-view">
-        <div class="zoom-layer" id="zoom-container">
-            <table id="excel-table"></table>
-        </div>
+<div class="viewport-container" id="scroll-view">
+    <div class="zoom-layer" id="zoom-container">
+        <table id="excel-table"></table>
     </div>
+</div>
 
-    <script>
-        let currentData = [];
-        let defaultRows = 50;
-        let defaultCols = 15;
+<script>
+    let currentData = [];
+    let defaultRows = 50;
+    let defaultCols = 15;
+    
+    let currentScale = 1.0;
+    let startTouchDist = 0;
+    let startScale = 1.0;
 
-        let currentScale = 1.0;
-        let startTouchDist = 0;
-        let startScale = 1.0;
-
-        function createEmptyGrid() {
+    function createEmptyGrid() {
         const table = document.getElementById('excel-table');
         table.innerHTML = '';
         currentData = [];
@@ -124,91 +90,96 @@
         let headerRow = document.createElement('tr');
         let emptyTh = document.createElement('th'); emptyTh.style.width = "40px"; headerRow.appendChild(emptyTh);
         for (let c = 0; c < defaultCols; c++) {
-        let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); th.style.width = "75px"; headerRow.appendChild(th);
+            let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); th.style.width = "75px"; headerRow.appendChild(th);
         }
         table.appendChild(headerRow);
 
         for (let r = 0; r < defaultRows; r++) {
-        let tr = document.createElement('tr');
-        let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; tr.appendChild(rowTh);
-        currentData[r] = [];
-        for (let c = 0; c < defaultCols; c++) {
-        let td = document.createElement('td'); td.contentEditable = true; td.dataset.row = r; td.dataset.col = c; currentData[r][c] = "";
-        td.addEventListener('blur', function() { saveCell(this); });
-        tr.appendChild(td);
-        }
-        table.appendChild(tr);
+            let tr = document.createElement('tr');
+            let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; tr.appendChild(rowTh);
+            currentData[r] = [];
+            for (let c = 0; c < defaultCols; c++) {
+                let td = document.createElement('td'); td.contentEditable = true; td.dataset.row = r; td.dataset.col = c; currentData[r][c] = "";
+                td.addEventListener('blur', function() { saveCell(this); });
+                tr.appendChild(td);
+            }
+            table.appendChild(tr);
         }
         initPinchZoomAndScroll();
-        }
+    }
 
-        function saveCell(cell) {
+    function saveCell(cell) {
         let cleanText = cell.innerText.replace(/\n/g, '').replace(/\r/g, '').trim();
         currentData[cell.dataset.row][cell.dataset.col] = cleanText;
-        }
+    }
 
-        function loadExcelFromBytes(base64Data) {
+    function loadExcelFromBytes(base64Data) {
         try {
-        const binaryString = atob(base64Data);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
-        const decodedString = new TextDecoder('utf-8').decode(bytes);
+            const binaryString = atob(base64Data);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
+            const decodedString = new TextDecoder('utf-8').decode(bytes);
+            
+            const payload = JSON.parse(decodedString);
+            const rows = payload.matrix;
+            const merges = payload.merges || [];
+            const widths = payload.widths || [];
+            const heights = payload.heights || [];
+            
+            const table = document.getElementById('excel-table');
+            table.innerHTML = '';
+            
+            if (!rows || rows.length === 0) { createEmptyGrid(); return; }
+            currentData = [];
+            let colsCount = rows[0].length;
+            let rowsCount = rows.length;
 
-        const payload = JSON.parse(decodedString);
-        const rows = payload.matrix;
-        const merges = payload.merges || [];
-        const widths = payload.widths || [];
-        const heights = payload.heights || [];
+            let colGroup = document.createElement('colgroup');
+            let colFirst = document.createElement('col'); colFirst.style.width = "40px"; colGroup.appendChild(colFirst);
+            for (let c = 0; c < colsCount; c++) {
+                let col = document.createElement('col');
+                col.style.width = (widths[c] || 65) + "px";
+                colGroup.appendChild(col);
+            }
+            table.appendChild(colGroup);
 
-        const table = document.getElementById('excel-table');
-        table.innerHTML = '';
+            let headerRow = document.createElement('tr');
+            let firstTh = document.createElement('th'); headerRow.appendChild(firstTh);
+            for (let c = 0; c < colsCount; c++) {
+                let th = document.createElement('th'); 
+                th.innerText = String.fromCharCode(65 + c); 
+                let w = (widths[c] || 65) + "px";
+                th.style.width = w; th.style.maxWidth = w; th.style.minWidth = w;
+                
+                // Подсвечиваем правую границу заголовка последней колонки оригинального документа
+                if (c === colsCount - 1) th.classList.add('doc-right-boundary');
+                
+                headerRow.appendChild(th);
+            }
+            table.appendChild(headerRow);
 
-        if (!rows || rows.length === 0) { createEmptyGrid(); return; }
-        currentData = [];
-        let colsCount = rows[0].length;
+            let mergeMap = {};
+            merges.forEach(m => {
+                for (let r = m.sr; r <= m.er; r++) {
+                    for (let c = m.sc; c <= m.ec; c++) {
+                        if (r === m.sr && c === m.sc) {
+                            mergeMap[`${r}_${c}`] = { isMain: true, rowspan: (m.er - m.sr) + 1, colspan: (m.ec - m.sc) + 1 };
+                        } else { mergeMap[`${r}_${c}`] = { isChild: true }; }
+                    }
+                }
+            });
 
-        let colGroup = document.createElement('colgroup');
-        let colFirst = document.createElement('col'); colFirst.style.width = "40px"; colGroup.appendChild(colFirst);
-        for (let c = 0; c < colsCount; c++) {
-        let col = document.createElement('col');
-        col.style.width = (widths[c] || 65) + "px";
-        colGroup.appendChild(col);
-        }
-        table.appendChild(colGroup);
-
-        let headerRow = document.createElement('tr');
-        let firstTh = document.createElement('th'); headerRow.appendChild(firstTh);
-        for (let c = 0; c < colsCount; c++) {
-        let th = document.createElement('th');
-        th.innerText = String.fromCharCode(65 + c);
-
-        // Фиксируем ширину заголовков со всех сторон, чтобы таблица не разъезжалась
-        let w = (widths[c] || 65) + "px";
-        th.style.width = w;
-        th.style.maxWidth = w;
-        th.style.minWidth = w;
-
-        headerRow.appendChild(th);
-        }
-        table.appendChild(headerRow);
-
-        let mergeMap = {};
-        merges.forEach(m => {
-        for (let r = m.sr; r <= m.er; r++) {
-        for (let c = m.sc; c <= m.ec; c++) {
-        if (r === m.sr && c === m.sc) {
-        mergeMap[`${r}_${c}`] = { isMain: true, rowspan: (m.er - m.sr) + 1, colspan: (m.ec - m.sc) + 1 };
-        } else { mergeMap[`${r}_${c}`] = { isChild: true }; }
-        }
-        }
-        });
-
-        for (let r = 0; r < rows.length; r++) {
+            for (let r = 0; r < rowsCount; r++) {
                 let tr = document.createElement('tr');
                 tr.style.height = (heights[r] || 22) + "px";
 
-                let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; tr.appendChild(rowTh);
+                let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; 
+                
+                // Подсвечиваем нижнюю границу номера строки для самой последней строки документа
+                if (r === rowsCount - 1) rowTh.classList.add('doc-bottom-boundary');
+                
+                tr.appendChild(rowTh);
                 currentData[r] = [];
 
                 for (let c = 0; c < colsCount; c++) {
@@ -216,11 +187,8 @@
                     let td = document.createElement('td');
                     td.contentEditable = true; td.dataset.row = r; td.dataset.col = c;
                     
-                    // ХАРДКОД ШИРИНЫ ДЛЯ КАЖДОЙ ЯЧЕЙКИ (У WebView не останется выбора)
                     let cellWidth = (widths[c] || 65) + "px";
-                    td.style.width = cellWidth;
-                    td.style.maxWidth = cellWidth;
-                    td.style.minWidth = cellWidth;
+                    td.style.width = cellWidth; td.style.maxWidth = cellWidth; td.style.minWidth = cellWidth;
                     
                     let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
                     currentData[r][c] = textValue;
@@ -233,6 +201,10 @@
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
 
+                    // ПОДСВЕТКА РЕАЛЬНЫХ ГРАНИЦ ДОКУМЕНТА
+                    if (c === colsCount - 1) td.classList.add('doc-right-boundary');
+                    if (r === rowsCount - 1) td.classList.add('doc-bottom-boundary');
+
                     td.addEventListener('blur', function() { saveCell(this); });
 
                     let mergeInfo = mergeMap[`${r}_${c}`];
@@ -240,7 +212,6 @@
                         if (mergeInfo.isMain) {
                             if (mergeInfo.rowspan > 1) td.rowSpan = mergeInfo.rowspan;
                             if (mergeInfo.colspan > 1) td.colSpan = mergeInfo.colspan;
-                            // Если ячейка объединена, убираем жесткий лимит ширины одной колонки
                             td.style.maxWidth = "none";
                         } else if (mergeInfo.isChild) { td.classList.add('hidden-merged-cell'); }
                     }
@@ -248,23 +219,22 @@
                 }
                 table.appendChild(tr);
             }
-        initPinchZoomAndScroll();
-        AndroidBridge.onStatus("Файл успешно визуализирован!");
+            initPinchZoomAndScroll();
+            AndroidBridge.onStatus("Файл успешно визуализирован!");
         } catch (e) { AndroidBridge.onStatus("Ошибка отрисовки: " + e.message); }
-        }
+    }
 
-        // Мгновенный сдвиг колонки номеров без анимационного дрожания
-        function syncStickyColumns() {
+    function syncStickyColumns() {
         const scrollView = document.getElementById('scroll-view');
         const scrollLeftCompensated = scrollView.scrollLeft / currentScale;
-
+        
         const stickyCells = document.querySelectorAll('.row-number-cell, tr th:first-child');
         stickyCells.forEach(cell => {
-        cell.style.transform = `translateX(${scrollLeftCompensated}px)`;
+            cell.style.transform = `translateX(${scrollLeftCompensated}px)`;
         });
-        }
+    }
 
-        function initPinchZoomAndScroll() {
+    function initPinchZoomAndScroll() {
         const scrollView = document.getElementById('scroll-view');
         const zoomContainer = document.getElementById('zoom-container');
 
@@ -272,52 +242,51 @@
         scrollView.addEventListener('scroll', syncStickyColumns);
 
         scrollView.addEventListener('touchstart', function(e) {
-        if (e.touches.length === 2) {
-        e.preventDefault();
-        startTouchDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-        startScale = currentScale;
-        }
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                startTouchDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                startScale = currentScale;
+            }
         }, { passive: false });
 
         scrollView.addEventListener('touchmove', function(e) {
-        if (e.touches.length === 2) {
-        e.preventDefault();
-        const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-        if (startTouchDist > 0) {
-        let targetScale = startScale * (dist / startTouchDist);
-
-        if (targetScale < 0.3) targetScale = 0.3;
-        if (targetScale > 2.2) targetScale = 2.2;
-
-        currentScale = targetScale;
-        zoomContainer.style.transform = `scale(${currentScale})`;
-        syncStickyColumns();
-        }
-        }
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                if (startTouchDist > 0) {
+                    let targetScale = startScale * (dist / startTouchDist);
+                    
+                    if (targetScale < 0.3) targetScale = 0.3;
+                    if (targetScale > 2.2) targetScale = 2.2;
+                    
+                    currentScale = targetScale;
+                    zoomContainer.style.transform = `scale(${currentScale})`;
+                    syncStickyColumns();
+                }
+            }
         }, { passive: false });
-
+        
         scrollView.addEventListener('touchend', function(e) { if (e.touches.length < 2) { startTouchDist = 0; } });
         syncStickyColumns();
-        }
+    }
 
-        function exportExcelToAndroid() {
+    function exportExcelToAndroid() {
         try {
-        // ПРИНУДИТЕЛЬНО снимаем фокус с активной ячейки, чтобы применить изменения перед отправкой в Java
-        if (document.activeElement && document.activeElement.tagName === 'TD') {
-        saveCell(document.activeElement);
-        document.activeElement.blur();
-        }
-
-        setTimeout(function() {
-        const jsonString = JSON.stringify(currentData);
-        const encoder = new TextEncoder(); const bytes = encoder.encode(jsonString);
-        let binary = ''; for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
-        AndroidBridge.saveFileData(btoa(binary));
-        }, 50); // Небольшая задержка, чтобы JS гарантированно обновил массив данных
+            if (document.activeElement && document.activeElement.tagName === 'TD') {
+                saveCell(document.activeElement);
+                document.activeElement.blur();
+            }
+            
+            setTimeout(function() {
+                const jsonString = JSON.stringify(currentData);
+                const encoder = new TextEncoder(); const bytes = encoder.encode(jsonString);
+                let binary = ''; for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
+                AndroidBridge.saveFileData(btoa(binary));
+            }, 50);
         } catch (e) { AndroidBridge.onStatus("Ошибка экспорта: " + e.message); }
-        }
+    }
 
-        window.onload = createEmptyGrid;
-    </script>
+    window.onload = createEmptyGrid;
+</script>
 </body>
 </html>
