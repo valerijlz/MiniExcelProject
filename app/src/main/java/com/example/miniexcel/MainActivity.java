@@ -179,8 +179,8 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Новый уменьшенный коэффициент возвращает компактность оригинального листа
-                    widthInPx = (int) (characters * 4.1 + 2);
+                    // Окончательно уплотненный коэффициент 3.3 возвращает оригинальные размеры ячеек
+                    widthInPx = (int) (characters * 3.3 + 2);
                 }
                 
                 if (widthInPx < 20) widthInPx = defaultColWidthInPx;
