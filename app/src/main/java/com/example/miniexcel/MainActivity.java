@@ -57,10 +57,9 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setAllowFileAccess(true);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
-        // ВКЛЮЧАЕМ НАСТОЯЩИЙ АППАРАТНЫЙ ЗУМ (Без CSS трансформ и лагов)
-        webSettings.setSupportZoom(true);
-        webSettings.setBuiltInZoomControls(true);
-        webSettings.setDisplayZoomControls(false); 
+        // ОТКЛЮЧАЕМ НАРАБОТКУ ДВИЖКА (Она ломала фиксированную ширину ячеек)
+        webSettings.setSupportZoom(false);
+        webSettings.setBuiltInZoomControls(false);
         
         webSettings.setUseWideViewPort(true);
         webSettings.setLoadWithOverviewMode(true);
@@ -180,8 +179,8 @@ public class MainActivity extends AppCompatActivity {
                     widthInPx = defaultColWidthInPx;
                 } else {
                     double characters = (double) poiWidth / 256.0;
-                    // Откалиброванный коэффициент 6.0 убирает горизонтальное раздувание листа
-                    widthInPx = (int) (characters * 6.0 + 3);
+                    // Оптимальный баланс: ячейки не раздуваются и соответствуют оригиналу Excel
+                    widthInPx = (int) (characters * 6.2 + 4);
                 }
                 
                 if (widthInPx < 25) widthInPx = defaultColWidthInPx;
