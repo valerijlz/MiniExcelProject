@@ -34,6 +34,9 @@ public class MainActivity extends AppCompatActivity {
     private WebView tableWebView;
     private Button openButton, saveButton;
     private Uri currentFileUri = null;
+    
+    // ПЕРЕМЕННАЯ ОБЪЯВЛЕНА СТРОГО ТУТ — ТЕПЕРЬ ОНА ВИДИМА ВСЕМУ КЛАССУ И ВНУТРЕННИМ КЛАССАМ
+    private String cachedJsonPayload = null;
 
     private ActivityResultLauncher<Intent> openFileLauncher;
     private ActivityResultLauncher<Intent> saveFileLauncher;
@@ -47,7 +50,6 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
-        // Тотальная очистка кэша перед инициализацией
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
@@ -56,8 +58,6 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
-        
-        // ЖЕСТКИЙ ЗАПРЕТ КЭШИРОВАНИЯ (Гарантирует загрузку нового index.html)
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
         webSettings.setSupportZoom(false);
@@ -69,7 +69,6 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
 
-        // ВОЗВРАЩАЕМ БЕЗОПАСНЫЙ СТАНДАРТНЫЙ ПУТЬ (без ?t=)
         tableWebView.loadUrl("file:///android_asset/index.html");
         initFileLaunchers();
 
@@ -276,13 +275,12 @@ public class MainActivity extends AppCompatActivity {
             payload.put("widths", jsonColWidths);
             payload.put("heights", jsonRowHeights);
 
-            // Сохраняем чистый JSON в кэш класса, без Base64-раздувания
+            // Запись в переменную уровня класса
             cachedJsonPayload = payload.toString();
 
-            // Просто даем сигнал WebView: "Данные готовы, забирай!"
             tableWebView.postDelayed(() -> {
                 tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
-            }, 50);
+            }, 100);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -293,8 +291,10 @@ public class MainActivity extends AppCompatActivity {
     public class AndroidBridge {
         @JavascriptInterface
         public String getExcelData() {
+            // Теперь доступ к cachedJsonPayload отсюда абсолютно валиден
             return cachedJsonPayload != null ? cachedJsonPayload : "";
         }
+
         @JavascriptInterface
         public void saveFileData(String base64Data) {
             runOnUiThread(() -> {
@@ -352,7 +352,7 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(MainActivity.this, "Изменения успешно сохранены!", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
                     e.printStackTrace();
-                    Toast.makeText(MainActivity.this, "Ошибка сохранения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+                    Toast.makeText(MainActivity.this, "Ошибка保存ения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
                 }
             });
         }
