@@ -12,9 +12,9 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.Toast;
-import androidx.appcompat.app.AppCompatActivity;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.appcompat.app.AppCompatActivity;
 
 import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
@@ -26,6 +26,7 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends AppCompatActivity {
@@ -33,6 +34,7 @@ public class MainActivity extends AppCompatActivity {
     private WebView tableWebView;
     private Button openButton, saveButton;
     private Uri currentFileUri = null;
+
     private ActivityResultLauncher<Intent> openFileLauncher;
     private ActivityResultLauncher<Intent> saveFileLauncher;
 
@@ -55,7 +57,7 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setAllowFileAccess(true);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
-        // ОТКЛЮЧАЕМ НАРАБОТКУ ДВИЖКА (Она ломала фиксированную ширину ячеек)
+        // Отключаем встроенный зум-алгоритм WebView, мешавший fixed-разметке CSS
         webSettings.setSupportZoom(false);
         webSettings.setBuiltInZoomControls(false);
         
@@ -65,6 +67,7 @@ public class MainActivity extends AppCompatActivity {
 
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
+
         tableWebView.loadUrl("file:///android_asset/index.html");
         initFileLaunchers();
 
@@ -81,7 +84,6 @@ public class MainActivity extends AppCompatActivity {
         });
 
         saveButton.setOnClickListener(v -> {
-            if (!isEngineLoaded) return;
             tableWebView.post(() -> tableWebView.evaluateJavascript("exportExcelToAndroid();", null));
         });
     }
@@ -162,15 +164,12 @@ public class MainActivity extends AppCompatActivity {
             int defaultColWidthInPx = 45; 
 
             JSONArray jsonColWidths = new JSONArray();
-            // Гарантируем, что мы берем реальное количество колонок
             for (int c = 0; c < maxCellCount; c++) {
                 int widthInPx = defaultColWidthInPx;
                 try {
                     int poiWidth = sheet.getColumnWidth(c);
-                    // Если колонка имеет стандартный размер Excel (2048 или дефолт)
                     if (poiWidth > 0 && poiWidth != 2048) {
                         double characters = (double) poiWidth / 256.0;
-                        // Коэффициент 4.0 для плотного отображения
                         widthInPx = (int) (characters * 4.0);
                     }
                 } catch (Throwable ignored) {}
@@ -186,9 +185,9 @@ public class MainActivity extends AppCompatActivity {
                 Row row = null;
                 try { row = sheet.getRow(r); } catch (Throwable ignored) {}
                 
-                int heightInPx = 22; 
+                int heightInPx = 18; 
                 if (row != null && row.getHeightInPoints() > 0) {
-                    heightInPx = (int) (row.getHeightInPoints() * 1.33); 
+                    heightInPx = (int) (row.getHeightInPoints() * 1.33);
                 }
                 jsonRowHeights.put(heightInPx);
 
@@ -278,8 +277,6 @@ public class MainActivity extends AppCompatActivity {
             String jsonString = payload.toString();
             String base64Payload = Base64.encodeToString(jsonString.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
-            if (isEngineLoaded) {
-                // Убираем проверку if (isEngineLoaded) — выполняем поток гарантированно
             tableWebView.post(() -> tableWebView.evaluateJavascript("loadExcelFromBytes('" + base64Payload + "');", null));
         } catch (Exception e) {
             e.printStackTrace();
@@ -331,7 +328,6 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
 
-                    // НАДЕЖНЫЙ МЕТОД ПЕРЕЗАПИСИ: Через изолированный ByteArray-поток
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     workbook.write(baos);
                     byte[] workbookBytes = baos.toByteArray();
