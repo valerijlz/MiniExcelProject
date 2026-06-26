@@ -69,8 +69,9 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
 
-        // Добавляем уникальный таймстемп к URL, чтобы WebView гарантированно посчитал файл новым
-        tableWebView.loadUrl("file:///android_asset/index.html?t=" + System.currentTimeMillis());
+        // ВОЗВРАЩАЕМ БЕЗОПАСНЫЙ СТАНДАРТНЫЙ ПУТЬ (без ?t=)
+        tableWebView.loadUrl("file:///android_asset/index.html");
+        initFileLaunchers();
 
         openButton.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -278,7 +279,11 @@ public class MainActivity extends AppCompatActivity {
             String jsonString = payload.toString();
             String base64Payload = Base64.encodeToString(jsonString.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
-            tableWebView.post(() -> tableWebView.evaluateJavascript("loadExcelFromBytes('" + base64Payload + "');", null));
+            // Безопасный вызов с задержкой 100мс, предотвращающий коллизии кэша при чтении
+            tableWebView.postDelayed(() -> {
+                tableWebView.evaluateJavascript("loadExcelFromBytes('" + base64Payload + "');", null);
+            }, 100);
+
         } catch (Exception e) {
             e.printStackTrace();
             Toast.makeText(this, "Ошибка чтения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
