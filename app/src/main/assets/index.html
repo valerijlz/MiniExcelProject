@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Perfect Grid</title>
+    <title>MiniExcel Safe Data Bridge</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
         
@@ -25,6 +25,7 @@
         
         table { border-collapse: collapse; table-layout: fixed !important; background: white; box-sizing: border-box; width: max-content; }
         
+        /* Изначально зажимаем размеры ячеек до ультра-компактных */
         th, td { 
             border: 0.5px solid #d4d4d4; 
             padding: 0 2px; 
@@ -36,8 +37,9 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: clip;
-            width: 45px;
-            max-width: 45px; 
+            width: 42px;
+            max-width: 42px; 
+            min-width: 42px;
         }
         
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; }
@@ -52,16 +54,18 @@
             user-select: none;
             position: relative;
             will-change: transform;
+            width: 32px !important;
+            max-width: 32px !important;
+            min-width: 32px !important;
         }
         
         tr th:first-child { z-index: 10; }
-
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 20; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
 
-        /* Синие рамки строго для краев оригинального файла */
-        .excel-cell.doc-right-boundary { border-right: 2px solid #0f62fe !important; }
-        .excel-cell.doc-bottom-boundary { border-bottom: 2px solid #0f62fe !important; }
+        /* Границы документа */
+        .excel-cell.doc-right-boundary, th.doc-right-boundary { border-right: 2px solid #0f62fe !important; }
+        .excel-cell.doc-bottom-boundary, td.doc-bottom-boundary { border-bottom: 2px solid #0f62fe !important; }
     </style>
 </head>
 <body>
@@ -74,8 +78,8 @@
 
 <script>
     let currentData = [];
-    let defaultRows = 50;
-    let defaultCols = 15;
+    let defaultRows = 45;
+    let defaultCols = 12;
     
     let currentScale = 1.0;
     let startTouchDist = 0;
@@ -87,9 +91,9 @@
         currentData = [];
 
         let headerRow = document.createElement('tr');
-        let emptyTh = document.createElement('th'); emptyTh.style.width = "35px"; headerRow.appendChild(emptyTh);
+        let emptyTh = document.createElement('th'); headerRow.appendChild(emptyTh);
         for (let c = 0; c < defaultCols; c++) {
-            let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); th.style.width = "60px"; headerRow.appendChild(th);
+            let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); headerRow.appendChild(th);
         }
         table.appendChild(headerRow);
 
@@ -112,15 +116,21 @@
         currentData[cell.dataset.row][cell.dataset.col] = cleanText;
     }
 
-    function loadExcelFromBytes(base64Data) {
+    // Сигнальная функция: вызывается из Java, когда данные готовы
+    function requestDataFromAndroid() {
         try {
-            const binaryString = atob(base64Data);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
-            const decodedString = new TextDecoder('utf-8').decode(bytes);
+            const rawJson = AndroidBridge.getExcelData();
+            if (!rawJson) return;
             
-            const payload = JSON.parse(decodedString);
+            const payload = JSON.parse(rawJson);
+            renderExcelGrid(payload);
+        } catch(e) {
+            AndroidBridge.onStatus("Ошибка моста данных: " + e.message);
+        }
+    }
+
+    function renderExcelGrid(payload) {
+        try {
             const rows = payload.matrix;
             const merges = payload.merges || [];
             const widths = payload.widths || [];
@@ -136,20 +146,20 @@
             let rowsCount = rows.length;
 
             let colGroup = document.createElement('colgroup');
-            let colFirst = document.createElement('col'); colFirst.style.width = "35px"; colGroup.appendChild(colFirst);
+            let colFirst = document.createElement('col'); colFirst.style.width = "32px"; colGroup.appendChild(colFirst);
             for (let c = 0; c < colsCount; c++) {
                 let col = document.createElement('col');
-                col.style.width = (widths[c] || 55) + "px";
+                col.style.width = (widths[c] || 42) + "px";
                 colGroup.appendChild(col);
             }
             table.appendChild(colGroup);
 
             let headerRow = document.createElement('tr');
-            let firstTh = document.createElement('th'); firstTh.style.width = "35px"; headerRow.appendChild(firstTh);
+            let firstTh = document.createElement('th'); headerRow.appendChild(firstTh);
             for (let c = 0; c < colsCount; c++) {
                 let th = document.createElement('th'); 
                 th.innerText = String.fromCharCode(65 + c); 
-                let w = (widths[c] || 55) + "px";
+                let w = (widths[c] || 42) + "px";
                 th.style.width = w; th.style.maxWidth = w; th.style.minWidth = w;
                 
                 if (c === colsCount - 1) th.classList.add('doc-right-boundary');
@@ -184,7 +194,7 @@
                     td.className = "excel-cell";
                     td.contentEditable = true; td.dataset.row = r; td.dataset.col = c;
                     
-                    let cellWidth = (widths[c] || 55) + "px";
+                    let cellWidth = (widths[c] || 42) + "px";
                     td.style.width = cellWidth; td.style.maxWidth = cellWidth; td.style.minWidth = cellWidth;
                     
                     let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
@@ -216,8 +226,8 @@
                 table.appendChild(tr);
             }
             initPinchZoomAndScroll();
-            AndroidBridge.onStatus("Файл успешно визуализирован!");
-        } catch (e) { AndroidBridge.onStatus("Ошибка отрисовки: " + e.message); }
+            AndroidBridge.onStatus("Документ успешно отрисован!");
+        } catch (e) { AndroidBridge.onStatus("Ошибка рендеринга: " + e.message); }
     }
 
     function syncStickyColumns() {
@@ -251,7 +261,6 @@
                 const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
                 if (startTouchDist > 0) {
                     let targetScale = startScale * (dist / startTouchDist);
-                    
                     if (targetScale < 0.3) targetScale = 0.3;
                     if (targetScale > 2.0) targetScale = 2.0;
                     
@@ -272,7 +281,6 @@
                 saveCell(document.activeElement);
                 document.activeElement.blur();
             }
-            
             setTimeout(function() {
                 const jsonString = JSON.stringify(currentData);
                 const encoder = new TextEncoder(); const bytes = encoder.encode(jsonString);
