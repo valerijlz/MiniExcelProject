@@ -292,6 +292,10 @@ public class MainActivity extends AppCompatActivity {
 
     public class AndroidBridge {
         @JavascriptInterface
+        public String getExcelData() {
+            return cachedJsonPayload != null ? cachedJsonPayload : "";
+        }
+        @JavascriptInterface
         public void saveFileData(String base64Data) {
             runOnUiThread(() -> {
                 if (currentFileUri == null) {
