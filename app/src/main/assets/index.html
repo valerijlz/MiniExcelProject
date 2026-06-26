@@ -290,7 +290,23 @@
         } catch (e) { AndroidBridge.onStatus("Ошибка экспорта: " + e.message); }
     }
 
-    window.onload = createEmptyGrid;
+    window.onload = function() {
+    // Сначала создаем базовую структуру, чтобы экран не был пустым
+    createEmptyGrid();
+
+    // Сразу после этого спрашиваем у Android, загружен ли реальный файл
+    try {
+        if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
+            const rawJson = AndroidBridge.getExcelData();
+            if (rawJson && rawJson.trim() !== "") {
+                const payload = JSON.parse(rawJson);
+                renderExcelGrid(payload);
+            }
+        }
+    } catch (e) {
+        console.log("Ожидание загрузки файла: " + e.message);
+    }
+};
 </script>
 </body>
 </html>
