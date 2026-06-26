@@ -69,7 +69,7 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
 
-        tableWebView.loadUrl("file:///android_asset/index.html");
+        tableWebView.loadUrl("file:///android_asset/grid.html");
         initFileLaunchers();
 
         openButton.setOnClickListener(v -> {
@@ -171,7 +171,8 @@ public class MainActivity extends AppCompatActivity {
                     int poiWidth = sheet.getColumnWidth(c);
                     if (poiWidth > 0 && poiWidth != 2048) {
                         double characters = (double) poiWidth / 256.0;
-                        widthInPx = (int) (characters * 4.0);
+                        // Коэффициент 2.5 сделает узкую колонку (ширина = 1) действительно ультра-узкой
+                        widthInPx = (int) (characters * 2.5);
                     }
                 } catch (Throwable ignored) {}
                 
