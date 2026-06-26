@@ -47,6 +47,7 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
+        // Тотальная очистка кэша перед инициализацией
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
@@ -55,12 +56,12 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
+        
+        // ЖЕСТКИЙ ЗАПРЕТ КЭШИРОВАНИЯ (Гарантирует загрузку нового index.html)
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
-        // Отключаем встроенный зум-алгоритм WebView, мешавший fixed-разметке CSS
         webSettings.setSupportZoom(false);
         webSettings.setBuiltInZoomControls(false);
-        
         webSettings.setUseWideViewPort(true);
         webSettings.setLoadWithOverviewMode(true);
         webSettings.setTextZoom(100);
@@ -68,8 +69,8 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
 
-        tableWebView.loadUrl("file:///android_asset/index.html");
-        initFileLaunchers();
+        // Добавляем уникальный таймстемп к URL, чтобы WebView гарантированно посчитал файл новым
+        tableWebView.loadUrl("file:///android_asset/index.html?t=" + System.currentTimeMillis());
 
         openButton.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
