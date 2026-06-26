@@ -278,9 +278,14 @@ public class MainActivity extends AppCompatActivity {
             // Запись в переменную уровня класса
             cachedJsonPayload = payload.toString();
 
-            tableWebView.postDelayed(() -> {
+            // Обновляем кэш данных в Java
+            cachedJsonPayload = payload.toString();
+
+            // Вызываем JS напрямую. Если страница уже загружена — она перерисуется мгновенно.
+            // Если еще загружается — window.onload сам заберет кэш секундой позже.
+            tableWebView.post(() -> {
                 tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
-            }, 100);
+            });
 
         } catch (Exception e) {
             e.printStackTrace();
