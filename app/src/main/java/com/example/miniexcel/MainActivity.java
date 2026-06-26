@@ -26,7 +26,6 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends AppCompatActivity {
@@ -34,8 +33,6 @@ public class MainActivity extends AppCompatActivity {
     private WebView tableWebView;
     private Button openButton, saveButton;
     private Uri currentFileUri = null;
-    
-    // ПЕРЕМЕННАЯ ОБЪЯВЛЕНА СТРОГО ТУТ — ТЕПЕРЬ ОНА ВИДИМА ВСЕМУ КЛАССУ И ВНУТРЕННИМ КЛАССАМ
     private String cachedJsonPayload = null;
 
     private ActivityResultLauncher<Intent> openFileLauncher;
@@ -143,104 +140,97 @@ public class MainActivity extends AppCompatActivity {
             }
 
             Sheet sheet = workbook.getSheetAt(0);
-            JSONArray jsonTable = new JSONArray();
-
-            int totalRows = 40;
-            try {
-                totalRows = sheet.getPhysicalNumberOfRows() > 0 ? sheet.getLastRowNum() : 0;
-            } catch (Throwable ignored) {}
             
-            int maxCellCount = 0;
-            for (int r = 0; r <= totalRows; r++) {
-                try {
-                    Row row = sheet.getRow(r);
-                    if (row != null && row.getLastCellNum() > maxCellCount) {
-                        maxCellCount = row.getLastCellNum();
+            // Защита 1: Жестко ограничиваем сканирование строк реальными границами контента
+            int lastRowIdx = sheet.getLastRowNum();
+            if (lastRowIdx > 1000) lastRowIdx = 1000; // Страховка от пустых отформатированных строк Excel
+            if (lastRowIdx < 0) lastRowIdx = 0;
+
+            // Определяем реальное максимальное количество заполненных колонок
+            int maxColsCount = 0;
+            for (int r = 0; r <= lastRowIdx; r++) {
+                Row row = sheet.getRow(r);
+                if (row != null) {
+                    int lastCellNum = row.getLastCellNum();
+                    if (lastCellNum > maxColsCount) {
+                        maxColsCount = lastCellNum;
                     }
-                } catch (Throwable ignored) {}
+                }
             }
-            if (maxCellCount < 15) maxCellCount = 15;
-            if (totalRows == 0) totalRows = 40;
+            if (maxColsCount > 100) maxColsCount = 100; // Ограничение по ширине
+            if (maxColsCount < 1) maxColsCount = 1;
 
-            int defaultColWidthInPx = 45; 
-
+            // Сборка точных ширин колонок (уменьшаем коэффициент сжатия до компактного 2.4)
             JSONArray jsonColWidths = new JSONArray();
-            for (int c = 0; c < maxCellCount; c++) {
-                int widthInPx = defaultColWidthInPx;
+            for (int c = 0; c < maxColsCount; c++) {
+                int widthInPx = 45; 
                 try {
                     int poiWidth = sheet.getColumnWidth(c);
                     if (poiWidth > 0 && poiWidth != 2048) {
                         double characters = (double) poiWidth / 256.0;
-                        // Коэффициент 2.5 сделает узкую колонку (ширина = 1) действительно ультра-узкой
-                        widthInPx = (int) (characters * 2.5);
+                        widthInPx = (int) (characters * 2.4);
                     }
                 } catch (Throwable ignored) {}
-                
-                if (widthInPx < 20) widthInPx = defaultColWidthInPx;
+                if (widthInPx < 20) widthInPx = 45;
                 jsonColWidths.put(widthInPx);
             }
 
             DataFormatter formatter = new DataFormatter();
+            JSONArray jsonTable = new JSONArray();
             JSONArray jsonRowHeights = new JSONArray();
 
-            for (int r = 0; r <= totalRows; r++) {
-                Row row = null;
-                try { row = sheet.getRow(r); } catch (Throwable ignored) {}
+            // Основной цикл безопасного парсинга матрицы ячеек
+            for (int r = 0; r <= lastRowIdx; r++) {
+                Row row = sheet.getRow(r);
                 
-                int heightInPx = 18; 
+                int heightInPx = 18;
                 if (row != null && row.getHeightInPoints() > 0) {
                     heightInPx = (int) (row.getHeightInPoints() * 1.33);
                 }
                 jsonRowHeights.put(heightInPx);
 
                 JSONArray jsonRow = new JSONArray();
-                for (int c = 0; c < maxCellCount; c++) {
+                for (int c = 0; c < maxColsCount; c++) {
                     JSONObject cellObj = new JSONObject();
                     cellObj.put("v", "");
-                    
+
                     if (row != null) {
-                        Cell cell = null;
-                        try { cell = row.getCell(c); } catch (Throwable ignored) {}
+                        Cell cell = row.getCell(c);
                         if (cell != null) {
                             try {
                                 cellObj.put("v", formatter.formatCellValue(cell));
-                            } catch (Exception e) {
+                            } catch (Throwable e) {
                                 cellObj.put("v", "");
                             }
 
+                            // Безопасный разбор стилей ячейки
                             try {
                                 CellStyle style = cell.getCellStyle();
                                 if (style != null) {
-                                    try {
-                                        Color bgColor = style.getFillForegroundColorColor();
-                                        if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
-                                            String hexBg = getHexColor(bgColor);
-                                            if (hexBg != null && !hexBg.equals("#000000")) {
-                                                cellObj.put("bg", hexBg);
-                                            }
+                                    Color bgColor = style.getFillForegroundColorColor();
+                                    if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
+                                        String hexBg = getHexColor(bgColor);
+                                        if (hexBg != null && !hexBg.equals("#000000")) {
+                                            cellObj.put("bg", hexBg);
                                         }
-                                    } catch (Throwable ignored) {}
+                                    }
 
-                                    try {
-                                        int fontIdx = style.getFontIndex();
-                                        Font font = workbook.getFontAt(fontIdx);
-                                        if (font != null) {
-                                            if (font.getBold()) cellObj.put("bold", true);
-                                            if (font.getItalic()) cellObj.put("italic", true);
-                                            
-                                            try {
-                                                if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
-                                                    String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
-                                                    if (fontColor != null) cellObj.put("color", fontColor);
-                                                } else if (font instanceof org.apache.poi.hssf.usermodel.HSSFFont) {
-                                                    short colorIdx = font.getColor();
-                                                    HSSFColor hssfColor = HSSFColor.getIndexHash().get((int) colorIdx);
-                                                    String fontColor = getHexColor(hssfColor);
-                                                    if (fontColor != null) cellObj.put("color", fontColor);
-                                                }
-                                            } catch (Throwable ignored) {}
+                                    int fontIdx = style.getFontIndex();
+                                    Font font = workbook.getFontAt(fontIdx);
+                                    if (font != null) {
+                                        if (font.getBold()) cellObj.put("bold", true);
+                                        if (font.getItalic()) cellObj.put("italic", true);
+                                        
+                                        if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
+                                            String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
+                                            if (fontColor != null) cellObj.put("color", fontColor);
+                                        } else if (font instanceof org.apache.poi.hssf.usermodel.HSSFFont) {
+                                            short colorIdx = font.getColor();
+                                            HSSFColor hssfColor = HSSFColor.getIndexHash().get((int) colorIdx);
+                                            String fontColor = getHexColor(hssfColor);
+                                            if (fontColor != null) cellObj.put("color", fontColor);
                                         }
-                                    } catch (Throwable ignored) {}
+                                    }
                                 }
                             } catch (Throwable ignored) {}
                         }
@@ -250,54 +240,48 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(jsonRow);
             }
 
+            // Безопасный сбор объединенных ячеек (Merges)
             JSONArray jsonMerges = new JSONArray();
             try {
                 int numRegions = sheet.getNumMergedRegions();
                 for (int i = 0; i < numRegions; i++) {
-                    try {
-                        CellRangeAddress region = sheet.getMergedRegion(i);
-                        if (region != null) {
-                            JSONObject mergeObj = new JSONObject();
-                            mergeObj.put("sr", region.getFirstRow());
-                            mergeObj.put("er", region.getLastRow());
-                            mergeObj.put("sc", region.getFirstColumn());
-                            mergeObj.put("ec", region.getLastColumn());
-                            jsonMerges.put(mergeObj);
-                        }
-                    } catch (Throwable ignored) {}
+                    CellRangeAddress region = sheet.getMergedRegion(i);
+                    if (region != null) {
+                        JSONObject mergeObj = new JSONObject();
+                        mergeObj.put("sr", region.getFirstRow());
+                        mergeObj.put("er", region.getLastRow());
+                        mergeObj.put("sc", region.getFirstColumn());
+                        mergeObj.put("ec", region.getLastColumn());
+                        jsonMerges.put(mergeObj);
+                    }
                 }
             } catch (Throwable ignored) {}
 
             workbook.close();
 
+            // Формируем чистый результирующий JSON
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
             payload.put("merges", jsonMerges);
             payload.put("widths", jsonColWidths);
             payload.put("heights", jsonRowHeights);
 
-            // Запись в переменную уровня класса
             cachedJsonPayload = payload.toString();
 
-            // Обновляем кэш данных в Java
-            cachedJsonPayload = payload.toString();
-
-            // Вызываем JS напрямую. Если страница уже загружена — она перерисуется мгновенно.
-            // Если еще загружается — window.onload сам заберет кэш секундой позже.
+            // Форсируем мгновенное обновление сетки в WebView
             tableWebView.post(() -> {
                 tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
             });
 
-        } catch (Exception e) {
+        } catch (Throwable e) {
             e.printStackTrace();
-            Toast.makeText(this, "Ошибка чтения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Критический сбой разбора файла: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
     public class AndroidBridge {
         @JavascriptInterface
         public String getExcelData() {
-            // Теперь доступ к cachedJsonPayload отсюда абсолютно валиден
             return cachedJsonPayload != null ? cachedJsonPayload : "";
         }
 
