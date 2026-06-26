@@ -276,13 +276,13 @@ public class MainActivity extends AppCompatActivity {
             payload.put("widths", jsonColWidths);
             payload.put("heights", jsonRowHeights);
 
-            String jsonString = payload.toString();
-            String base64Payload = Base64.encodeToString(jsonString.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+            // Сохраняем чистый JSON в кэш класса, без Base64-раздувания
+            cachedJsonPayload = payload.toString();
 
-            // Безопасный вызов с задержкой 100мс, предотвращающий коллизии кэша при чтении
+            // Просто даем сигнал WebView: "Данные готовы, забирай!"
             tableWebView.postDelayed(() -> {
-                tableWebView.evaluateJavascript("loadExcelFromBytes('" + base64Payload + "');", null);
-            }, 100);
+                tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
+            }, 50);
 
         } catch (Exception e) {
             e.printStackTrace();
