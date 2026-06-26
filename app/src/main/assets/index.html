@@ -194,7 +194,7 @@
 
                     if (cellData) {
                         if (cellData.bg) td.style.backgroundColor = cellData.bg;
-                        if (cellData.color) td.style.color = cellColor;
+                        if (cellData.color) td.style.color = cellData.color; // ИСПРАВЛЕНО: cellData.color вместо cellColor
                         if (cellData.bold) td.style.fontWeight = "bold";
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
