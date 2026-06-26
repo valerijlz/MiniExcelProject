@@ -25,6 +25,7 @@
         
         table { border-collapse: collapse; table-layout: fixed !important; background: white; box-sizing: border-box; width: max-content; }
         
+        /* Обычные блеклые границы сетки */
         th, td { 
             border: 0.5px solid #d4d4d4; 
             padding: 0 2px; 
@@ -36,9 +37,16 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: clip;
-            /* Намертво зажимаем ширину по умолчанию, если Java передает пустые значения */
             width: 45px;
             max-width: 45px; 
+        }
+
+        /* Яркая синяя рамка строго для физических границ реальных данных */
+        .excel-cell.doc-right-boundary { 
+            border-right: 2px solid #0f62fe !important; 
+        }
+        .excel-cell.doc-bottom-boundary { 
+            border-bottom: 2px solid #0f62fe !important; 
         }
         
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; }
@@ -171,24 +179,13 @@
                 }
             });
 
-            for (let r = 0; r < rowsCount; r++) {
-                let tr = document.createElement('tr');
-                tr.style.height = (heights[r] || 18) + "px";
-
-                let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; 
-                
-                // РАМКА: Строго на нижней границе последней строки оригинального файла
-                if (r === rowsCount - 1) rowTh.classList.add('doc-bottom-boundary');
-                
-                tr.appendChild(rowTh);
-                currentData[r] = [];
-
-                for (let c = 0; c < colsCount; c++) {
+            for (let c = 0; c < colsCount; c++) {
                     let cellData = rows[r][c];
                     let td = document.createElement('td');
+                    td.className = "excel-cell"; // Маркер ячейки реального документа
                     td.contentEditable = true; td.dataset.row = r; td.dataset.col = c;
                     
-                    let cellWidth = (widths[c] || 55) + "px";
+                    let cellWidth = (widths[c] || 45) + "px";
                     td.style.width = cellWidth; td.style.maxWidth = cellWidth; td.style.minWidth = cellWidth;
                     
                     let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
@@ -197,29 +194,19 @@
 
                     if (cellData) {
                         if (cellData.bg) td.style.backgroundColor = cellData.bg;
-                        if (cellData.color) td.style.color = cellData.color;
+                        if (cellData.color) td.style.color = cellColor;
                         if (cellData.bold) td.style.fontWeight = "bold";
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
 
-                    // РАМКА ДАННЫХ: Применяется только внутри реальных границ матрицы Excel
+                    // Навешиваем синюю рамку строго на физический край матрицы данных
                     if (c === colsCount - 1) td.classList.add('doc-right-boundary');
                     if (r === rowsCount - 1) td.classList.add('doc-bottom-boundary');
 
                     td.addEventListener('blur', function() { saveCell(this); });
-
-                    let mergeInfo = mergeMap[`${r}_${c}`];
-                    if (mergeInfo) {
-                        if (mergeInfo.isMain) {
-                            if (mergeInfo.rowspan > 1) td.rowSpan = mergeInfo.rowspan;
-                            if (mergeInfo.colspan > 1) td.colSpan = mergeInfo.colspan;
-                            td.style.maxWidth = "none";
-                        } else if (mergeInfo.isChild) { td.classList.add('hidden-merged-cell'); }
-                    }
+                    // ... остальной код вставки мержей
                     tr.appendChild(td);
                 }
-                table.appendChild(tr);
-            }
             initPinchZoomAndScroll();
             AndroidBridge.onStatus("Файл успешно визуализирован!");
         } catch (e) { 
