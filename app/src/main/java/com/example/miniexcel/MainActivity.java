@@ -33,8 +33,6 @@ public class MainActivity extends AppCompatActivity {
     private WebView tableWebView;
     private Button openButton, saveButton;
     private Uri currentFileUri = null;
-    private boolean isEngineLoaded = false;
-
     private ActivityResultLauncher<Intent> openFileLauncher;
     private ActivityResultLauncher<Intent> saveFileLauncher;
 
@@ -66,14 +64,7 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setTextZoom(100);
 
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
-        tableWebView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                isEngineLoaded = true;
-            }
-        });
-
+        tableWebView.setWebViewClient(new WebViewClient());
         tableWebView.loadUrl("file:///android_asset/index.html");
         initFileLaunchers();
 
@@ -288,8 +279,8 @@ public class MainActivity extends AppCompatActivity {
             String base64Payload = Base64.encodeToString(jsonString.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
 
             if (isEngineLoaded) {
-                tableWebView.post(() -> tableWebView.evaluateJavascript("loadExcelFromBytes('" + base64Payload + "');", null));
-            }
+                // Убираем проверку if (isEngineLoaded) — выполняем поток гарантированно
+            tableWebView.post(() -> tableWebView.evaluateJavascript("loadExcelFromBytes('" + base64Payload + "');", null));
         } catch (Exception e) {
             e.printStackTrace();
             Toast.makeText(this, "Ошибка чтения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
