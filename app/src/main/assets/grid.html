@@ -291,18 +291,37 @@
         } catch (e) { AndroidBridge.onStatus("Ошибка экспорта: " + e.message); }
     }
 
-    window.onload = function() {
-        createEmptyGrid();
+    function checkAndLoadData() {
         try {
             if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
                 const rawJson = AndroidBridge.getExcelData();
                 if (rawJson && rawJson.trim() !== "") {
                     const payload = JSON.parse(rawJson);
                     renderExcelGrid(payload);
+                    return true; // Данные получены и отрисованы
                 }
             }
         } catch (e) {
-            console.log("Ожидание загрузки файла: " + e.message);
+            console.log("Ошибка проверки данных: " + e.message);
+        }
+        return false;
+    }
+
+    window.onload = function() {
+        // Рисуем дефолтную сетку
+        createEmptyGrid();
+        
+        // Пробуем забрать данные сразу
+        if (!checkAndLoadData()) {
+            // Если Java еще не отдала файл, опрашиваем мост каждые 300мс до победного конца
+            let retryInterval = setInterval(function() {
+                if (checkAndLoadData()) {
+                    clearInterval(retryInterval); // Стоп опрос, когда файл успешно встал в сетку
+                }
+            }, 300);
+            
+            // На всякий случай гасим таймер через 5 секунд, чтобы не тратить батарею
+            setTimeout(function() { clearInterval(retryInterval); }, 5000);
         }
     };
 </script>
