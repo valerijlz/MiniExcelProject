@@ -33,7 +33,7 @@ public class MainActivity extends AppCompatActivity {
     private WebView tableWebView;
     private Button openButton, saveButton;
     private Uri currentFileUri = null;
-    private String cachedJsonPayload = null;
+    private volatile String cachedJsonPayload = "";
 
     private ActivityResultLauncher<Intent> openFileLauncher;
     private ActivityResultLauncher<Intent> saveFileLauncher;
@@ -286,7 +286,14 @@ public class MainActivity extends AppCompatActivity {
     public class AndroidBridge {
         @JavascriptInterface
         public String getExcelData() {
-            return cachedJsonPayload != null ? cachedJsonPayload : "";
+            // Логируем запрос от WebView в поток приложения
+            if (cachedJsonPayload == null || cachedJsonPayload.trim().isEmpty()) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "WebView запросил данные, но в кэше Java пусто!", Toast.LENGTH_SHORT).show());
+                return "";
+            }
+
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Java успешно передает JSON в WebView (" + cachedJsonPayload.length() + " символов)", Toast.LENGTH_SHORT).show());
+            return cachedJsonPayload;
         }
 
         @JavascriptInterface
