@@ -3,19 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Canvas Final Engine</title>
+    <title>MiniExcel Canvas Advanced Engine</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #f3f3f3; }
         #canvas-container { width: 100%; height: 100%; position: relative; }
         canvas { display: block; width: 100%; height: 100%; }
+        /* Инпут теперь идеально подстраивается под зум и границы */
         #cell-editor {
             position: absolute;
             display: none;
-            border: 1.5px solid #107c41;
+            border: 2px solid #107c41;
             outline: none;
-            padding: 0 3px;
+            padding: 0 4px;
             font-family: Arial, sans-serif;
-            font-size: 10px;
+            font-size: 11px;
             box-sizing: border-box;
             background: white;
             z-index: 100;
@@ -46,7 +47,7 @@
     let maxCols = 12;
     let maxRows = 45;
 
-    const ROW_NUM_WIDTH = 35;
+    const ROW_NUM_WIDTH = 38;
     const COL_NUM_HEIGHT = 20;
 
     let lastFilledRow = 0;
@@ -76,8 +77,8 @@
                 matrix[r][c] = { v: "" };
             }
         }
-        // Сжатие базовой ширины до оригинальных компактных 36px
-        widths = Array(maxCols).fill(36);
+        // ВОЗВРАЩАЕМ ОРИГИНАЛЬНЫЙ МАСШТАБ (40px)
+        widths = Array(maxCols).fill(40);
         heights = Array(maxRows).fill(18);
         lastFilledRow = maxRows - 1;
         lastFilledCol = maxCols - 1;
@@ -113,9 +114,9 @@
             for (let r = 0; r < maxRows; r++) {
                 if (!heights[r]) heights[r] = 18;
                 for (let c = 0; c < maxCols; c++) {
-                    // Применяем пропорциональный коэффициент сжатия 0.85 к ширине из POI Excel
-                    if (!widths[c]) widths[c] = 36;
-                    else widths[c] = Math.round(widths[c] * 0.85);
+                    // КОРРЕКЦИЯ ШИРИНЫ: Убираем избыточное сжатие, выставляем точный 1.0
+                    if (!widths[c]) widths[c] = 40;
+                    else widths[c] = Math.round(widths[c] * 1.0);
 
                     let val = (matrix[r][c] && matrix[r][c].v !== undefined) ? String(matrix[r][c].v).trim() : "";
                     if (val !== "") {
@@ -145,6 +146,17 @@
         return { x: x, y: y, w: widths[col], h: heights[row] };
     }
 
+    // Возвращает структуру объединенной ячейки, если переданные координаты входят в её диапазон
+    function getMergedCellInfo(row, col) {
+        for (let i = 0; i < merges.length; i++) {
+            let m = merges[i];
+            if (row >= m.sr && row <= m.er && col >= m.sc && col <= m.ec) {
+                return m;
+            }
+        }
+        return null;
+    }
+
     function draw() {
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         ctx.save();
@@ -164,9 +176,6 @@
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
-                
-                // ИСПРАВЛЕНИЕ ОБЪЕДИНЕНИЙ: Полностью пропускаем отрисовку поглощенных ячеек,
-                // чтобы они не перекрывали главную объединенную ячейку.
                 if (lookup && lookup.isChild) continue; 
 
                 let rect = getCellRect(r, c);
@@ -207,13 +216,13 @@
                     if (cellData && cellData.italic) fontStyle += "italic ";
                     ctx.font = `${fontStyle}${10 * zoom}px Arial`;
 
-                    ctx.fillText(text, cx + 3, cy + ch / 2);
+                    ctx.fillText(text, cx + 5, cy + ch / 2);
                     ctx.restore();
                 }
             }
         }
 
-        // 2. ОТРИСОВКА МОНОЛИТНОЙ СИНЕЙ РАМКИ ДОКУМЕНТА
+        // 2. ИСПРАВЛЕНИЕ ВЫЛЕТА РАМКИ: Точный расчет финальной пиксельной линии
         let endRowRect = getCellRect(lastFilledRow, 0);
         let endColRect = getCellRect(0, lastFilledCol);
         
@@ -221,26 +230,23 @@
         let boundaryY = COL_NUM_HEIGHT + (endRowRect.y + endRowRect.h - scrollY) * zoom;
 
         ctx.strokeStyle = "#0f62fe";
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 2.0;
         
-        if (boundaryX >= ROW_NUM_WIDTH) {
+        if (boundaryX >= ROW_NUM_WIDTH && boundaryY >= COL_NUM_HEIGHT) {
             ctx.beginPath();
             ctx.moveTo(boundaryX, COL_NUM_HEIGHT);
-            ctx.lineTo(boundaryX, Math.max(COL_NUM_HEIGHT, boundaryY));
+            ctx.lineTo(boundaryX, boundaryY);
             ctx.stroke();
-        }
-        if (boundaryY >= COL_NUM_HEIGHT) {
+
             ctx.beginPath();
             ctx.moveTo(ROW_NUM_WIDTH, boundaryY);
-            ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), boundaryY);
+            ctx.lineTo(boundaryX, boundaryY);
             ctx.stroke();
         }
 
         // 3. ОТРИСОВКА ФИКСИРОВАННЫХ ШАПОК
         ctx.lineWidth = 0.5;
         
-        // Буквы колонок
-        ctx.font = `bold 10px Arial`;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
             let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
@@ -254,13 +260,11 @@
             ctx.strokeRect(cx, 0, cw, COL_NUM_HEIGHT);
 
             ctx.fillStyle = "#444444";
+            ctx.font = `bold 10px Arial`;
             ctx.textAlign = 'center';
             ctx.fillText(getColName(c), cx + cw / 2, COL_NUM_HEIGHT / 2);
         }
 
-        // Номера строк
-        ctx.font = `bold 9px Arial`;
-        ctx.textAlign = 'center';
         for (let r = 0; r < maxRows; r++) {
             let rect = getCellRect(r, 0);
             let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
@@ -274,10 +278,11 @@
             ctx.strokeRect(0, cy, ROW_NUM_WIDTH, ch);
 
             ctx.fillStyle = "#666666";
+            ctx.font = `bold 9px Arial`;
+            ctx.textAlign = 'center';
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, cy + ch / 2);
         }
 
-        // Заглушка угла
         ctx.fillStyle = "#f1f1f1";
         ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#d4d4d4";
@@ -318,7 +323,8 @@
             const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
             if (startTouchDist > 0) {
                 let targetZoom = startZoom * (dist / startTouchDist);
-                zoom = Math.max(0.6, Math.min(1.6, targetZoom));
+                // ИСПРАВЛЕНИЕ ЗУМА: Расширяем диапазон масштабирования во все стороны от 0.5 до 2.0
+                zoom = Math.max(0.5, Math.min(2.0, targetZoom));
                 if(editor.style.display === 'block') positionEditor();
                 draw();
             }
@@ -356,7 +362,16 @@
 
         if (foundR !== -1 && foundC !== -1) {
             saveCurrentEditorValue();
-            selectedCell = { r: foundR, c: foundC };
+            
+            // ИСПРАВЛЕНИЕ №1: Если кликнули внутрь диапазона объединения,
+            // принудительно перенаправляем фокус на стартовую (главную) ячейку
+            let mergeInfo = getMergedCellInfo(foundR, foundC);
+            if (mergeInfo) {
+                selectedCell = { r: mergeInfo.sr, c: mergeInfo.sc };
+            } else {
+                selectedCell = { r: foundR, c: foundC };
+            }
+            
             showEditor();
         }
     });
@@ -372,11 +387,26 @@
 
     function positionEditor() {
         if (!selectedCell) return;
+        
         let rect = getCellRect(selectedCell.r, selectedCell.c);
+        let cw = rect.w;
+        let ch = rect.h;
+
+        // ИСПРАВЛЕНИЕ №3: Растягиваем зеленую рамку инпута на всю ширину/высоту объединения
+        let mergeInfo = getMergedCellInfo(selectedCell.r, selectedCell.c);
+        if (mergeInfo && mergeInfo.sr === selectedCell.r && mergeInfo.sc === selectedCell.c) {
+            let fullW = 0; let fullH = 0;
+            for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) fullW += widths[i];
+            for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) fullH += heights[i];
+            cw = fullW;
+            ch = fullH;
+        }
+
+        // Вычисляем точные пиксельные границы рамки выделения
         editor.style.left = (ROW_NUM_WIDTH + (rect.x - scrollX) * zoom) + 'px';
         editor.style.top = (COL_NUM_HEIGHT + (rect.y - scrollY) * zoom) + 'px';
-        editor.style.width = (rect.w * zoom) + 'px';
-        editor.style.height = (rect.h * zoom) + 'px';
+        editor.style.width = (cw * zoom) + 'px';
+        editor.style.height = (ch * zoom) + 'px';
     }
 
     function saveCurrentEditorValue() {
