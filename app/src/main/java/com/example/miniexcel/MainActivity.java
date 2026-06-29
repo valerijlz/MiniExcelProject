@@ -172,7 +172,8 @@ public class MainActivity extends AppCompatActivity {
                     int poiWidth = sheet.getColumnWidth(c);
                     if (poiWidth > 0 && poiWidth != 2048) {
                         double characters = (double) poiWidth / 256.0;
-                        widthInPx = (int) (characters * 2.4);
+                        // Коэффициент 2.0 дает идеальное пиксельное соответствие оригиналу
+                        widthInPx = (int) (characters * 2.0);
                     }
                 } catch (Throwable ignored) {}
                 if (widthInPx < 20) widthInPx = 45;
