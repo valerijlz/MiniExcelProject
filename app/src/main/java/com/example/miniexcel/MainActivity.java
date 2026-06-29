@@ -51,6 +51,7 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.clearHistory();
         tableWebView.clearFormData();
 
+        // 1. Сначала настраиваем параметры
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
@@ -63,10 +64,13 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setLoadWithOverviewMode(true);
         webSettings.setTextZoom(100);
 
+        // 2. СТРОГО ДО ЗАГРУЗКИ URL регистрируем мост данных и клиент
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
 
+        // 3. Только теперь загружаем сам интерфейс
         tableWebView.loadUrl("file:///android_asset/grid.html");
+        
         initFileLaunchers();
 
         openButton.setOnClickListener(v -> {
