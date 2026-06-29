@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Fixed Viewport Grid</title>
+    <title>MiniExcel Native Performance Grid</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
         
-        /* Контейнер скролла */
+        /* Главный контейнер скролла — теперь он изолирован */
         .viewport-container { 
             width: 100%; 
             height: 100%; 
@@ -16,19 +16,18 @@
             position: relative;
         }
         
-        /* Слой зума */
+        /* Контейнер масштабирования больше не ломает sticky, так как мы не используем transform на таблице */
         .zoom-layer {
-            transform-origin: 0 0;
             width: max-content;
             height: max-content;
             position: relative;
         }
         
-        table { border-collapse: collapse; table-layout: fixed !important; background: white; box-sizing: border-box; width: max-content; }
+        table { border-collapse: separate; border-spacing: 0; table-layout: fixed !important; background: white; box-sizing: border-box; width: max-content; }
         
-        /* Ультра-компактные ячейки по умолчанию, чтобы не превышать оригинал */
         th, td { 
-            border: 0.5px solid #d4d4d4; 
+            border-right: 0.5px solid #d4d4d4; 
+            border-bottom: 0.5px solid #d4d4d4; 
             padding: 0 3px; 
             font-size: 10px; 
             outline: none; 
@@ -42,49 +41,48 @@
         
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; }
         
-        /* Закрепленные ячейки */
+        /* АППАРАТНЫЙ СТИКИ БЕЗ ПРУЖИН И СКРИПТОВ */
+        /* Фиксация колонки с номерами строк (влево/вправо) */
         .row-number-cell, tr th:first-child { 
+            position: sticky !important;
+            left: 0;
             background-color: #f1f1f1 !important; 
-            text-align: center; 
-            font-weight: bold; 
-            color: #666; 
-            font-size: 9px;
-            user-select: none;
-            position: relative;
             z-index: 10;
             width: 32px !important;
             min-width: 32px !important;
             max-width: 32px !important;
-            will-change: transform;
+            box-shadow: 1px 0 0 #d4d4d4;
         }
         
-        tr th:first-child { z-index: 15; }
+        /* Фиксация верхней шапки с буквами (вверх/вниз) */
+        tr:first-child th {
+            position: sticky !important;
+            top: 0;
+            background-color: #f1f1f1 !important;
+            z-index: 9;
+            box-shadow: 0 1px 0 #d4d4d4;
+        }
         
-        /* Обычные ячейки контента */
+        /* Пересечение шапок — левый верхний угол (закреплен по обеим осям) */
+        tr:first-child th:first-child { 
+            z-index: 15 !important; 
+            top: 0 !important;
+            left: 0 !important;
+        }
+        
         .excel-cell { background: #ffffff; }
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 20; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
 
-        /* Векторный контейнер для синей рамки документа */
-        #svg-bounds-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 8;
-        }
+        /* Идеальные синие рамки прямо внутри разметки таблицы */
+        .doc-right-boundary { border-right: 2px solid #0f62fe !important; }
+        .doc-bottom-boundary { border-bottom: 2px solid #0f62fe !important; }
     </style>
 </head>
 <body>
 
 <div class="viewport-container" id="scroll-view">
     <div class="zoom-layer" id="zoom-container">
-        <svg id="svg-bounds-overlay">
-            <line id="boundary-right" stroke="#0f62fe" stroke-width="2.5" display="none" />
-            <line id="boundary-bottom" stroke="#0f62fe" stroke-width="2.5" display="none" />
-        </svg>
         <table id="excel-table"></table>
     </div>
 </div>
@@ -122,7 +120,6 @@
             }
             table.appendChild(tr);
         }
-        updateStickyHeaders();
     }
 
     function saveCell(cell) {
@@ -157,7 +154,7 @@
             let colsCount = rows[0].length;
             let rowsCount = rows.length;
 
-            // Поиск реальных контуров текста
+            // Нахождение контура данных
             let lastFilledRow = 0;
             let lastFilledCol = 0;
             for (let r = 0; r < rowsCount; r++) {
@@ -176,7 +173,6 @@
             let colFirst = document.createElement('col'); colFirst.style.width = "32px"; colGroup.appendChild(colFirst);
             for (let c = 0; c < colsCount; c++) {
                 let col = document.createElement('col');
-                // ДЕФОЛТНАЯ ШИРИНА СЖАТА С 45 ДО СТРОГИХ И ОРИГИНАЛЬНЫХ 38px
                 col.style.width = (widths[c] || 38) + "px";
                 colGroup.appendChild(col);
             }
@@ -189,6 +185,9 @@
                 th.innerText = String.fromCharCode(65 + c); 
                 let w = (widths[c] || 38) + "px";
                 th.style.width = w; th.style.maxWidth = w; th.style.minWidth = w;
+                
+                // Рамка на шапку
+                if (c === lastFilledCol) th.classList.add('doc-right-boundary');
                 headerRow.appendChild(th);
             }
             table.appendChild(headerRow);
@@ -209,6 +208,7 @@
                 tr.style.height = (heights[r] || 18) + "px";
 
                 let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; 
+                if (r === lastFilledRow) rowTh.classList.add('doc-bottom-boundary');
                 tr.appendChild(rowTh);
                 
                 currentData[r] = [];
@@ -233,6 +233,10 @@
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
 
+                    // Установка классов синей рамки непосредственно на ячейки таблицы
+                    if (c === lastFilledCol) td.classList.add('doc-right-boundary');
+                    if (r === lastFilledRow) td.classList.add('doc-bottom-boundary');
+
                     td.addEventListener('blur', function() { saveCell(this); });
 
                     let mergeInfo = mergeMap[`${r}_${c}`];
@@ -247,76 +251,13 @@
                 }
                 table.appendChild(tr);
             }
-            
-            // Расчет и отрисовка идеальной векторной рамки поверх таблицы
-            setTimeout(() => { drawVectorBoundary(lastFilledRow, lastFilledCol); }, 80);
-            updateStickyHeaders();
+            AndroidBridge.onStatus("Документ успешно отрисован!");
         } catch (e) { AndroidBridge.onStatus("Ошибка рендеринга: " + e.message); }
-    }
-
-    // Построение абсолютно сплошной, неразрывной синей рамки через геометрические координаты
-    function drawVectorBoundary(lastRowIdx, lastColIdx) {
-        const table = document.getElementById('excel-table');
-        const rows = table.querySelectorAll('tr');
-        if (rows.length <= 1) return;
-
-        // Поиск целевых ячеек
-        const targetRow = rows[lastRowIdx + 1]; // +1 учитывая буквенную шапку
-        if (!targetRow) return;
-        const targetCell = targetRow.cells[lastColIdx + 1]; // +1 учитывая цифровую колонку
-        if (!targetCell) return;
-
-        const rightLine = document.getElementById('boundary-right');
-        const bottomLine = document.getElementById('boundary-bottom');
-
-        // Вычисляем физические координаты правого нижнего угла контента внутри таблицы
-        const xCoord = targetCell.offsetLeft + targetCell.offsetWidth;
-        const yCoord = targetCell.offsetTop + targetCell.offsetHeight;
-        const tableTopOffset = rows[0].offsetHeight; // Граница начинается ПОД строкой букв A, B, C...
-        const tableLeftOffset = 32; // Граница начинается ПОСЛЕ колонки номеров строк
-
-        // Применяем точные векторные отрезки
-        rightLine.setAttribute('x1', xCoord); rightLine.setAttribute('y1', tableTopOffset);
-        rightLine.setAttribute('x2', xCoord); rightLine.setAttribute('y2', yCoord);
-        rightLine.setAttribute('display', 'block');
-
-        bottomLine.setAttribute('x1', tableLeftOffset); bottomLine.setAttribute('y1', yCoord);
-        bottomLine.setAttribute('x2', xCoord);          bottomLine.setAttribute('y2', yCoord);
-        bottomLine.setAttribute('display', 'block');
-    }
-
-    // Нативный, мгновенный сдвиг шапок БЕЗ пружинности
-    function updateStickyHeaders() {
-        const scrollView = document.getElementById('scroll-view');
-        
-        // Корректируем сдвиг с учетом зума
-        const sLeft = scrollView.scrollLeft / currentScale;
-        const sTop = scrollView.scrollTop / currentScale;
-        
-        // Двигаем колонку с номерами строк (влево/вправо)
-        const rowCells = document.querySelectorAll('.row-number-cell, tr:first-child th:first-child');
-        rowCells.forEach(cell => {
-            cell.style.transform = `translateX(${sLeft}px)`;
-        });
-
-        // Двигаем шапку с буквами колонок (вверх/вниз)
-        const headerCells = document.getElementById('excel-table').querySelectorAll('tr:first-child th');
-        headerCells.forEach(cell => {
-            cell.style.transform = `translateY(${sTop}px)`;
-        });
-        
-        // Фиксируем левый верхний пустой угол намертво
-        const cornerCell = document.querySelector('tr:first-child th:first-child');
-        if (cornerCell) {
-            cornerCell.style.transform = `translate(${sLeft}px, ${sTop}px)`;
-        }
     }
 
     function initPinchZoom() {
         const scrollView = document.getElementById('scroll-view');
         const zoomContainer = document.getElementById('zoom-container');
-
-        scrollView.addEventListener('scroll', updateStickyHeaders);
 
         scrollView.addEventListener('touchstart', function(e) {
             if (e.touches.length === 2) {
@@ -332,18 +273,17 @@
                 const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
                 if (startTouchDist > 0) {
                     let targetScale = startScale * (dist / startTouchDist);
-                    if (targetScale < 0.5) targetScale = 0.5;
-                    if (targetScale > 2.0) targetScale = 2.0;
+                    if (targetScale < 0.6) targetScale = 0.6;
+                    if (targetScale > 1.8) targetScale = 1.8;
                     
                     currentScale = targetScale;
-                    zoomContainer.style.transform = `scale(${currentScale})`;
-                    updateStickyHeaders();
+                    // Применяем зум к текстовому размеру таблицы, чтобы сохранить нативный position:sticky контейнера!
+                    zoomContainer.style.zoom = currentScale;
                 }
             }
         }, { passive: false });
         
         scrollView.addEventListener('touchend', function(e) { if (e.touches.length < 2) { startTouchDist = 0; } });
-        updateStickyHeaders();
     }
 
     function exportExcelToAndroid() {
