@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Safe Data Bridge</title>
+    <title>MiniExcel Perfect Responsive Grid</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
         
@@ -13,21 +13,19 @@
             overflow: auto; 
             -webkit-overflow-scrolling: touch; 
             position: relative;
-            contain: paint; 
         }
         
         .zoom-layer {
             transform-origin: 0 0;
             width: max-content;
             height: max-content;
-            will-change: transform;
         }
         
         table { border-collapse: collapse; table-layout: fixed !important; background: white; box-sizing: border-box; width: max-content; }
         
         th, td { 
             border: 0.5px solid #d4d4d4; 
-            padding: 0 2px; 
+            padding: 0 3px; 
             font-size: 10px; 
             outline: none; 
             vertical-align: middle; 
@@ -36,35 +34,43 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: clip;
-            width: 42px;
-            max-width: 42px; 
-            min-width: 42px;
         }
         
         th { background-color: #f1f1f1; font-weight: bold; text-align: center; color: #444; user-select: none; }
         
+        /* Родной липкий скролл БЕЗ ПРУЖИННОСТИ И ТРЯСКИ */
         .row-number-cell, tr th:first-child { 
             background-color: #f1f1f1 !important; 
             text-align: center; 
             font-weight: bold; 
             color: #666; 
             font-size: 9px;
-            z-index: 5;
             user-select: none;
-            position: relative;
-            will-change: transform;
+            position: sticky !important;
+            left: 0;
+            z-index: 10;
             width: 32px !important;
-            max-width: 32px !important;
             min-width: 32px !important;
+            max-width: 32px !important;
+            box-shadow: 1px 0 0 #d4d4d4;
         }
         
-        tr th:first-child { z-index: 10; }
+        tr th:first-child { z-index: 15; top: 0; }
+        
+        /* Фиксируем шапку колонок (A, B, C...) при скролле вниз */
+        tr:first-child th {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            box-shadow: 0 1px 0 #d4d4d4;
+        }
+
         td:focus { outline: 1.5px solid #107c41 !important; z-index: 20; background-color: #f3f9f5 !important; }
         .hidden-merged-cell { display: none; }
 
-        /* Четкие синие границы оригинального документа Excel */
-        .excel-cell.doc-right-boundary, th.doc-right-boundary { border-right: 2px solid #0f62fe !important; }
-        .excel-cell.doc-bottom-boundary, td.doc-bottom-boundary { border-bottom: 2px solid #0f62fe !important; }
+        /* Строгие синие границы оригинального контента */
+        .doc-right-boundary { border-right: 2px solid #0f62fe !important; }
+        .doc-bottom-boundary { border-bottom: 2px solid #0f62fe !important; }
     </style>
 </head>
 <body>
@@ -92,7 +98,7 @@
         let headerRow = document.createElement('tr');
         let emptyTh = document.createElement('th'); headerRow.appendChild(emptyTh);
         for (let c = 0; c < defaultCols; c++) {
-            let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); headerRow.appendChild(th);
+            let th = document.createElement('th'); th.innerText = String.fromCharCode(65 + c); th.style.width = "45px"; headerRow.appendChild(th);
         }
         table.appendChild(headerRow);
 
@@ -102,12 +108,13 @@
             currentData[r] = [];
             for (let c = 0; c < defaultCols; c++) {
                 let td = document.createElement('td'); td.contentEditable = true; td.dataset.row = r; td.dataset.col = c; currentData[r][c] = "";
+                td.style.width = "45px";
                 td.addEventListener('blur', function() { saveCell(this); });
                 tr.appendChild(td);
             }
             table.appendChild(tr);
         }
-        initPinchZoomAndScroll();
+        initPinchZoom();
     }
 
     function saveCell(cell) {
@@ -119,18 +126,14 @@
         try {
             const rawJson = AndroidBridge.getExcelData();
             if (!rawJson) return;
-            
             const payload = JSON.parse(rawJson);
             renderExcelGrid(payload);
         } catch(e) {
-            AndroidBridge.onStatus("Ошибка моста данных: " + e.message);
+            AndroidBridge.onStatus("Ошибка разбора JSON: " + e.message);
         }
     }
 
     function renderExcelGrid(payload) {
-        // Контрольный алерт — проверим, доходят ли данные!
-        alert("Мост сработал! Строк в файле: " + payload.matrix.length);
-        
         try {
             const rows = payload.matrix;
             const merges = payload.merges || [];
@@ -146,11 +149,28 @@
             let colsCount = rows[0].length;
             let rowsCount = rows.length;
 
+            // Находим реальные границы заполненного контента для точного начертания рамки
+            let lastFilledRow = 0;
+            let lastFilledCol = 0;
+
+            for (let r = 0; r < rowsCount; r++) {
+                for (let c = 0; c < colsCount; c++) {
+                    let val = (rows[r][c] && rows[r][c].v !== undefined) ? String(rows[r][c].v).trim() : "";
+                    if (val !== "") {
+                        if (r > lastFilledRow) lastFilledRow = r;
+                        if (c > lastFilledCol) lastFilledCol = c;
+                    }
+                }
+            }
+            // Предотвращаем схлопывание рамки в ноль на пустых листах
+            if (lastFilledRow === 0) lastFilledRow = rowsCount - 1;
+            if (lastFilledCol === 0) lastFilledCol = colsCount - 1;
+
             let colGroup = document.createElement('colgroup');
             let colFirst = document.createElement('col'); colFirst.style.width = "32px"; colGroup.appendChild(colFirst);
             for (let c = 0; c < colsCount; c++) {
                 let col = document.createElement('col');
-                col.style.width = (widths[c] || 42) + "px";
+                col.style.width = (widths[c] || 45) + "px";
                 colGroup.appendChild(col);
             }
             table.appendChild(colGroup);
@@ -160,10 +180,10 @@
             for (let c = 0; c < colsCount; c++) {
                 let th = document.createElement('th'); 
                 th.innerText = String.fromCharCode(65 + c); 
-                let w = (widths[c] || 42) + "px";
+                let w = (widths[c] || 45) + "px";
                 th.style.width = w; th.style.maxWidth = w; th.style.minWidth = w;
                 
-                if (c === colsCount - 1) th.classList.add('doc-right-boundary');
+                if (c === lastFilledCol) th.classList.add('doc-right-boundary');
                 headerRow.appendChild(th);
             }
             table.appendChild(headerRow);
@@ -184,7 +204,7 @@
                 tr.style.height = (heights[r] || 18) + "px";
 
                 let rowTh = document.createElement('td'); rowTh.className = "row-number-cell"; rowTh.innerText = r + 1; 
-                if (r === rowsCount - 1) rowTh.classList.add('doc-bottom-boundary');
+                if (r === lastFilledRow) rowTh.classList.add('doc-bottom-boundary');
                 tr.appendChild(rowTh);
                 
                 currentData[r] = [];
@@ -195,7 +215,7 @@
                     td.className = "excel-cell";
                     td.contentEditable = true; td.dataset.row = r; td.dataset.col = c;
                     
-                    let cellWidth = (widths[c] || 42) + "px";
+                    let cellWidth = (widths[c] || 45) + "px";
                     td.style.width = cellWidth; td.style.maxWidth = cellWidth; td.style.minWidth = cellWidth;
                     
                     let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
@@ -209,8 +229,9 @@
                         if (cellData.italic) td.style.fontStyle = "italic";
                     }
 
-                    if (c === colsCount - 1) td.classList.add('doc-right-boundary');
-                    if (r === rowsCount - 1) td.classList.add('doc-bottom-boundary');
+                    // Рамка строго по контуру ПОСЛЕДНЕЙ ЗАПОЛНЕННОЙ ячейки
+                    if (c === lastFilledCol) td.classList.add('doc-right-boundary');
+                    if (r === lastFilledRow) td.classList.add('doc-bottom-boundary');
 
                     td.addEventListener('blur', function() { saveCell(this); });
 
@@ -226,27 +247,14 @@
                 }
                 table.appendChild(tr);
             }
-            initPinchZoomAndScroll();
+            initPinchZoom();
             AndroidBridge.onStatus("Документ успешно отрисован!");
         } catch (e) { AndroidBridge.onStatus("Ошибка рендеринга: " + e.message); }
     }
 
-    function syncStickyColumns() {
-        const scrollView = document.getElementById('scroll-view');
-        const scrollLeftCompensated = scrollView.scrollLeft / currentScale;
-        
-        const stickyCells = document.querySelectorAll('.row-number-cell, tr th:first-child');
-        stickyCells.forEach(cell => {
-            cell.style.transform = `translateX(${scrollLeftCompensated}px)`;
-        });
-    }
-
-    function initPinchZoomAndScroll() {
+    function initPinchZoom() {
         const scrollView = document.getElementById('scroll-view');
         const zoomContainer = document.getElementById('zoom-container');
-
-        scrollView.removeEventListener('scroll', syncStickyColumns);
-        scrollView.addEventListener('scroll', syncStickyColumns);
 
         scrollView.addEventListener('touchstart', function(e) {
             if (e.touches.length === 2) {
@@ -262,18 +270,16 @@
                 const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
                 if (startTouchDist > 0) {
                     let targetScale = startScale * (dist / startTouchDist);
-                    if (targetScale < 0.3) targetScale = 0.3;
+                    if (targetScale < 0.5) targetScale = 0.5;
                     if (targetScale > 2.0) targetScale = 2.0;
                     
                     currentScale = targetScale;
                     zoomContainer.style.transform = `scale(${currentScale})`;
-                    syncStickyColumns();
                 }
             }
         }, { passive: false });
         
         scrollView.addEventListener('touchend', function(e) { if (e.touches.length < 2) { startTouchDist = 0; } });
-        syncStickyColumns();
     }
 
     function exportExcelToAndroid() {
@@ -301,27 +307,16 @@
                     return true;
                 }
             }
-        } catch (e) {
-            // Если JSON упал при парсинге, мы мгновенно увидим это в алерте
-            alert("Критическая ошибка JS внутри WebView: " + e.message);
-        }
+        } catch (e) { console.log("Опрос: " + e.message); }
         return false;
     }
 
     window.onload = function() {
-        // Рисуем дефолтную сетку
         createEmptyGrid();
-        
-        // Пробуем забрать данные сразу
         if (!checkAndLoadData()) {
-            // Если Java еще не отдала файл, опрашиваем мост каждые 300мс до победного конца
             let retryInterval = setInterval(function() {
-                if (checkAndLoadData()) {
-                    clearInterval(retryInterval); // Стоп опрос, когда файл успешно встал в сетку
-                }
+                if (checkAndLoadData()) clearInterval(retryInterval);
             }, 300);
-            
-            // На всякий случай гасим таймер через 5 секунд, чтобы не тратить батарею
             setTimeout(function() { clearInterval(retryInterval); }, 5000);
         }
     };
