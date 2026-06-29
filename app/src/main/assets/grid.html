@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Canvas Perfect Engine</title>
+    <title>MiniExcel Canvas Final Engine</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #f3f3f3; }
         #canvas-container { width: 100%; height: 100%; position: relative; }
@@ -59,7 +59,6 @@
     let startTouchDist = 0;
     let startZoom = 1.0;
 
-    // Правильная генерация букв Excel (A, B... Z, AA, AB...)
     function getColName(colIndex) {
         let name = "";
         while (colIndex >= 0) {
@@ -77,7 +76,8 @@
                 matrix[r][c] = { v: "" };
             }
         }
-        widths = Array(maxCols).fill(38);
+        // Сжатие базовой ширины до оригинальных компактных 36px
+        widths = Array(maxCols).fill(36);
         heights = Array(maxRows).fill(18);
         lastFilledRow = maxRows - 1;
         lastFilledCol = maxCols - 1;
@@ -113,7 +113,10 @@
             for (let r = 0; r < maxRows; r++) {
                 if (!heights[r]) heights[r] = 18;
                 for (let c = 0; c < maxCols; c++) {
-                    if (!widths[c]) widths[c] = 38;
+                    // Применяем пропорциональный коэффициент сжатия 0.85 к ширине из POI Excel
+                    if (!widths[c]) widths[c] = 36;
+                    else widths[c] = Math.round(widths[c] * 0.85);
+
                     let val = (matrix[r][c] && matrix[r][c].v !== undefined) ? String(matrix[r][c].v).trim() : "";
                     if (val !== "") {
                         if (r > lastFilledRow) lastFilledRow = r;
@@ -146,7 +149,6 @@
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         ctx.save();
 
-        // Построение карты объединенных ячеек
         let mergeLookup = {};
         merges.forEach(m => {
             for (let r = m.sr; r <= m.er; r++) {
@@ -156,23 +158,24 @@
             }
         });
 
-        // 1. ОТРИСОВКА СЕТКИ И КОНТЕНТА (С учетом зума и сдвига)
+        // 1. ОТРИСОВКА СЕТКИ И КОНТЕНТА
         ctx.textBaseline = 'middle';
         
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue; // Пропускаем поглощенные ячейки
+                
+                // ИСПРАВЛЕНИЕ ОБЪЕДИНЕНИЙ: Полностью пропускаем отрисовку поглощенных ячеек,
+                // чтобы они не перекрывали главную объединенную ячейку.
+                if (lookup && lookup.isChild) continue; 
 
                 let rect = getCellRect(r, c);
                 
-                // Единый математический расчет экранных координат БЕЗ зазоров
                 let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
                 let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
                 let cw = rect.w * zoom;
                 let ch = rect.h * zoom;
 
-                // Если ячейка главная в объединении — вычисляем её полный размер
                 if (lookup && lookup.isMain) {
                     let fullW = 0; let fullH = 0;
                     for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += widths[i];
@@ -181,7 +184,6 @@
                     ch = fullH * zoom;
                 }
 
-                // Ограничиваем контент под рабочей областью сетки
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
                 let cellData = matrix[r][c];
@@ -234,10 +236,10 @@
             ctx.stroke();
         }
 
-        // 3. ОТРИСОВКА ФИКСИРОВАННЫХ ШАПОК (Перекрывают зазоры)
+        // 3. ОТРИСОВКА ФИКСИРОВАННЫХ ШАПОК
         ctx.lineWidth = 0.5;
         
-        // Буквы колонок (A, B, C... AA...)
+        // Буквы колонок
         ctx.font = `bold 10px Arial`;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -256,7 +258,7 @@
             ctx.fillText(getColName(c), cx + cw / 2, COL_NUM_HEIGHT / 2);
         }
 
-        // Номера строк (1, 2, 3...)
+        // Номера строк
         ctx.font = `bold 9px Arial`;
         ctx.textAlign = 'center';
         for (let r = 0; r < maxRows; r++) {
@@ -275,7 +277,7 @@
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, cy + ch / 2);
         }
 
-        // Заглушка левого верхнего угла (угол пересечения)
+        // Заглушка угла
         ctx.fillStyle = "#f1f1f1";
         ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#d4d4d4";
