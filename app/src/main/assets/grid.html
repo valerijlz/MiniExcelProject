@@ -298,11 +298,12 @@
                 if (rawJson && rawJson.trim() !== "") {
                     const payload = JSON.parse(rawJson);
                     renderExcelGrid(payload);
-                    return true; // Данные получены и отрисованы
+                    return true;
                 }
             }
         } catch (e) {
-            console.log("Ошибка проверки данных: " + e.message);
+            // Если JSON упал при парсинге, мы мгновенно увидим это в алерте
+            alert("Критическая ошибка JS внутри WebView: " + e.message);
         }
         return false;
     }
