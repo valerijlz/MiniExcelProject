@@ -3,365 +3,416 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel CSS Grid Engine</title>
+    <title>MiniExcel Canvas High-Performance Engine</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Arial, sans-serif; background-color: #f3f3f3; overflow: hidden; }
-        
-        .viewport-container { 
-            width: 100%; 
-            height: 100%; 
-            overflow: auto; 
-            -webkit-overflow-scrolling: touch; 
-            position: relative;
-        }
-        
-        /* Сетка на базе CSS Grid */
-        .grid-container {
-            display: grid;
-            background-color: #d4d4d4;
-            padding-right: 2px;
-            padding-bottom: 2px;
-            width: max-content;
-            height: max-content;
-        }
-        
-        /* Базовый стиль для всех ячеек */
-        .cell {
-            background: #ffffff;
-            box-sizing: border-box;
-            padding: 0 3px;
-            font-size: 10px;
-            display: flex;
-            align-items: center;
-            overflow: hidden;
-            white-space: nowrap;
-            text-overflow: clip;
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #f3f3f3; }
+        #canvas-container { width: 100%; height: 100%; position: relative; }
+        canvas { display: block; width: 100%; height: 100%; }
+        /* Скрытый инпут для редактирования ячеек при клике */
+        #cell-editor {
+            position: absolute;
+            display: none;
+            border: 1.5px solid #107c41;
             outline: none;
+            padding: 0 3px;
+            font-family: Arial, sans-serif;
+            font-size: 10px;
+            box-sizing: border-box;
+            background: white;
+            z-index: 100;
         }
-        
-        /* Стили заголовков (A, B, C / 1, 2, 3) */
-        .header-cell {
-            background-color: #f1f1f1;
-            font-weight: bold;
-            color: #444;
-            justify-content: center;
-            user-select: none;
-        }
-        
-        /* Нативный аппаратный sticky для номеров строк */
-        .row-num {
-            position: sticky !important;
-            left: 0;
-            z-index: 10;
-            color: #666;
-            font-size: 9px;
-            box-shadow: 1px 0 0 #d4d4d4;
-        }
-        
-        /* Нативный аппаратный sticky для букв колонок */
-        .col-num {
-            position: sticky !important;
-            top: 0;
-            z-index: 9;
-            box-shadow: 0 1px 0 #d4d4d4;
-        }
-        
-        /* Пересечение (левый верхний угол) */
-        .corner-cell {
-            position: sticky !important;
-            top: 0;
-            left: 0;
-            z-index: 15;
-        }
-        
-        .cell:focus { 
-            outline: 1.5px solid #107c41 !important; 
-            z-index: 20 !important; 
-            background-color: #f3f9f5 !important; 
-        }
-
-        /* Безупречные синие рамки документа, не зависящие от структуры ячеек */
-        .doc-right-boundary { box-shadow: inset -2px 0 0 #0f62fe, 1px 0 0 #d4d4d4; z-index: 5; }
-        .doc-bottom-boundary { box-shadow: inset 0 -2px 0 #0f62fe, 0 1px 0 #d4d4d4; z-index: 5; }
-        .doc-both-boundary { box-shadow: inset -2px -2px 0 #0f62fe, 1px 1px 0 #d4d4d4; z-index: 6; }
     </style>
 </head>
 <body>
 
-<div class="viewport-container" id="scroll-view">
-    <div class="grid-container" id="grid-container"></div>
+<div id="canvas-container">
+    <canvas id="excelCanvas"></canvas>
+    <input type="text" id="cell-editor" />
 </div>
 
 <script>
-    let currentData = [];
-    let defaultRows = 45;
-    let defaultCols = 12;
-    
-    let currentScale = 1.0;
+    const canvas = document.getElementById('excelCanvas');
+    const ctx = canvas.getContext('2d');
+    const editor = document.getElementById('cell-editor');
+
+    let matrix = [];
+    let merges = [];
+    let widths = [];
+    let heights = [];
+
+    // Глобальное состояние скролла и зума
+    let scrollX = 0;
+    let scrollY = 0;
+    let zoom = 1.0;
+
+    let maxCols = 12;
+    let maxRows = 45;
+
+    const ROW_NUM_WIDTH = 32;
+    const COL_NUM_HEIGHT = 18;
+
+    let lastFilledRow = 0;
+    let lastFilledCol = 0;
+
+    // Координаты активной ячейки для редактирования
+    let selectedCell = null;
+
+    // Состояние тач-событий для скролла и pinch-to-zoom
+    let isDragging = false;
+    let lastTouchX = 0;
+    let lastTouchY = 0;
     let startTouchDist = 0;
-    let startScale = 1.0;
+    let startZoom = 1.0;
 
-    function createEmptyGrid() {
-        const container = document.getElementById('grid-container');
-        container.innerHTML = '';
-        
-        // Задаем размеры сетки: 32px для номеров строк, остальные по 38px
-        let colStyles = "32px ";
-        for(let i=0; i<defaultCols; i++) colStyles += "38px ";
-        container.style.gridTemplateColumns = colStyles;
-        
-        let rowStyles = "18px ";
-        for(let i=0; i<defaultRows; i++) rowStyles += "18px ";
-        container.style.gridTemplateRows = rowStyles;
-
-        // Угол
-        let corner = document.createElement('div');
-        corner.className = "cell header-cell corner-cell";
-        container.appendChild(corner);
-
-        // Буквы A, B, C...
-        for (let c = 0; c < defaultCols; c++) {
-            let th = document.createElement('div');
-            th.className = "cell header-cell col-num";
-            th.innerText = String.fromCharCode(65 + c);
-            container.appendChild(th);
-        }
-
-        // Строки
-        for (let r = 0; r < defaultRows; r++) {
-            let rowTh = document.createElement('div');
-            rowTh.className = "cell header-cell row-num";
-            rowTh.innerText = r + 1;
-            container.appendChild(rowTh);
-
-            for (let c = 0; c < defaultCols; c++) {
-                let td = document.createElement('div');
-                td.className = "cell";
-                td.contentEditable = true;
-                container.appendChild(td);
+    function initEmptyGrid() {
+        matrix = [];
+        for (let r = 0; r < maxRows; r++) {
+            matrix[r] = [];
+            for (let c = 0; c < maxCols; c++) {
+                matrix[r][c] = { v: "" };
             }
         }
+        widths = Array(maxCols).fill(38);
+        heights = Array(maxRows).fill(18);
+        lastFilledRow = maxRows - 1;
+        lastFilledCol = maxCols - 1;
+        resizeCanvas();
     }
+
+    function resizeCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = canvas.clientWidth * dpr;
+        canvas.height = canvas.clientHeight * dpr;
+        ctx.scale(dpr, dpr);
+        draw();
+    }
+
+    window.addEventListener('resize', resizeCanvas);
 
     function requestDataFromAndroid() {
         try {
             const rawJson = AndroidBridge.getExcelData();
             if (!rawJson) return;
             const payload = JSON.parse(rawJson);
-            renderExcelGrid(payload);
-        } catch(e) {
-            AndroidBridge.onStatus("Ошибка разбора JSON: " + e.message);
-        }
-    }
+            
+            matrix = payload.matrix;
+            merges = payload.merges || [];
+            widths = payload.widths || [];
+            heights = payload.heights || [];
+            
+            maxRows = matrix.length;
+            maxCols = matrix[0].length;
 
-    function renderExcelGrid(payload) {
-        try {
-            const rows = payload.matrix;
-            const merges = payload.merges || [];
-            const widths = payload.widths || [];
-            const heights = payload.heights || [];
-            
-            const container = document.getElementById('grid-container');
-            container.innerHTML = '';
-            
-            if (!rows || rows.length === 0) { createEmptyGrid(); return; }
-            currentData = [];
-            
-            let colsCount = rows[0].length;
-            let rowsCount = rows.length;
-
-            // Нахождение контура заполненных данных для синей рамки
-            let lastFilledRow = 0;
-            let lastFilledCol = 0;
-            for (let r = 0; r < rowsCount; r++) {
-                for (let c = 0; c < colsCount; c++) {
-                    let val = (rows[r][c] && rows[r][c].v !== undefined) ? String(rows[r][c].v).trim() : "";
+            // Расчет оригинальных компактных ширин и границ данных
+            lastFilledRow = 0;
+            lastFilledCol = 0;
+            for (let r = 0; r < maxRows; r++) {
+                if (!heights[r]) heights[r] = 18;
+                for (let c = 0; c < maxCols; c++) {
+                    if (!widths[c]) widths[c] = 38;
+                    let val = (matrix[r][c] && matrix[r][c].v !== undefined) ? String(matrix[r][c].v).trim() : "";
                     if (val !== "") {
                         if (r > lastFilledRow) lastFilledRow = r;
                         if (c > lastFilledCol) lastFilledCol = c;
                     }
                 }
             }
-            if (lastFilledRow === 0) lastFilledRow = rowsCount - 1;
-            if (lastFilledCol === 0) lastFilledCol = colsCount - 1;
+            if (lastFilledRow === 0) lastFilledRow = maxRows - 1;
+            if (lastFilledCol === 0) lastFilledCol = maxCols - 1;
 
-            // Конфигурируем CSS Grid шаблоны колонок и строк
-            let colStyles = "32px ";
-            for (let c = 0; c < colsCount; c++) {
-                // Оригинальная ширина из POI Excel (на базе коэф. 2.0 из Java)
-                colStyles += (widths[c] || 38) + "px ";
-            }
-            container.style.gridTemplateColumns = colStyles;
-
-            let rowStyles = "18px ";
-            for (let r = 0; r < rowsCount; r++) {
-                rowStyles += (heights[r] || 18) + "px ";
-            }
-            container.style.gridTemplateRows = rowStyles;
-
-            // Рендерим шапку (Угол)
-            let corner = document.createElement('div');
-            corner.className = "cell header-cell corner-cell";
-            container.appendChild(corner);
-
-            // Рендерим буквы (A, B, C...)
-            for (let c = 0; c < colsCount; c++) {
-                let th = document.createElement('div');
-                th.className = "cell header-cell col-num";
-                th.innerText = String.fromCharCode(65 + c);
-                if (c === lastFilledCol) th.classList.add('doc-right-boundary');
-                container.appendChild(th);
-            }
-
-            // Создаем карту объединенных областей
-            let mergeMap = {};
-            let hiddenMap = {};
-            merges.forEach(m => {
-                for (let r = m.sr; r <= m.er; r++) {
-                    for (let c = m.sc; c <= m.ec; c++) {
-                        if (r === m.sr && c === m.sc) {
-                            mergeMap[`${r}_${c}`] = { rSpan: (m.er - m.sr) + 1, cSpan: (m.ec - m.sc) + 1 };
-                        } else {
-                            hiddenMap[`${r}_${c}`] = true;
-                        }
-                    }
-                }
-            });
-
-            // Рендерим ячейки матрицы контента
-            for (let r = 0; r < rowsCount; r++) {
-                let rowTh = document.createElement('div');
-                rowTh.className = "cell header-cell row-num";
-                rowTh.innerText = r + 1;
-                if (r === lastFilledRow) rowTh.classList.add('doc-bottom-boundary');
-                container.appendChild(rowTh);
-
-                currentData[r] = [];
-
-                for (let c = 0; c < colsCount; c++) {
-                    let cellData = rows[r][c];
-                    let textValue = (cellData && cellData.v !== undefined) ? cellData.v : "";
-                    currentData[r][c] = textValue;
-
-                    if (hiddenMap[`${r}_${c}`]) {
-                        continue; // Пропускаем ячейки, которые поглощены объединением
-                    }
-
-                    let td = document.createElement('div');
-                    td.className = "cell";
-                    td.contentEditable = true;
-                    td.innerText = textValue;
-                    
-                    // Задаем координаты внутри CSS Grid для поддержки Merges
-                    let gridRowStart = r + 2; // +2 учитывая шапку и отсчет с 1
-                    let gridColStart = c + 2; // +2 учитывая номер строки и отсчет с 1
-                    let gridRowEnd = gridRowStart + 1;
-                    let gridColEnd = gridColStart + 1;
-
-                    let mergeInfo = mergeMap[`${r}_${c}`];
-                    if (mergeInfo) {
-                        gridRowEnd = gridRowStart + mergeInfo.rSpan;
-                        gridColEnd = gridColStart + mergeInfo.cSpan;
-                    }
-
-                    td.style.gridRow = `${gridRowStart} / ${gridRowEnd}`;
-                    td.style.gridColumn = `${gridColStart} / ${gridColEnd}`;
-
-                    if (cellData) {
-                        if (cellData.bg) td.style.backgroundColor = cellData.bg;
-                        if (cellData.color) td.style.color = cellData.color;
-                        if (cellData.bold) td.style.fontWeight = "bold";
-                        if (cellData.italic) td.style.fontStyle = "italic";
-                    }
-
-                    // Просчет нанесения идеальной синей рамки по контуру данных
-                    let isRightEdge = (c === lastFilledCol) || (mergeInfo && (c + mergeInfo.cSpan - 1 === lastFilledCol));
-                    let isBottomEdge = (r === lastFilledRow) || (mergeInfo && (r + mergeInfo.rSpan - 1 === lastFilledRow));
-
-                    if (isRightEdge && isBottomEdge) td.classList.add('doc-both-boundary');
-                    else if (isRightEdge) td.classList.add('doc-right-boundary');
-                    else if (isBottomEdge) td.classList.add('doc-bottom-boundary');
-
-                    td.addEventListener('blur', function() {
-                        let cleanText = this.innerText.replace(/\n/g, '').replace(/\r/g, '').trim();
-                        currentData[r][c] = cleanText;
-                    });
-
-                    container.appendChild(td);
-                }
-            }
+            editor.style.display = 'none';
+            selectedCell = null;
+            draw();
             AndroidBridge.onStatus("Документ успешно отрисован!");
-        } catch (e) { AndroidBridge.onStatus("Ошибка рендеринга: " + e.message); }
+        } catch(e) {
+            AndroidBridge.onStatus("Ошибка Canvas: " + e.message);
+        }
     }
 
-    function initPinchZoom() {
-        const scrollView = document.getElementById('scroll-view');
-        const container = document.getElementById('grid-container');
+    // Математический расчет позиций ячеек на холсте
+    function getCellRect(row, col) {
+        let x = ROW_NUM_WIDTH;
+        for (let i = 0; i < col; i++) x += widths[i];
+        let y = COL_NUM_HEIGHT;
+        for (let i = 0; i < row; i++) y += heights[i];
+        
+        return {
+            x: x,
+            y: y,
+            w: widths[col],
+            h: heights[row]
+        };
+    }
 
-        scrollView.addEventListener('touchstart', function(e) {
-            if (e.touches.length === 2) {
-                e.preventDefault();
-                startTouchDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                startScale = currentScale;
-            }
-        }, { passive: false });
+    function draw() {
+        ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+        ctx.save();
 
-        scrollView.addEventListener('touchmove', function(e) {
-            if (e.touches.length === 2) {
-                e.preventDefault();
-                const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                if (startTouchDist > 0) {
-                    let targetScale = startScale * (dist / startTouchDist);
-                    if (targetScale < 0.6) targetScale = 0.6;
-                    if (targetScale > 1.6) targetScale = 1.6;
-                    
-                    currentScale = targetScale;
-                    // Оптимальное масштабирование через transform без разрушения контекста sticky
-                    container.style.transform = `scale(${currentScale})`;
-                    container.style.transformOrigin = `0 0`;
+        // 1. ОТРИСОВКА СЕТКИ КОНТЕНТА И СТРОК
+        ctx.textBaseline = 'middle';
+        ctx.font = `${10 * zoom}px Arial`;
+
+        let mergeLookup = {};
+        merges.forEach(m => {
+            for (let r = m.sr; r <= m.er; r++) {
+                for (let c = m.sc; c <= m.ec; c++) {
+                    mergeLookup[`${r}_${c}`] = (r === m.sr && c === m.sc) ? { isMain: true, m: m } : { isChild: true };
                 }
             }
-        }, { passive: false });
+        });
+
+        // Цикл отрисовки ячеек контента
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let lookup = mergeLookup[`${r}_${c}`];
+                if (lookup && lookup.isChild) continue;
+
+                let rect = getCellRect(r, c);
+                
+                // Рассчитываем геометрию с учетом скролла и зума
+                let cx = (rect.x - scrollX) * zoom + ROW_NUM_WIDTH;
+                let cy = (rect.y - scrollY) * zoom + COL_NUM_HEIGHT;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
+
+                if (lookup && lookup.isMain) {
+                    cw = 0; ch = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += widths[i];
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += heights[i];
+                    cw *= zoom; ch *= zoom;
+                }
+
+                // Отсекаем отрисовку за пределами рабочей области экрана
+                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
+
+                let cellData = matrix[r][c];
+                ctx.fillStyle = (cellData && cellData.bg) ? cellData.bg : "#ffffff";
+                ctx.fillRect(cx, cy, cw, ch);
+
+                ctx.strokeStyle = "#d4d4d4";
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(cx, cy, cw, ch);
+
+                // Отрендерить текст внутри ячейки
+                let text = (cellData && cellData.v !== undefined) ? String(cellData.v) : "";
+                if (text !== "") {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(cx + 2, cy, cw - 4, ch);
+                    ctx.clip();
+
+                    ctx.fillStyle = (cellData && cellData.color) ? cellData.color : "#000000";
+                    let fontStyle = "";
+                    if (cellData && cellData.bold) fontStyle += "bold ";
+                    if (cellData && cellData.italic) fontStyle += "italic ";
+                    ctx.font = `${fontStyle}${10 * zoom}px Arial`;
+
+                    ctx.fillText(text, cx + 3, cy + ch / 2);
+                    ctx.restore();
+                }
+            }
+        }
+
+        // 2. ИДЕАЛЬНАЯ СИНЯЯ РАМКА ГРАНИЦЫ ДОКУМЕНТА (Чертится поверх ячеек)
+        let endRowRect = getCellRect(lastFilledRow, 0);
+        let endColRect = getCellRect(0, lastFilledCol);
         
-        scrollView.addEventListener('touchend', function(e) { if (e.touches.length < 2) { startTouchDist = 0; } });
+        let boundaryX = (endColRect.x + endColRect.w - scrollX) * zoom + ROW_NUM_WIDTH;
+        let boundaryY = (endRowRect.y + endRowRect.h - scrollY) * zoom + COL_NUM_HEIGHT;
+        let startX = ROW_NUM_WIDTH;
+        let startY = COL_NUM_HEIGHT;
+
+        ctx.strokeStyle = "#0f62fe";
+        ctx.lineWidth = 2.5;
+        
+        // Вертикальный сплошной отрезок
+        if (boundaryX >= ROW_NUM_WIDTH) {
+            ctx.beginPath();
+            ctx.moveTo(boundaryX, startY);
+            ctx.lineTo(boundaryX, Math.max(startY, boundaryY));
+            ctx.stroke();
+        }
+        // Горизонтальный сплошной отрезок
+        if (boundaryY >= COL_NUM_HEIGHT) {
+            ctx.beginPath();
+            ctx.moveTo(startX, boundaryY);
+            ctx.lineTo(Math.max(startX, boundaryX), boundaryY);
+            ctx.stroke();
+        }
+
+        // 3. ОТРИСОВКА ЗАФИКСИРОВАННЫХ ШАПОК (Намертво перекрывают контент при скролле)
+        ctx.font = `bold ${10 * zoom}px Arial`;
+        
+        // Буквенная шапка (A, B, C...)
+        for (let c = 0; c < maxCols; c++) {
+            let rect = getCellRect(0, c);
+            let cx = (rect.x - scrollX) * zoom + ROW_NUM_WIDTH;
+            let cw = rect.w * zoom;
+
+            ctx.fillStyle = "#f1f1f1";
+            ctx.fillRect(cx, 0, cw, COL_NUM_HEIGHT);
+            ctx.strokeStyle = "#d4d4d4";
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(cx, 0, cw, COL_NUM_HEIGHT);
+
+            ctx.fillStyle = "#444444";
+            ctx.textAlign = 'center';
+            ctx.fillText(String.fromCharCode(65 + c), cx + cw / 2, COL_NUM_HEIGHT / 2);
+        }
+
+        // Цифровая колонка номеров строк (1, 2, 3...)
+        ctx.font = `bold ${9 * zoom}px Arial`;
+        ctx.textAlign = 'center';
+        for (let r = 0; r < maxRows; r++) {
+            let rect = getCellRect(r, 0);
+            let cy = (rect.y - scrollY) * zoom + COL_NUM_HEIGHT;
+            let ch = rect.h * zoom;
+
+            ctx.fillStyle = "#f1f1f1";
+            ctx.fillRect(0, cy, ROW_NUM_WIDTH, ch);
+            ctx.strokeStyle = "#d4d4d4";
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(0, cy, ROW_NUM_WIDTH, ch);
+
+            ctx.fillStyle = "#666666";
+            ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, cy + ch / 2);
+        }
+
+        // Левый верхний изолированный угол пересечения
+        ctx.fillStyle = "#f1f1f1";
+        ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+
+        ctx.restore();
     }
+
+    // Обработка жестов прокрутки и зума на холсте Canvas
+    canvas.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 1) {
+            isDragging = true;
+            lastTouchX = e.touches[0].pageX;
+            lastTouchY = e.touches[0].pageY;
+        } else if (e.touches.length === 2) {
+            isDragging = false;
+            startTouchDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+            startZoom = zoom;
+        }
+    });
+
+    canvas.addEventListener('touchmove', function(e) {
+        if (e.touches.length === 1 && isDragging) {
+            let dx = e.touches[0].pageX - lastTouchX;
+            let dy = e.touches[0].pageY - lastTouchY;
+
+            scrollX -= dx / zoom;
+            scrollY -= dy / zoom;
+
+            if (scrollX < 0) scrollX = 0;
+            if (scrollY < 0) scrollY = 0;
+
+            lastTouchX = e.touches[0].pageX;
+            lastTouchY = e.touches[0].pageY;
+            
+            if(editor.style.display === 'block') positionEditor();
+            draw();
+        } else if (e.touches.length === 2) {
+            const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+            if (startTouchDist > 0) {
+                let targetZoom = startZoom * (dist / startTouchDist);
+                zoom = Math.max(0.6, Math.min(1.6, targetZoom));
+                if(editor.style.display === 'block') positionEditor();
+                draw();
+            }
+        }
+    });
+
+    canvas.addEventListener('touchend', function(e) {
+        isDragging = false;
+        if (e.touches.length < 2) startTouchDist = 0;
+    });
+
+    // Определение клика по ячейке для ввода текста
+    canvas.addEventListener('click', function(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+
+        if (clickX < ROW_NUM_WIDTH || clickY < COL_NUM_HEIGHT) return;
+
+        // Трансформируем экранный клик в координаты матрицы данных
+        let targetX = (clickX - ROW_NUM_WIDTH) / zoom + scrollX;
+        let targetY = (clickY - COL_NUM_HEIGHT) / zoom + scrollY;
+
+        let foundR = -1, foundC = -1;
+        
+        let currentX = ROW_NUM_WIDTH;
+        for (let c = 0; c < maxCols; c++) {
+            if (targetX >= currentX && targetX <= currentX + widths[c]) { foundC = c; break; }
+            currentX += widths[c];
+        }
+
+        let currentY = COL_NUM_HEIGHT;
+        for (let r = 0; r < maxRows; r++) {
+            if (targetY >= currentY && targetY <= currentY + heights[r]) { foundR = r; break; }
+            currentY += heights[r];
+        }
+
+        if (foundR !== -1 && foundC !== -1) {
+            saveCurrentEditorValue();
+            selectedCell = { r: foundR, c: foundC };
+            showEditor();
+        }
+    });
+
+    function showEditor() {
+        if (!selectedCell) return;
+        let cellData = matrix[selectedCell.r][selectedCell.c];
+        editor.value = (cellData && cellData.v !== undefined) ? cellData.v : "";
+        editor.style.display = 'block';
+        positionEditor();
+        editor.focus();
+    }
+
+    function positionEditor() {
+        if (!selectedCell) return;
+        let rect = getCellRect(selectedCell.r, selectedCell.c);
+        editor.style.left = ((rect.x - scrollX) * zoom + ROW_NUM_WIDTH) + 'px';
+        editor.style.top = ((rect.y - scrollY) * zoom + COL_NUM_HEIGHT) + 'px';
+        editor.style.width = (rect.w * zoom) + 'px';
+        editor.style.height = (rect.h * zoom) + 'px';
+    }
+
+    function saveCurrentEditorValue() {
+        if (selectedCell) {
+            matrix[selectedCell.r][selectedCell.c].v = editor.value.trim();
+        }
+    }
+
+    editor.addEventListener('blur', () => {
+        saveCurrentEditorValue();
+        editor.style.display = 'none';
+        draw();
+    });
 
     function exportExcelToAndroid() {
-        try {
-            if (document.activeElement && document.activeElement.classList.contains('cell')) {
-                document.activeElement.blur();
+        saveCurrentEditorValue();
+        let exportMatrix = [];
+        for (let r = 0; r < maxRows; r++) {
+            exportMatrix[r] = [];
+            for (let c = 0; c < maxCols; c++) {
+                exportMatrix[r][c] = matrix[r][c].v || "";
             }
-            setTimeout(function() {
-                const jsonString = JSON.stringify(currentData);
-                const encoder = new TextEncoder(); const bytes = encoder.encode(jsonString);
-                let binary = ''; for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
-                AndroidBridge.saveFileData(btoa(binary));
-            }, 50);
-        } catch (e) { AndroidBridge.onStatus("Ошибка экспорта: " + e.message); }
-    }
-
-    function checkAndLoadData() {
-        try {
-            if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
-                const rawJson = AndroidBridge.getExcelData();
-                if (rawJson && rawJson.trim() !== "") {
-                    const payload = JSON.parse(rawJson);
-                    renderExcelGrid(payload);
-                    return true;
-                }
-            }
-        } catch (e) { console.log("Опрос: " + e.message); }
-        return false;
+        }
+        const jsonString = JSON.stringify(exportMatrix);
+        const encoder = new TextEncoder(); const bytes = encoder.encode(jsonString);
+        let binary = ''; for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
+        AndroidBridge.saveFileData(btoa(binary));
     }
 
     window.onload = function() {
-        createEmptyGrid();
-        initPinchZoom();
-        if (!checkAndLoadData()) {
-            let retryInterval = setInterval(function() {
-                if (checkAndLoadData()) clearInterval(retryInterval);
-            }, 300);
-            setTimeout(function() { clearInterval(retryInterval); }, 5000);
+        initEmptyGrid();
+        if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
+            requestDataFromAndroid();
         }
     };
 </script>
