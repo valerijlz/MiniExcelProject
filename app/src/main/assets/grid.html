@@ -95,25 +95,24 @@
     }
 
     function resizeCanvas() {
-        canvas.width = canvas.clientWidth;
-        canvas.height = canvas.clientHeight;
+        const dpr = window.devicePixelRatio || 1;
+        // Умножаем внутреннее разрешение Canvas на плотность пикселей экрана, чтобы убрать гигантизм и размытие
+        canvas.width = canvas.clientWidth * dpr;
+        canvas.height = canvas.clientHeight * dpr;
         
-        // Корректируем начальный зум, если размеры экрана наконец-то стали известны (> 0)
+        ctx.resetTransform();
+        ctx.scale(dpr, dpr); // Масштабируем контекст под экран устройства
+
         if (widths.length > 0 && canvas.clientWidth > 0) {
             let totalSheetW = 0; 
-            for(let i = 0; i <= lastFilledCol; i++) {
-                totalSheetW += widths[i] || 34;
-            }
+            for(let i = 0; i <= lastFilledCol; i++) totalSheetW += widths[i];
             let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
             if (totalSheetW > screenWorkW && screenWorkW > 0) {
-                // Автоматически ужимаем всю таблицу, чтобы она заняла ровно ширину экрана
                 zoom = screenWorkW / totalSheetW;
-                // Не даем зуму стать слишком мелким или слишком крупным по дефолту
+                if (zoom < 0.25) zoom = 0.25;
                 if (zoom > 1.0) zoom = 1.0;
-                if (zoom < 0.3) zoom = 0.3;
             }
         }
-        
         draw();
     }
 
@@ -137,39 +136,33 @@
             lastFilledCol = 0;
 
             const dpr = window.devicePixelRatio || 1;
-            // ТОЧНАЯ КОНВЕРТАЦИЯ ОРИГИНАЛЬНЫХ МАСШТАБОВ EXCEL (Apache POI -> Пиксели)
+            // ТОЧНАЯ КОНВЕРТАЦИЯ ОРИГИНАЛЬНЫХ МАСШТАБОВ EXCEL
             widths = [];
             for (let c = 0; c < maxCols; c++) {
                 let w = incomingWidths[c];
                 if (!w || w <= 0) {
-                    widths[c] = 64; // Стандартная ширина пустой колонки Excel по умолчанию (~8.43 символа)
+                    widths[c] = 40; // Аккуратный дефолт пустой ячейки
                 } else if (w > 150) {
-                    // Если пришли сырые единицы POI (например, 2048, 3000), 
-                    // переводим их в точные пиксели по формуле: (w / 256) * 7.2
-                    widths[c] = Math.round((w / 256) * 7.2);
+                    // Стандартный перевод POI в пиксели
+                    widths[c] = Math.round((w / 256) * 5.5); // Коэффициент 5.5 вместо 7.2 делает ячейки компактнее
                 } else {
-                    // Если в Java данные уже были как-то предобработаны, но оказались велики,
-                    // приводим их к оригинальному компактному виду
-                    widths[c] = Math.round(w * 0.5);
+                    widths[c] = Math.round(w * 0.35); // Если из Java уже прилетели пиксели — поджимаем их
                 }
                 
-                // Защита от нулевых колонок (скрытые строки/колонки не ломают сетку)
-                if (widths[c] < 20) widths[c] = 20; 
+                if (widths[c] < 12) widths[c] = 12; // Минимальный порог, чтобы сетка не исчезла
             }
 
-            // Точная конвертация высоты строк (POI возвращает высоту в твипах: 1 пункт = 20 твипов)
             heights = [];
             for (let r = 0; r < maxRows; r++) {
                 let h = payload.heights[r];
                 if (!h || h <= 0) {
-                    heights[r] = 20; // Стандартная высота строки Excel (15 пунктов = 20 пикселей)
+                    heights[r] = 16;
                 } else if (h > 100) {
-                    // Если пришли твипы из POI: перевод в пиксели (h / 20) * 1.33
-                    heights[r] = Math.round((h / 20) * 1.33);
+                    heights[r] = Math.round((h / 20) * 1.1);
                 } else {
-                    heights[r] = Math.round(h);
+                    heights[r] = Math.round(h * 0.8);
                 }
-                if (heights[r] < 15) heights[r] = 20;
+                if (heights[r] < 10) heights[r] = 12;
             }
 
             for (let r = 0; r < maxRows; r++) {
