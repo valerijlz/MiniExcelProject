@@ -3,12 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Canvas Advanced Engine</title>
+    <title>MiniExcel Canvas Ultra Engine</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #f3f3f3; }
         #canvas-container { width: 100%; height: 100%; position: relative; }
         canvas { display: block; width: 100%; height: 100%; }
-        /* Инпут теперь идеально подстраивается под зум и границы */
         #cell-editor {
             position: absolute;
             display: none;
@@ -69,6 +68,17 @@
         return name;
     }
 
+    // Возвращает структуру объединения для ячейки
+    function getMergedCellInfo(row, col) {
+        for (let i = 0; i < merges.length; i++) {
+            let m = merges[i];
+            if (row >= m.sr && row <= m.er && col >= m.sc && col <= m.ec) {
+                return m;
+            }
+        }
+        return null;
+    }
+
     function initEmptyGrid() {
         matrix = [];
         for (let r = 0; r < maxRows; r++) {
@@ -77,8 +87,8 @@
                 matrix[r][c] = { v: "" };
             }
         }
-        // ВОЗВРАЩАЕМ ОРИГИНАЛЬНЫЙ МАСШТАБ (40px)
-        widths = Array(maxCols).fill(40);
+        // ИСПРАВЛЕНИЕ №2: Компактный размер базовой ширины (32px вместо 40px)
+        widths = Array(maxCols).fill(32);
         heights = Array(maxRows).fill(18);
         lastFilledRow = maxRows - 1;
         lastFilledCol = maxCols - 1;
@@ -111,22 +121,34 @@
 
             lastFilledRow = 0;
             lastFilledCol = 0;
+
             for (let r = 0; r < maxRows; r++) {
                 if (!heights[r]) heights[r] = 18;
                 for (let c = 0; c < maxCols; c++) {
-                    // КОРРЕКЦИЯ ШИРИНЫ: Убираем избыточное сжатие, выставляем точный 1.0
-                    if (!widths[c]) widths[c] = 40;
-                    else widths[c] = Math.round(widths[c] * 1.0);
+                    if (!widths[c]) widths[c] = 32;
 
                     let val = (matrix[r][c] && matrix[r][c].v !== undefined) ? String(matrix[r][c].v).trim() : "";
                     if (val !== "") {
-                        if (r > lastFilledRow) lastFilledRow = r;
-                        if (c > lastFilledCol) lastFilledCol = c;
+                        let mInfo = getMergedCellInfo(r, c);
+                        // ИСПРАВЛЕНИЕ №3: Если ячейка объединена, граница рамки должна учитывать 
+                        // самый крайний правый (ec) и нижний (er) индексы этого объединения
+                        let checkR = mInfo ? mInfo.er : r;
+                        let checkC = mInfo ? mInfo.ec : c;
+
+                        if (checkR > lastFilledRow) lastFilledRow = checkR;
+                        if (checkC > lastFilledCol) lastFilledCol = checkC;
                     }
                 }
             }
             if (lastFilledRow === 0) lastFilledRow = maxRows - 1;
             if (lastFilledCol === 0) lastFilledCol = maxCols - 1;
+
+            // Расчет минимального дефолтного зума, чтобы весь лист сразу помещался на экране
+            let totalSheetW = 0; for(let i=0; i<=lastFilledCol; i++) totalSheetW += widths[i];
+            let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
+            if (totalSheetW > screenWorkW && screenWorkW > 0) {
+                zoom = Math.max(0.3, screenWorkW / totalSheetW);
+            }
 
             editor.style.display = 'none';
             selectedCell = null;
@@ -142,19 +164,7 @@
         for (let i = 0; i < col; i++) x += widths[i];
         let y = 0;
         for (let i = 0; i < row; i++) y += heights[i];
-        
         return { x: x, y: y, w: widths[col], h: heights[row] };
-    }
-
-    // Возвращает структуру объединенной ячейки, если переданные координаты входят в её диапазон
-    function getMergedCellInfo(row, col) {
-        for (let i = 0; i < merges.length; i++) {
-            let m = merges[i];
-            if (row >= m.sr && row <= m.er && col >= m.sc && col <= m.ec) {
-                return m;
-            }
-        }
-        return null;
     }
 
     function draw() {
@@ -222,7 +232,7 @@
             }
         }
 
-        // 2. ИСПРАВЛЕНИЕ ВЫЛЕТА РАМКИ: Точный расчет финальной пиксельной линии
+        // 2. ОТРИСОВКА НЕРАЗРЫВНОЙ СИНЕЙ РАМКИ
         let endRowRect = getCellRect(lastFilledRow, 0);
         let endColRect = getCellRect(0, lastFilledCol);
         
@@ -291,6 +301,16 @@
         ctx.restore();
     }
 
+    // Расчет максимальных лимитов скролла на базе физических размеров контента
+    function getScrollLimits() {
+        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += widths[i];
+        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += heights[i];
+        
+        let maxSX = Math.max(0, totalW - (canvas.clientWidth - ROW_NUM_WIDTH) / zoom);
+        let maxSY = Math.max(0, totalH - (canvas.clientHeight - COL_NUM_HEIGHT) / zoom);
+        return { x: maxSX, y: maxSY };
+    }
+
     canvas.addEventListener('touchstart', function(e) {
         if (e.touches.length === 1) {
             isDragging = true;
@@ -311,8 +331,9 @@
             scrollX -= dx / zoom;
             scrollY -= dy / zoom;
 
-            if (scrollX < 0) scrollX = 0;
-            if (scrollY < 0) scrollY = 0;
+            let limits = getScrollLimits();
+            scrollX = Math.max(0, Math.min(scrollX, limits.x));
+            scrollY = Math.max(0, Math.min(scrollY, limits.y));
 
             lastTouchX = e.touches[0].pageX;
             lastTouchY = e.touches[0].pageY;
@@ -323,8 +344,13 @@
             const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
             if (startTouchDist > 0) {
                 let targetZoom = startZoom * (dist / startTouchDist);
-                // ИСПРАВЛЕНИЕ ЗУМА: Расширяем диапазон масштабирования во все стороны от 0.5 до 2.0
-                zoom = Math.max(0.5, Math.min(2.0, targetZoom));
+                // ИСПРАВЛЕНИЕ №4: Расширяем свободные границы зума от ультра-компактного 0.25 до 2.5
+                zoom = Math.max(0.25, Math.min(2.5, targetZoom));
+                
+                let limits = getScrollLimits();
+                scrollX = Math.max(0, Math.min(scrollX, limits.x));
+                scrollY = Math.max(0, Math.min(scrollY, limits.y));
+
                 if(editor.style.display === 'block') positionEditor();
                 draw();
             }
@@ -363,8 +389,6 @@
         if (foundR !== -1 && foundC !== -1) {
             saveCurrentEditorValue();
             
-            // ИСПРАВЛЕНИЕ №1: Если кликнули внутрь диапазона объединения,
-            // принудительно перенаправляем фокус на стартовую (главную) ячейку
             let mergeInfo = getMergedCellInfo(foundR, foundC);
             if (mergeInfo) {
                 selectedCell = { r: mergeInfo.sr, c: mergeInfo.sc };
@@ -392,7 +416,6 @@
         let cw = rect.w;
         let ch = rect.h;
 
-        // ИСПРАВЛЕНИЕ №3: Растягиваем зеленую рамку инпута на всю ширину/высоту объединения
         let mergeInfo = getMergedCellInfo(selectedCell.r, selectedCell.c);
         if (mergeInfo && mergeInfo.sr === selectedCell.r && mergeInfo.sc === selectedCell.c) {
             let fullW = 0; let fullH = 0;
@@ -402,7 +425,6 @@
             ch = fullH;
         }
 
-        // Вычисляем точные пиксельные границы рамки выделения
         editor.style.left = (ROW_NUM_WIDTH + (rect.x - scrollX) * zoom) + 'px';
         editor.style.top = (COL_NUM_HEIGHT + (rect.y - scrollY) * zoom) + 'px';
         editor.style.width = (cw * zoom) + 'px';
