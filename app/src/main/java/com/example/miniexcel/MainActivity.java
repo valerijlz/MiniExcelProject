@@ -54,6 +54,11 @@ public class MainActivity extends AppCompatActivity {
         // 1. Сначала настраиваем параметры
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
+        // --- ДОБАВЬТЕ ЭТИ СТРОКИ ДЛЯ БЛОКИРОВКИ СИСТЕМНОГО РАЗДУВАНИЯ ---
+        webSettings.setTextZoom(100); // Жестко фиксирует масштаб текста и элементов на 100%
+        webSettings.setUseWideViewPort(true);
+        webSettings.setLoadWithOverviewMode(true);
+        // ---------------------------------------------------------------
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
