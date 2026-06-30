@@ -122,21 +122,23 @@
             lastFilledRow = 0;
             lastFilledCol = 0;
 
-            // Вычисляем системный коэффициент плотности пикселей устройства
-            const dpr = window.devicePixelRatio || 1;
-
             for (let r = 0; r < maxRows; r++) {
                 if (!heights[r]) heights[r] = 18;
                 for (let c = 0; c < maxCols; c++) {
-                    // КОРРЕКЦИЯ: Если ширина пришла из POI, сжимаем её обратно пропорционально DPR смартфона.
-                    // Если ширины нет — ставим аккуратный базовый размер в 34px.
-                    if (!widths[c]) {
-                        widths[c] = 34;
+                    // Переводим единицы Apache POI (1/256 символа) в компактные пиксели веб-интерфейса.
+                    // Стандартный коэффициент перевода: POI_Width / 32
+                    if (!widths[c] || widths[c] <= 0) {
+                        widths[c] = 36; 
+                    } else if (widths[c] > 200) { 
+                        // Если из Java пришли сырые тысячи от getColumnWidth()
+                        widths[c] = Math.round(widths[c] / 32);
                     } else {
-                        // Ограничиваем максимальное раздувание ячеек на экранах с высоким разрешением
-                        widths[c] = Math.round((widths[c] / dpr) * 1.1); 
-                        if (widths[c] < 30) widths[c] = 34; // Защита от слишком узких колонок
+                        // Если в Java уже было деление, но недостаточное — поджимаем до аккуратного формата
+                        widths[c] = Math.round(widths[c] * 0.45);
                     }
+
+                    // Гарантируем, что колонки не схлопнутся в ноль и будут читаемыми
+                    if (widths[c] < 30) widths[c] = 36;
 
                     let val = (matrix[r][c] && matrix[r][c].v !== undefined) ? String(matrix[r][c].v).trim() : "";
                     if (val !== "") {
@@ -152,13 +154,13 @@
             if (lastFilledRow === 0) lastFilledRow = maxRows - 1;
             if (lastFilledCol === 0) lastFilledCol = maxCols - 1;
 
-            // Расчет автоматического начального зума, чтобы документ красиво вписывался в экран
+            // Интеллектуальный расчет начального масштаба под ширину экрана смартфона
             let totalSheetW = 0; for(let i=0; i<=lastFilledCol; i++) totalSheetW += widths[i];
             let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
             if (totalSheetW > screenWorkW && screenWorkW > 0) {
                 zoom = Math.max(0.4, screenWorkW / totalSheetW);
             } else {
-                zoom = 1.0; // Если документ маленький, открываем в масштабе 1:1
+                zoom = 1.0; 
             }
 
             editor.style.display = 'none';
