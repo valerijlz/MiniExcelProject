@@ -137,31 +137,39 @@
             lastFilledCol = 0;
 
             const dpr = window.devicePixelRatio || 1;
+            // ТОЧНАЯ КОНВЕРТАЦИЯ ОРИГИНАЛЬНЫХ МАСШТАБОВ EXCEL (Apache POI -> Пиксели)
             widths = [];
             for (let c = 0; c < maxCols; c++) {
                 let w = incomingWidths[c];
                 if (!w || w <= 0) {
-                    widths[c] = Math.round(34 / dpr); // компенсируем раздувание экрана
+                    widths[c] = 64; // Стандартная ширина пустой колонки Excel по умолчанию (~8.43 символа)
+                } else if (w > 150) {
+                    // Если пришли сырые единицы POI (например, 2048, 3000), 
+                    // переводим их в точные пиксели по формуле: (w / 256) * 7.2
+                    widths[c] = Math.round((w / 256) * 7.2);
                 } else {
-                    // Переводим данные Java и делим на DPR, чтобы ячейки физически сжались на экране
-                    let baseW = w > 150 ? Math.round(w / 32) : Math.round(w * 0.4);
-                    widths[c] = Math.round(baseW / dpr);
+                    // Если в Java данные уже были как-то предобработаны, но оказались велики,
+                    // приводим их к оригинальному компактному виду
+                    widths[c] = Math.round(w * 0.5);
                 }
                 
-                // Пределы компактности: ячейка на экране не должна быть шире 38-40px
-                if (widths[c] < 15) widths[c] = 20;
-                if (widths[c] > 45) widths[c] = 38; 
+                // Защита от нулевых колонок (скрытые строки/колонки не ломают сетку)
+                if (widths[c] < 20) widths[c] = 20; 
             }
 
+            // Точная конвертация высоты строк (POI возвращает высоту в твипах: 1 пункт = 20 твипов)
             heights = [];
             for (let r = 0; r < maxRows; r++) {
                 let h = payload.heights[r];
-                if (!h || h <= 0 || h > 30) {
-                    heights[r] = Math.round(18 / dpr);
+                if (!h || h <= 0) {
+                    heights[r] = 20; // Стандартная высота строки Excel (15 пунктов = 20 пикселей)
+                } else if (h > 100) {
+                    // Если пришли твипы из POI: перевод в пиксели (h / 20) * 1.33
+                    heights[r] = Math.round((h / 20) * 1.33);
                 } else {
-                    heights[r] = Math.round(h / dpr);
+                    heights[r] = Math.round(h);
                 }
-                if (heights[r] < 10) heights[r] = 14;
+                if (heights[r] < 15) heights[r] = 20;
             }
 
             for (let r = 0; r < maxRows; r++) {
