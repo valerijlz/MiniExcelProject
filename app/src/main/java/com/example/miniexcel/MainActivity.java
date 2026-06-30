@@ -54,9 +54,9 @@ public class MainActivity extends AppCompatActivity {
         // 1. Сначала настраиваем параметры
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
-        // --- ОТКЛЮЧАЕМ КЭШИРОВАНИЕ ДЛЯ TABLEWEBVIEW ---
-        webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE); // Запрещаем использовать кэш файлов
-        tableWebView.clearCache(true);                        // Принудительно очищаем старый кэш
+        // Запрет кэширования внутри WebView
+        webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        tableWebView.clearCache(true);
         // -----------------------------------------------
         // --- ДОБАВЬТЕ ЭТИ СТРОКИ ДЛЯ БЛОКИРОВКИ СИСТЕМНОГО РАЗДУВАНИЯ ---
         webSettings.setTextZoom(100); // Жестко фиксирует масштаб текста и элементов на 100%
