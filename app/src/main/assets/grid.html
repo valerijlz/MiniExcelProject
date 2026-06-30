@@ -136,34 +136,37 @@
             lastFilledCol = 0;
 
             const dpr = window.devicePixelRatio || 1;
-            // УМЕНЬШАЕМ МАСШТАБ В 2 РАЗА ДЛЯ ПОЛНОГО СООТВЕТСТВИЯ ОРИГИНАЛУ
+            // ТОЧНЫЙ СБАЛАНСИРОВАННЫЙ МАСШТАБ СЕТКИ
             widths = [];
             for (let c = 0; c < maxCols; c++) {
                 let w = incomingWidths[c];
+                
                 if (!w || w <= 0) {
-                    widths[c] = 20; // Уменьшенный дефолт пустой ячейки (был 40)
+                    widths[c] = 55; // Компромиссный дефолт пустой ячейки
                 } else if (w > 150) {
-                    // Перевод POI в пиксели со сжатием в 2 раза (коэффициент 2.75 вместо 5.5)
-                    widths[c] = Math.round((w / 256) * 2.75); 
+                    // Если из Java прилетают сырые единицы POI (тысячи)
+                    widths[c] = Math.round((w / 256) * 6.5);
                 } else {
-                    // Если прилетели обычные пиксели — зажимаем их в 2 раза сильнее (0.18 вместо 0.35)
-                    widths[c] = Math.round(w * 0.18); 
+                    // ЕСЛИ ИЗ JAVA ПРИЛЕТАЮТ ЗНАЧЕНИЯ ВИДА 6.71, 60.29 или пиксели (до 150)
+                    // Колонки 6.71 станут ~50px, а широкая 60.29 станет ~450px. Текст влезет!
+                    widths[c] = w < 15 ? Math.round(w * 7.5) : Math.round(w * 7.0);
                 }
                 
-                if (widths[c] < 8) widths[c] = 8; 
+                // Страховочный минимум, чтобы одиночные ячейки не превращались в нитки
+                if (widths[c] < 45) widths[c] = 45; 
             }
 
             heights = [];
             for (let r = 0; r < maxRows; r++) {
                 let h = payload.heights[r];
                 if (!h || h <= 0) {
-                    heights[r] = 10; // Сжимаем высоту строк пропорционально ширине
+                    heights[r] = 18; // Стандартная читаемая высота для текста
                 } else if (h > 100) {
-                    heights[r] = Math.round((h / 20) * 0.55);
+                    heights[r] = Math.round((h / 20) * 1.2);
                 } else {
-                    heights[r] = Math.round(h * 0.4);
+                    heights[r] = h < 12 ? 18 : Math.round(h * 1.0);
                 }
-                if (heights[r] < 6) heights[r] = 8;
+                if (heights[r] < 16) heights[r] = 18;
             }
 
             for (let r = 0; r < maxRows; r++) {
