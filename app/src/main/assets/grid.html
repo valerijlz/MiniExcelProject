@@ -95,10 +95,25 @@
     }
 
     function resizeCanvas() {
-        // ИСПРАВЛЕНИЕ: Игнорируем DPR устройства (ставим строго 1), 
-        // чтобы мобильный экран не раздувал пиксели ячеек
         canvas.width = canvas.clientWidth;
         canvas.height = canvas.clientHeight;
+        
+        // Корректируем начальный зум, если размеры экрана наконец-то стали известны (> 0)
+        if (widths.length > 0 && canvas.clientWidth > 0) {
+            let totalSheetW = 0; 
+            for(let i = 0; i <= lastFilledCol; i++) {
+                totalSheetW += widths[i] || 34;
+            }
+            let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
+            if (totalSheetW > screenWorkW && screenWorkW > 0) {
+                // Автоматически ужимаем всю таблицу, чтобы она заняла ровно ширину экрана
+                zoom = screenWorkW / totalSheetW;
+                // Не даем зуму стать слишком мелким или слишком крупным по дефолту
+                if (zoom > 1.0) zoom = 1.0;
+                if (zoom < 0.3) zoom = 0.3;
+            }
+        }
+        
         draw();
     }
 
@@ -459,6 +474,8 @@
         initEmptyGrid();
         if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
             requestDataFromAndroid();
+            // Повторный принудительный замер через 150мс, когда WebView точно «встал» в контейнер
+            setTimeout(resizeCanvas, 150);
         }
     };
 </script>
