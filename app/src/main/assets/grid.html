@@ -122,16 +122,25 @@
             lastFilledRow = 0;
             lastFilledCol = 0;
 
+            // Вычисляем системный коэффициент плотности пикселей устройства
+            const dpr = window.devicePixelRatio || 1;
+
             for (let r = 0; r < maxRows; r++) {
                 if (!heights[r]) heights[r] = 18;
                 for (let c = 0; c < maxCols; c++) {
-                    if (!widths[c]) widths[c] = 32;
+                    // КОРРЕКЦИЯ: Если ширина пришла из POI, сжимаем её обратно пропорционально DPR смартфона.
+                    // Если ширины нет — ставим аккуратный базовый размер в 34px.
+                    if (!widths[c]) {
+                        widths[c] = 34;
+                    } else {
+                        // Ограничиваем максимальное раздувание ячеек на экранах с высоким разрешением
+                        widths[c] = Math.round((widths[c] / dpr) * 1.1); 
+                        if (widths[c] < 30) widths[c] = 34; // Защита от слишком узких колонок
+                    }
 
                     let val = (matrix[r][c] && matrix[r][c].v !== undefined) ? String(matrix[r][c].v).trim() : "";
                     if (val !== "") {
                         let mInfo = getMergedCellInfo(r, c);
-                        // ИСПРАВЛЕНИЕ №3: Если ячейка объединена, граница рамки должна учитывать 
-                        // самый крайний правый (ec) и нижний (er) индексы этого объединения
                         let checkR = mInfo ? mInfo.er : r;
                         let checkC = mInfo ? mInfo.ec : c;
 
@@ -143,11 +152,13 @@
             if (lastFilledRow === 0) lastFilledRow = maxRows - 1;
             if (lastFilledCol === 0) lastFilledCol = maxCols - 1;
 
-            // Расчет минимального дефолтного зума, чтобы весь лист сразу помещался на экране
+            // Расчет автоматического начального зума, чтобы документ красиво вписывался в экран
             let totalSheetW = 0; for(let i=0; i<=lastFilledCol; i++) totalSheetW += widths[i];
             let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
             if (totalSheetW > screenWorkW && screenWorkW > 0) {
-                zoom = Math.max(0.3, screenWorkW / totalSheetW);
+                zoom = Math.max(0.4, screenWorkW / totalSheetW);
+            } else {
+                zoom = 1.0; // Если документ маленький, открываем в масштабе 1:1
             }
 
             editor.style.display = 'none';
