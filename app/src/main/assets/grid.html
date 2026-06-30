@@ -188,12 +188,16 @@
             if (lastFilledRow === 0) lastFilledRow = maxRows - 1;
             if (lastFilledCol === 0) lastFilledCol = maxCols - 1;
 
+            // Автоматический зум: подгоняем масштаб под экран, если документ шире дисплея
             let totalSheetW = 0; for(let i=0; i<=lastFilledCol; i++) totalSheetW += widths[i];
             let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
             if (totalSheetW > screenWorkW && screenWorkW > 0) {
-                zoom = Math.max(0.4, screenWorkW / totalSheetW);
+                // Таблица плавно сожмется ровно настолько, чтобы целиком войти в экран смартфона
+                zoom = screenWorkW / totalSheetW;
+                if (zoom < 0.25) zoom = 0.25; // Минимальный порог, чтобы не превратить в точку
+                if (zoom > 1.0) zoom = 1.0;
             } else {
-                zoom = 1.0; 
+                zoom = 1.0; // Если документ небольшой, открываем в оригинальном масштабе 1:1
             }
 
             editor.style.display = 'none';
