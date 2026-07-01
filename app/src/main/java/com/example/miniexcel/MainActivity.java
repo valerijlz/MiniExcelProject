@@ -1,5 +1,3 @@
-MiniExcelProject/app/src/main/java/com/example/miniexcel/MainActivity.java
-
 package com.example.miniexcel;
 
 import android.app.Activity;
