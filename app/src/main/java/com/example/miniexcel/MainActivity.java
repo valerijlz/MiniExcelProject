@@ -1,3 +1,5 @@
+MiniExcelProject/app/src/main/java/com/example/miniexcel/MainActivity.java
+
 package com.example.miniexcel;
 
 import android.app.Activity;
@@ -173,19 +175,21 @@ public class MainActivity extends AppCompatActivity {
             if (maxColsCount > 100) maxColsCount = 100; // Ограничение по ширине
             if (maxColsCount < 1) maxColsCount = 1;
 
-            // Сборка точных ширин колонок (уменьшаем коэффициент сжатия до компактного 2.4)
+            // Сборка точных ширин колонок (Прямая конвертация без искажения пропорций)
             JSONArray jsonColWidths = new JSONArray();
             for (int c = 0; c < maxColsCount; c++) {
-                int widthInPx = 45; 
+                int widthInPx = 64; // Стандартный дефолт Excel (~8.43 символа)
                 try {
                     int poiWidth = sheet.getColumnWidth(c);
-                    if (poiWidth > 0 && poiWidth != 2048) {
+                    if (poiWidth > 0) {
+                        // Чистая формула перевода единиц Apache POI в пиксели
                         double characters = (double) poiWidth / 256.0;
-                        // Коэффициент 2.0 дает идеальное пиксельное соответствие оригиналу
-                        widthInPx = (int) (characters * 2.0);
+                        widthInPx = (int) Math.round(characters * 7.5);
                     }
                 } catch (Throwable ignored) {}
-                if (widthInPx < 20) widthInPx = 45;
+                
+                // Минимальная страховка, чтобы ячейка-невидимка не схлопнулась в 0
+                if (widthInPx < 15) widthInPx = 15;
                 jsonColWidths.put(widthInPx);
             }
 
