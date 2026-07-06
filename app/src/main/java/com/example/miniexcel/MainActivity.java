@@ -242,25 +242,34 @@ public class MainActivity extends AppCompatActivity {
                                         } catch (Throwable ignored) {}
                                     }
 
+                                    // Безопасное чтение границ
                                     try {
                                         if (style.getBorderTop() != BorderStyle.NONE) {
-                                            cellObj.put("bt", style.getBorderTop().code());
-                                            String bc = getHexColor(style.getTopBorderColorColor());
+                                            cellObj.put("bt", style.getBorderTop().name());
+                                            short borderStyleColor = style.getTopBorderColor();
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) borderStyleColor);
+                                            String bc = getHexColor(hc);
                                             cellObj.put("btc", bc != null ? bc : "#000000");
                                         }
                                         if (style.getBorderBottom() != BorderStyle.NONE) {
-                                            cellObj.put("bb", style.getBorderBottom().code());
-                                            String bc = getHexColor(style.getBottomBorderColorColor());
+                                            cellObj.put("bb", style.getBorderBottom().name());
+                                            short borderStyleColor = style.getBottomBorderColor();
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) borderStyleColor);
+                                            String bc = getHexColor(hc);
                                             cellObj.put("bbc", bc != null ? bc : "#000000");
                                         }
                                         if (style.getBorderLeft() != BorderStyle.NONE) {
-                                            cellObj.put("bl", style.getBorderLeft().code());
-                                            String bc = getHexColor(style.getLeftBorderColorColor());
+                                            cellObj.put("bl", style.getBorderLeft().name());
+                                            short borderStyleColor = style.getLeftBorderColor();
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) borderStyleColor);
+                                            String bc = getHexColor(hc);
                                             cellObj.put("blc", bc != null ? bc : "#000000");
                                         }
                                         if (style.getBorderRight() != BorderStyle.NONE) {
-                                            cellObj.put("br", style.getBorderRight().code());
-                                            String bc = getHexColor(style.getRightBorderColorColor());
+                                            cellObj.put("br", style.getBorderRight().name());
+                                            short borderStyleColor = style.getRightBorderColor();
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) borderStyleColor);
+                                            String bc = getHexColor(hc);
                                             cellObj.put("brc", bc != null ? bc : "#000000");
                                         }
                                     } catch (Throwable ignored) {}
