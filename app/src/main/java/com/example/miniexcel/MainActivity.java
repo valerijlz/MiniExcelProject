@@ -33,7 +33,7 @@ public class MainActivity extends AppCompatActivity {
     private WebView tableWebView;
     private Button openButton, saveButton;
     private Uri currentFileUri = null;
-    private volatile String cachedJsonPayload = "";
+    private volatile String cachedJsonPayload = "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
 
     private ActivityResultLauncher<Intent> openFileLauncher;
     private ActivityResultLauncher<Intent> saveFileLauncher;
@@ -321,15 +321,14 @@ public class MainActivity extends AppCompatActivity {
     public class AndroidBridge {
         @JavascriptInterface
         public String getExcelData() {
-            // Логируем запрос от WebView в поток приложения
-            if (cachedJsonPayload == null || cachedJsonPayload.trim().isEmpty()) {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "WebView запросил данные, но в кэше Java пусто!", Toast.LENGTH_SHORT).show());
-                return "";
-            }
-
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Java успешно передает JSON в WebView (" + cachedJsonPayload.length() + " символов)", Toast.LENGTH_SHORT).show());
-            return cachedJsonPayload;
+        if (cachedJsonPayload == null || cachedJsonPayload.trim().isEmpty() || cachedJsonPayload.equals("{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}")) {
+        // Возвращаем пустую структуру без вызова Toast-ошибки, это нормальный старт приложения
+        return "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
         }
+
+        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Таблица успешно загружена!", Toast.LENGTH_SHORT).show());
+        return cachedJsonPayload;
+    }
 
         @JavascriptInterface
         public void saveFileData(String base64Data) {
