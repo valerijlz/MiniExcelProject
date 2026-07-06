@@ -232,23 +232,54 @@ public class MainActivity extends AppCompatActivity {
                                     }
 
                                     int fontIdx = style.getFontIndex();
+                                    // 1. НАЧЕРТАНИЕ И ЦВЕТ ТЕКСТА
+                                    int fontIdx = style.getFontIndex();
                                     Font font = workbook.getFontAt(fontIdx);
                                     if (font != null) {
                                         if (font.getBold()) cellObj.put("bold", true);
                                         if (font.getItalic()) cellObj.put("italic", true);
                                         
-                                        if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
-                                            String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
-                                            if (fontColor != null) cellObj.put("color", fontColor);
-                                        } else if (font instanceof org.apache.poi.hssf.usermodel.HSSFFont) {
-                                            short colorIdx = font.getColor();
-                                            HSSFColor hssfColor = HSSFColor.getIndexHash().get((int) colorIdx);
-                                            String fontColor = getHexColor(hssfColor);
-                                            if (fontColor != null) cellObj.put("color", fontColor);
-                                        }
+                                        // Точечно вытягиваем цвет шрифта
+                                        try {
+                                            if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
+                                                String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
+                                                if (fontColor != null) cellObj.put("color", fontColor);
+                                            } else if (font instanceof org.apache.poi.hssf.usermodel.HSSFFont) {
+                                                short colorIdx = font.getColor();
+                                                HSSFColor hssfColor = HSSFColor.getIndexHash().get((int) colorIdx);
+                                                String fontColor = getHexColor(hssfColor);
+                                                if (fontColor != null) cellObj.put("color", fontColor);
+                                            }
+                                        } catch (Throwable ignored) {}
                                     }
-                                }
-                            } catch (Throwable ignored) {}
+
+                                    // 2. СЧИТЫВАНИЕ ГРАНИЦ И ИХ ЦВЕТОВ (НОВОЕ)
+                                    try {
+                                        // Граница СВЕРХУ
+                                        if (style.getBorderTop() != BorderStyle.NONE) {
+                                            cellObj.put("bt", style.getBorderTop().code());
+                                            String bc = getHexColor(style.getTopBorderColorColor());
+                                            cellObj.put("btc", bc != null ? bc : "#000000");
+                                        }
+                                        // Граница СНИЗУ
+                                        if (style.getBorderBottom() != BorderStyle.NONE) {
+                                            cellObj.put("bb", style.getBorderBottom().code());
+                                            String bc = getHexColor(style.getBottomBorderColorColor());
+                                            cellObj.put("bbc", bc != null ? bc : "#000000");
+                                        }
+                                        // Граница СЛЕВА
+                                        if (style.getBorderLeft() != BorderStyle.NONE) {
+                                            cellObj.put("bl", style.getBorderLeft().code());
+                                            String bc = getHexColor(style.getLeftBorderColorColor());
+                                            cellObj.put("blc", bc != null ? bc : "#000000");
+                                        }
+                                        // Граница СПРАВА
+                                        if (style.getBorderRight() != BorderStyle.NONE) {
+                                            cellObj.put("br", style.getBorderRight().code());
+                                            String bc = getHexColor(style.getRightBorderColorColor());
+                                            cellObj.put("brc", bc != null ? bc : "#000000");
+                                        }
+                                    } catch (Throwable ignored) {}
                         }
                     }
                     jsonRow.put(cellObj);
