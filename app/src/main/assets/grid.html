@@ -119,8 +119,17 @@
     function requestDataFromAndroid() {
         try {
             const rawJson = AndroidBridge.getExcelData();
-            if (!rawJson) return;
+            if (!rawJson) {
+                initEmptyGrid();
+                return;
+            }
             const payload = JSON.parse(rawJson);
+            
+            // Если матрица пустая (первый запуск), инициализируем дефолтную сетку
+            if (!payload.matrix || payload.matrix.length === 0) {
+                initEmptyGrid();
+                return;
+            }
             
             matrix = payload.matrix;
             merges = payload.merges || [];
@@ -177,7 +186,8 @@
             
             AndroidBridge.onStatus("Итоговая ширина первой колонки: " + widths[0] + "px");
         } catch(e) {
-            AndroidBridge.onStatus("Ошибка Canvas: " + e.message);
+            AndroidBridge.onStatus("Ошибка разбора JSON: " + e.message);
+            initEmptyGrid(); // В случае сбоя оставляем пустую рабочую сетку
         }
     }
 
