@@ -79,7 +79,15 @@ public class MainActivity extends AppCompatActivity {
 
         // 3. Только теперь загружаем сам интерфейс
         tableWebView.loadUrl("file:///android_asset/grid.html");
-        
+        tableWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
+    @Override
+    public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
+        android.util.Log.d("WebViewJS", consoleMessage.message() + " -- From line "
+                + consoleMessage.lineNumber() + " of "
+                + consoleMessage.sourceId());
+        return true;
+    }
+});
         initFileLaunchers();
 
         openButton.setOnClickListener(v -> {
