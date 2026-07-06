@@ -1,3 +1,5 @@
+grid.html
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -200,8 +202,209 @@
     }
 
     function draw() {
+        if (!canvas.clientWidth || !canvas.clientHeight) return;
+        
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         ctx.save();
 
-        let mergeLookup = {};
-        merges
+        // Отрезаем область под сетку данных, оставляя шапки фиксированными
+        ctx.beginPath();
+        ctx.rect(ROW_NUM_WIDTH, COL_NUM_HEIGHT, canvas.clientWidth - ROW_NUM_WIDTH, canvas.clientHeight - COL_NUM_HEIGHT);
+        ctx.clip();
+
+        ctx.translate(ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.scale(zoom, zoom);
+        ctx.translate(scrollX, scrollY);
+
+        // 1. Отрисовка ячеек
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let m = getMergedCellInfo(r, c);
+                if (m && (r !== m.sr || c !== m.sc)) continue; // Рисуем только главную ячейку из объединенных
+
+                let rect = getCellRect(r, c);
+                if (m) {
+                    rect.w = 0; for(let i=m.sc; i<=m.ec; i++) rect.w += widths[i];
+                    rect.h = 0; for(let i=m.sr; i<=m.er; i++) rect.h += heights[i];
+                }
+
+                // Фоновый цвет
+                let cellData = matrix[r][c] || {};
+                ctx.fillStyle = cellData.bg ? cellData.bg : "#ffffff";
+                ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+                // Сетка (границы)
+                ctx.strokeStyle = "#e1e1e1";
+                ctx.lineWidth = 1 / zoom;
+                ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+
+                // Текст
+                let val = cellData.v !== undefined ? String(cellData.v) : "";
+                if (val) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
+                    ctx.clip();
+
+                    let fontStyle = "";
+                    if (cellData.bold) fontStyle += "bold ";
+                    if (cellData.italic) fontStyle += "italic ";
+                    ctx.font = `${fontStyle}11px Arial`;
+                    ctx.fillStyle = cellData.color ? cellData.color : "#000000";
+                    ctx.textBaseline = "middle";
+                    
+                    ctx.fillText(val, rect.x + 4, rect.y + rect.h / 2);
+                    ctx.restore();
+                }
+            }
+        }
+
+        // Подсветка выделенной ячейки
+        if (selectedCell) {
+            let m = getMergedCellInfo(selectedCell.r, selectedCell.c);
+            let r = m ? m.sr : selectedCell.r;
+            let c = m ? m.sc : selectedCell.c;
+            let rect = getCellRect(r, c);
+            if (m) {
+                rect.w = 0; for(let i=m.sc; i<=m.ec; i++) rect.w += widths[i];
+                rect.h = 0; for(let i=m.sr; i<=m.er; i++) rect.h += heights[i];
+            }
+            ctx.strokeStyle = "#107c41";
+            ctx.lineWidth = 2 / zoom;
+            ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+        }
+
+        ctx.restore();
+
+        // 2. Статичные заголовки колонок (A, B, C...)
+        ctx.save();
+        ctx.fillStyle = "#f3f3f3";
+        ctx.fillRect(ROW_NUM_WIDTH, 0, canvas.clientWidth - ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.strokeStyle = "#bbb";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.lineTo(canvas.clientWidth, COL_NUM_HEIGHT);
+        ctx.stroke();
+
+        ctx.translate(ROW_NUM_WIDTH, 0);
+        ctx.scale(zoom, 1);
+        ctx.translate(scrollX, 0);
+
+        ctx.font = "11px Arial";
+        ctx.fillStyle = "#000000";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        let currentX = 0;
+        for (let c = 0; c < maxCols; c++) {
+            ctx.strokeRect(currentX, 0, widths[c], COL_NUM_HEIGHT);
+            ctx.fillText(getColName(c), currentX + widths[c] / 2, COL_NUM_HEIGHT / 2);
+            currentX += widths[c];
+        }
+        ctx.restore();
+
+        // 3. Статичные заголовки строк (1, 2, 3...)
+        ctx.save();
+        ctx.fillStyle = "#f3f3f3";
+        ctx.fillRect(0, COL_NUM_HEIGHT, ROW_NUM_WIDTH, canvas.clientHeight - COL_NUM_HEIGHT);
+        ctx.strokeStyle = "#bbb";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.lineTo(ROW_NUM_WIDTH, canvas.clientHeight);
+        ctx.stroke();
+
+        ctx.translate(0, COL_NUM_HEIGHT);
+        ctx.scale(1, zoom);
+        ctx.translate(0, scrollY);
+
+        ctx.font = "11px Arial";
+        ctx.fillStyle = "#000000";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        let currentY = 0;
+        for (let r = 0; r < maxRows; r++) {
+            ctx.strokeRect(0, currentY, ROW_NUM_WIDTH, heights[r]);
+            ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, currentY + heights[r] / 2);
+            currentY += heights[r];
+        }
+        ctx.restore();
+
+        // Угловой квадрат (пересечение шапок)
+        ctx.fillStyle = "#e1e1e1";
+        ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.strokeStyle = "#bbb";
+        ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+    }
+
+    // --- ОБРАБОТКА ТАЧ-СОБЫТИЙ (СКРОЛЛ И КЛИКИ) ---
+    canvas.addEventListener('touchstart', e => {
+        isDragging = true;
+        if (e.touches.length === 1) {
+            lastTouchX = e.touches[0].clientX;
+            lastTouchY = e.touches[0].clientY;
+        }
+    });
+
+    canvas.addEventListener('touchmove', e => {
+        if (!isDragging) return;
+        if (e.touches.length === 1) {
+            let dx = e.touches[0].clientX - lastTouchX;
+            let dy = e.touches[0].clientY - lastTouchY;
+            scrollX += dx / zoom;
+            scrollY += dy / zoom;
+            lastTouchX = e.touches[0].clientX;
+            lastTouchY = e.touches[0].clientY;
+            
+            // Ограничение скролла, чтобы таблица не улетала далеко
+            if (scrollX > 0) scrollX = 0;
+            if (scrollY > 0) scrollY = 0;
+            
+            editor.style.display = 'none';
+            draw();
+        }
+    });
+
+    canvas.addEventListener('touchend', e => {
+        isDragging = false;
+        // Простой тап для выделения ячейки
+        if (e.touches.length === 0 && e.changedTouches.length === 1) {
+            let clickX = e.changedTouches[0].clientX;
+            let clickY = e.changedTouches[0].clientY;
+
+            if (clickX > ROW_NUM_WIDTH && clickY > COL_NUM_HEIGHT) {
+                // Переводим экранные координаты в координаты внутри зума и скролла
+                let cellX = (clickX - ROW_NUM_WIDTH) / zoom - scrollX;
+                let cellY = (clickY - COL_NUM_HEIGHT) / zoom - scrollY;
+
+                let currentX = 0, targetCol = -1;
+                for (let c = 0; c < maxCols; c++) {
+                    if (cellX >= currentX && cellX <= currentX + widths[c]) { targetCol = c; break; }
+                    currentX += widths[c];
+                }
+
+                let currentY = 0, targetRow = -1;
+                for (let r = 0; r < maxRows; r++) {
+                    if (cellY >= currentY && cellY <= currentY + heights[r]) { targetRow = r; break; }
+                    currentY += heights[r];
+                }
+
+                if (targetRow !== -1 && targetCol !== -1) {
+                    selectedCell = { r: targetRow, c: targetCol };
+                    draw();
+                }
+            }
+        }
+    });
+
+    window.onload = function() {
+        initEmptyGrid();
+        if (window.AndroidBridge && typeof AndroidBridge.getExcelData === "function") {
+            requestDataFromAndroid();
+        }
+    };
+</script>
+</body>
+</html>
