@@ -154,12 +154,10 @@ public class MainActivity extends AppCompatActivity {
 
             Sheet sheet = workbook.getSheetAt(0);
             
-            // Защита 1: Жестко ограничиваем сканирование строк реальными границами контента
             int lastRowIdx = sheet.getLastRowNum();
-            if (lastRowIdx > 1000) lastRowIdx = 1000; // Страховка от пустых отформатированных строк Excel
+            if (lastRowIdx > 1000) lastRowIdx = 1000;
             if (lastRowIdx < 0) lastRowIdx = 0;
 
-            // Определяем реальное максимальное количество заполненных колонок
             int maxColsCount = 0;
             for (int r = 0; r <= lastRowIdx; r++) {
                 Row row = sheet.getRow(r);
@@ -170,23 +168,19 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
             }
-            if (maxColsCount > 100) maxColsCount = 100; // Ограничение по ширине
+            if (maxColsCount > 100) maxColsCount = 100;
             if (maxColsCount < 1) maxColsCount = 1;
 
-            // Сборка точных ширин колонок (Прямая конвертация без искажения пропорций)
             JSONArray jsonColWidths = new JSONArray();
             for (int c = 0; c < maxColsCount; c++) {
-                int widthInPx = 64; // Стандартный дефолт Excel (~8.43 символа)
+                int widthInPx = 64;
                 try {
                     int poiWidth = sheet.getColumnWidth(c);
                     if (poiWidth > 0) {
-                        // Чистая формула перевода единиц Apache POI в пиксели
                         double characters = (double) poiWidth / 256.0;
                         widthInPx = (int) Math.round(characters * 7.5);
                     }
                 } catch (Throwable ignored) {}
-                
-                // Минимальная страховка, чтобы ячейка-невидимка не схлопнулась в 0
                 if (widthInPx < 15) widthInPx = 15;
                 jsonColWidths.put(widthInPx);
             }
@@ -195,7 +189,6 @@ public class MainActivity extends AppCompatActivity {
             JSONArray jsonTable = new JSONArray();
             JSONArray jsonRowHeights = new JSONArray();
 
-            // Основной цикл безопасного парсинга матрицы ячеек
             for (int r = 0; r <= lastRowIdx; r++) {
                 Row row = sheet.getRow(r);
                 
@@ -219,7 +212,6 @@ public class MainActivity extends AppCompatActivity {
                                 cellObj.put("v", "");
                             }
 
-                            // Безопасный разбор стилей ячейки
                             try {
                                 CellStyle style = cell.getCellStyle();
                                 if (style != null) {
@@ -232,14 +224,11 @@ public class MainActivity extends AppCompatActivity {
                                     }
 
                                     int fontIdx = style.getFontIndex();
-                                    // 1. НАЧЕРТАНИЕ И ЦВЕТ ТЕКСТА
-                                    int fontIdx = style.getFontIndex();
                                     Font font = workbook.getFontAt(fontIdx);
                                     if (font != null) {
                                         if (font.getBold()) cellObj.put("bold", true);
                                         if (font.getItalic()) cellObj.put("italic", true);
                                         
-                                        // Точечно вытягиваем цвет шрифта
                                         try {
                                             if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
                                                 String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
@@ -253,33 +242,30 @@ public class MainActivity extends AppCompatActivity {
                                         } catch (Throwable ignored) {}
                                     }
 
-                                    // 2. СЧИТЫВАНИЕ ГРАНИЦ И ИХ ЦВЕТОВ (НОВОЕ)
                                     try {
-                                        // Граница СВЕРХУ
                                         if (style.getBorderTop() != BorderStyle.NONE) {
                                             cellObj.put("bt", style.getBorderTop().code());
                                             String bc = getHexColor(style.getTopBorderColorColor());
                                             cellObj.put("btc", bc != null ? bc : "#000000");
                                         }
-                                        // Граница СНИЗУ
                                         if (style.getBorderBottom() != BorderStyle.NONE) {
                                             cellObj.put("bb", style.getBorderBottom().code());
                                             String bc = getHexColor(style.getBottomBorderColorColor());
                                             cellObj.put("bbc", bc != null ? bc : "#000000");
                                         }
-                                        // Граница СЛЕВА
                                         if (style.getBorderLeft() != BorderStyle.NONE) {
                                             cellObj.put("bl", style.getBorderLeft().code());
                                             String bc = getHexColor(style.getLeftBorderColorColor());
                                             cellObj.put("blc", bc != null ? bc : "#000000");
                                         }
-                                        // Граница СПРАВА
                                         if (style.getBorderRight() != BorderStyle.NONE) {
                                             cellObj.put("br", style.getBorderRight().code());
                                             String bc = getHexColor(style.getRightBorderColorColor());
                                             cellObj.put("brc", bc != null ? bc : "#000000");
                                         }
                                     } catch (Throwable ignored) {}
+                                }
+                            } catch (Throwable ignored) {}
                         }
                     }
                     jsonRow.put(cellObj);
@@ -287,7 +273,6 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(jsonRow);
             }
 
-            // Безопасный сбор объединенных ячеек (Merges)
             JSONArray jsonMerges = new JSONArray();
             try {
                 int numRegions = sheet.getNumMergedRegions();
@@ -306,7 +291,6 @@ public class MainActivity extends AppCompatActivity {
 
             workbook.close();
 
-            // Формируем чистый результирующий JSON
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
             payload.put("merges", jsonMerges);
@@ -315,7 +299,6 @@ public class MainActivity extends AppCompatActivity {
 
             cachedJsonPayload = payload.toString();
 
-            // Форсируем мгновенное обновление сетки в WebView
             tableWebView.post(() -> {
                 tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
             });
