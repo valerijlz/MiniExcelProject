@@ -248,7 +248,8 @@
                     ctx.rect(cx + 2, cy, cw - 4, ch);
                     ctx.clip();
 
-                    ctx.fillStyle = (cellData && cellData.color) ? cellData.color : "#000000";
+                    // Цвет текста: если передан из Java — берем его, иначе стандартный черный
+                    ctx.fillStyle = cell.color ? cell.color : "#000000";
                     let fontStyle = "";
                     if (cellData && cellData.bold) fontStyle += "bold ";
                     if (cellData && cellData.italic) fontStyle += "italic ";
@@ -256,6 +257,25 @@
 
                     ctx.fillText(text, cx + 5, cy + ch / 2);
                     ctx.restore();
+                }
+                // Отрисовка индивидуальных цветных границ Excel
+                ctx.lineWidth = 1;
+
+                if (cell.bt) { // Верхняя граница
+                    ctx.strokeStyle = cell.btc || "#000000";
+                    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.stroke();
+                }
+                if (cell.bb) { // Нижняя граница
+                    ctx.strokeStyle = cell.bbc || "#000000";
+                    ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.stroke();
+                }
+                if (cell.bl) { // Левая граница
+                    ctx.strokeStyle = cell.blc || "#000000";
+                    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + h); ctx.stroke();
+                }
+                if (cell.br) { // Правая граница
+                    ctx.strokeStyle = cell.brc || "#000000";
+                    ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.stroke();
                 }
             }
         }
