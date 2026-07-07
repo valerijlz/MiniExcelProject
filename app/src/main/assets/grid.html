@@ -29,8 +29,7 @@
     <input type="text" id="cell-editor" />
 </div>
 
-<script>
-    const canvas = document.getElementById('excelCanvas');
+<script>const canvas = document.getElementById('excelCanvas');
     const ctx = canvas.getContext('2d');
     const editor = document.getElementById('cell-editor');
 
@@ -52,12 +51,12 @@
     let lastFilledRow = 0;
     let lastFilledCol = 0;
 
-    let selectedCell = null;
     let isDragging = false;
     let lastTouchX = 0;
     let lastTouchY = 0;
     let startTouchDist = 0;
     let startZoom = 1.0;
+    let selectedCell = null;
 
     function getColName(colIndex) {
         let name = "";
@@ -86,8 +85,8 @@
                 matrix[r][c] = { v: "" };
             }
         }
-        widths = Array(maxCols).fill(34);
-        heights = Array(maxRows).fill(18);
+        widths = Array(maxCols).fill(64);
+        heights = Array(maxRows).fill(20);
         lastFilledRow = maxRows - 1;
         lastFilledCol = maxCols - 1;
         resizeCanvas();
@@ -125,7 +124,7 @@
             matrix = payload.matrix;
             merges = payload.merges || [];
             let incomingWidths = payload.widths || [];
-            heights = payload.heights || [];
+            let incomingHeights = payload.heights || [];
             
             maxRows = matrix.length;
             maxCols = matrix[0].length;
@@ -141,7 +140,7 @@
 
             heights = [];
             for (let r = 0; r < maxRows; r++) {
-                let h = payload.heights[r];
+                let h = incomingHeights[r];
                 heights[r] = (h && h > 0) ? Math.round(h) : 20;
             }
 
@@ -175,7 +174,7 @@
             selectedCell = null;
             draw();
             
-            AndroidBridge.onStatus("Итоговая ширина первой колонки: " + widths[0] + "px");
+            AndroidBridge.onStatus("Данные успешно загружены. Строк: " + maxRows + ", Колонок: " + maxCols);
         } catch(e) {
             AndroidBridge.onStatus("Ошибка Canvas: " + e.message);
         }
@@ -183,13 +182,15 @@
 
     function getCellRect(row, col) {
         let x = 0;
-        for (let i = 0; i < col; i++) x += widths[i];
+        for (let i = 0; i < col; i++) x += (widths[i] || 64);
         let y = 0;
-        for (let i = 0; i < row; i++) y += heights[i];
-        return { x: x, y: y, w: widths[col], h: heights[row] };
+        for (let i = 0; i < row; i++) y += (heights[i] || 20);
+        return { x: x, y: y, w: (widths[col] || 64), h: (heights[row] || 20) };
     }
 
     function draw() {
+        if (!matrix || matrix.length === 0) return;
+        
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         ctx.save();
 
@@ -211,7 +212,6 @@
                 if (lookup && lookup.isChild) continue; 
 
                 let rect = getCellRect(r, c);
-                
                 let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
                 let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
                 let cw = rect.w * zoom;
@@ -227,13 +227,13 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
-                let cellData = matrix[r][c] || {};
+                let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 ctx.fillStyle = cellData.bg ? cellData.bg : "#ffffff";
                 ctx.fillRect(cx, cy, cw, ch);
             }
         }
 
-        // ПРОХОД 2: Границы сетки и индивидуальные линии (с защитой от затирания)
+        // ПРОХОД 2: Все сетки и индивидуальные границы
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -255,33 +255,29 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
-                let cellData = matrix[r][c] || {};
+                let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 let hasCustomBorders = cellData.bt || cellData.bb || cellData.bl || cellData.br;
 
                 // 1. ВЕРХНЯЯ ЛИНИЯ
                 ctx.beginPath();
                 if (cellData.bt) {
-                    ctx.strokeStyle = cellData.btc || "#000000";
-                    ctx.lineWidth = 1.5;
+                    ctx.strokeStyle = cellData.btc || "#000000"; ctx.lineWidth = 1.5;
                 } else {
-                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4";
-                    ctx.lineWidth = 0.5;
+                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4"; ctx.lineWidth = 0.5;
                 }
                 ctx.moveTo(cx, cy); ctx.lineTo(cx + cw, cy); ctx.stroke();
 
                 // 2. ЛЕВАЯ ЛИНИЯ
                 ctx.beginPath();
                 if (cellData.bl) {
-                    ctx.strokeStyle = cellData.blc || "#000000";
-                    ctx.lineWidth = 1.5;
+                    ctx.strokeStyle = cellData.blc || "#000000"; ctx.lineWidth = 1.5;
                 } else {
-                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4";
-                    ctx.lineWidth = 0.5;
+                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4"; ctx.lineWidth = 0.5;
                 }
                 ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + ch); ctx.stroke();
 
-                // 3. НИЖНЯЯ ЛИНИЯ (Принудительно для края или если кастомная)
-                let isLastRow = lookup ? (lookup.m ? lookup.m.er === maxRows - 1 : r === maxRows - 1) : (r === maxRows - 1);
+                // 3. НИЖНЯЯ ЛИНИЯ
+                let isLastRow = lookup && lookup.m ? (lookup.m.er === maxRows - 1) : (r === maxRows - 1);
                 if (cellData.bb || isLastRow) {
                     ctx.beginPath();
                     ctx.strokeStyle = cellData.bbc || "#000000";
@@ -290,7 +286,7 @@
                 } else {
                     let nextRow = lookup && lookup.m ? lookup.m.er + 1 : r + 1;
                     if (nextRow < maxRows) {
-                        let nextCell = matrix[nextRow][c] || {};
+                        let nextCell = matrix[nextRow] ? (matrix[nextRow][c] || {}) : {};
                         if (!nextCell.bt && !hasCustomBorders && !(nextCell.bt || nextCell.bb || nextCell.bl || nextCell.br)) {
                             ctx.beginPath(); ctx.strokeStyle = "#d4d4d4"; ctx.lineWidth = 0.5;
                             ctx.moveTo(cx, cy + ch); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
@@ -298,8 +294,8 @@
                     }
                 }
 
-                // 4. ПРАВАЯ ЛИНИЯ (Исправляет баг невидимости вертикальных границ)
-                let isLastCol = lookup ? (lookup.m ? lookup.m.ec === maxCols - 1 : c === maxCols - 1) : (c === maxCols - 1);
+                // 4. ПРАВАЯ ЛИНИЯ (Решает проблему невидимости во всех типах ячеек)
+                let isLastCol = lookup && lookup.m ? (lookup.m.ec === maxCols - 1) : (c === maxCols - 1);
                 if (cellData.br || isLastCol) {
                     ctx.beginPath();
                     ctx.strokeStyle = cellData.brc || "#000000";
@@ -308,7 +304,7 @@
                 } else {
                     let nextCol = lookup && lookup.m ? lookup.m.ec + 1 : c + 1;
                     if (nextCol < maxCols) {
-                        let nextCell = matrix[r][nextCol] || {};
+                        let nextCell = matrix[r] ? (matrix[r][nextCol] || {}) : {};
                         if (!nextCell.bl && !hasCustomBorders && !(nextCell.bt || nextCell.bb || nextCell.bl || nextCell.br)) {
                             ctx.beginPath(); ctx.strokeStyle = "#d4d4d4"; ctx.lineWidth = 0.5;
                             ctx.moveTo(cx + cw, cy); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
@@ -318,7 +314,7 @@
             }
         }
 
-        // ПРОХОД 3: Отрисовка контента (текста) ячеек поверх сетки
+        // ПРОХОД 3: Отрисовка контента ячеек
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -340,7 +336,7 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
-                let cellData = matrix[r][c];
+                let cellData = matrix[r] ? matrix[r][c] : null;
                 let text = (cellData && cellData.v !== undefined) ? String(cellData.v) : "";
                 if (text !== "") {
                     ctx.save();
@@ -360,9 +356,9 @@
             }
         }
 
-        // Синяя рамка границ заполненности листа
-        let endRowRect = getCellRect(lastFilledRow, 0);
-        let endColRect = getCellRect(0, lastFilledCol);
+        // Синяя рамка границ листа (теперь жестко по границам maxRows и maxCols матрицы)
+        let endRowRect = getCellRect(maxRows - 1, 0);
+        let endColRect = getCellRect(0, maxCols - 1);
         let boundaryX = ROW_NUM_WIDTH + (endColRect.x + endColRect.w - scrollX) * zoom;
         let boundaryY = COL_NUM_HEIGHT + (endRowRect.y + endRowRect.h - scrollY) * zoom;
 
@@ -408,8 +404,8 @@
     }
 
     function getScrollLimits() {
-        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += widths[i];
-        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += heights[i];
+        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || 64);
+        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += (heights[i] || 20);
         let maxSX = Math.max(0, totalW - (canvas.clientWidth - ROW_NUM_WIDTH) / zoom);
         let maxSY = Math.max(0, totalH - (canvas.clientHeight - COL_NUM_HEIGHT) / zoom);
         return { x: maxSX, y: maxSY };
@@ -505,7 +501,7 @@
 
     function showEditor() {
         if (!selectedCell) return;
-        let cellData = matrix[selectedCell.r][selectedCell.c];
+        let cellData = matrix[selectedCell.r] ? matrix[selectedCell.r][selectedCell.c] : null;
         editor.value = (cellData && cellData.v !== undefined) ? cellData.v : "";
         editor.style.display = 'block';
         positionEditor();
