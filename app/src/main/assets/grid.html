@@ -29,7 +29,8 @@
     <input type="text" id="cell-editor" />
 </div>
 
-<script>const canvas = document.getElementById('excelCanvas');
+<script>
+    const canvas = document.getElementById('excelCanvas');
     const ctx = canvas.getContext('2d');
     const editor = document.getElementById('cell-editor');
 
@@ -89,7 +90,9 @@
         heights = Array(maxRows).fill(20);
         lastFilledRow = maxRows - 1;
         lastFilledCol = maxCols - 1;
-        resizeCanvas();
+        // Защита от ошибки: при первом запуске жестко ставим зум 1.0
+        zoom = 1.0;
+        draw();
     }
 
     function resizeCanvas() {
@@ -100,9 +103,9 @@
         ctx.resetTransform();
         ctx.scale(dpr, dpr);
 
-        if (widths.length > 0 && canvas.clientWidth > 0) {
+        if (widths.length > 0 && canvas.clientWidth > 0 && matrix.length > 0 && matrix[0].length > 0) {
             let totalSheetW = 0; 
-            for(let i = 0; i <= lastFilledCol; i++) totalSheetW += widths[i];
+            for(let i = 0; i < maxCols; i++) totalSheetW += (widths[i] || 64);
             let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
             if (totalSheetW > screenWorkW && screenWorkW > 0) {
                 zoom = screenWorkW / totalSheetW;
@@ -160,7 +163,7 @@
             if (lastFilledRow === 0) lastFilledRow = maxRows - 1;
             if (lastFilledCol === 0) lastFilledCol = maxCols - 1;
 
-            let totalSheetW = 0; for(let i=0; i<=lastFilledCol; i++) totalSheetW += widths[i];
+            let totalSheetW = 0; for(let i=0; i<maxCols; i++) totalSheetW += widths[i];
             let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
             if (totalSheetW > screenWorkW && screenWorkW > 0) {
                 zoom = screenWorkW / totalSheetW;
@@ -170,6 +173,8 @@
                 zoom = 1.0;
             }
 
+            scrollX = 0;
+            scrollY = 0;
             editor.style.display = 'none';
             selectedCell = null;
             draw();
@@ -189,7 +194,7 @@
     }
 
     function draw() {
-        if (!matrix || matrix.length === 0) return;
+        if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) return;
         
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         ctx.save();
@@ -219,8 +224,8 @@
 
                 if (lookup && lookup.isMain) {
                     let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += widths[i];
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += heights[i];
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
                     cw = fullW * zoom;
                     ch = fullH * zoom;
                 }
@@ -247,8 +252,8 @@
 
                 if (lookup && lookup.isMain) {
                     let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += widths[i];
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += heights[i];
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
                     cw = fullW * zoom;
                     ch = fullH * zoom;
                 }
@@ -258,6 +263,12 @@
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 let hasCustomBorders = cellData.bt || cellData.bb || cellData.bl || cellData.br;
 
+                // Округляем пиксели для предотвращения эффекта размытия/стирания тонких линий
+                let drawX = Math.floor(cx);
+                let drawY = Math.floor(cy);
+                let drawW = Math.ceil(cw);
+                let drawH = Math.ceil(ch);
+
                 // 1. ВЕРХНЯЯ ЛИНИЯ
                 ctx.beginPath();
                 if (cellData.bt) {
@@ -265,7 +276,7 @@
                 } else {
                     ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4"; ctx.lineWidth = 0.5;
                 }
-                ctx.moveTo(cx, cy); ctx.lineTo(cx + cw, cy); ctx.stroke();
+                ctx.moveTo(drawX, drawY); ctx.lineTo(drawX + drawW, drawY); ctx.stroke();
 
                 // 2. ЛЕВАЯ ЛИНИЯ
                 ctx.beginPath();
@@ -274,7 +285,7 @@
                 } else {
                     ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4"; ctx.lineWidth = 0.5;
                 }
-                ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + ch); ctx.stroke();
+                ctx.moveTo(drawX, drawY); ctx.lineTo(drawX, drawY + drawH); ctx.stroke();
 
                 // 3. НИЖНЯЯ ЛИНИЯ
                 let isLastRow = lookup && lookup.m ? (lookup.m.er === maxRows - 1) : (r === maxRows - 1);
@@ -282,39 +293,39 @@
                     ctx.beginPath();
                     ctx.strokeStyle = cellData.bbc || "#000000";
                     ctx.lineWidth = cellData.bb ? 1.5 : 0.5;
-                    ctx.moveTo(cx, cy + ch); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                    ctx.moveTo(drawX, drawY + drawH); ctx.lineTo(drawX + drawW, drawY + drawH); ctx.stroke();
                 } else {
                     let nextRow = lookup && lookup.m ? lookup.m.er + 1 : r + 1;
                     if (nextRow < maxRows) {
                         let nextCell = matrix[nextRow] ? (matrix[nextRow][c] || {}) : {};
                         if (!nextCell.bt && !hasCustomBorders && !(nextCell.bt || nextCell.bb || nextCell.bl || nextCell.br)) {
                             ctx.beginPath(); ctx.strokeStyle = "#d4d4d4"; ctx.lineWidth = 0.5;
-                            ctx.moveTo(cx, cy + ch); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                            ctx.moveTo(drawX, drawY + drawH); ctx.lineTo(drawX + drawW, drawY + drawH); ctx.stroke();
                         }
                     }
                 }
 
-                // 4. ПРАВАЯ ЛИНИЯ (Решает проблему невидимости во всех типах ячеек)
+                // 4. ПРАВАЯ ЛИНИЯ (Жесткая отрисовка без затирания)
                 let isLastCol = lookup && lookup.m ? (lookup.m.ec === maxCols - 1) : (c === maxCols - 1);
                 if (cellData.br || isLastCol) {
                     ctx.beginPath();
                     ctx.strokeStyle = cellData.brc || "#000000";
                     ctx.lineWidth = cellData.br ? 1.5 : 0.5;
-                    ctx.moveTo(cx + cw, cy); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                    ctx.moveTo(drawX + drawW, drawY); ctx.lineTo(drawX + drawW, drawY + drawH); ctx.stroke();
                 } else {
                     let nextCol = lookup && lookup.m ? lookup.m.ec + 1 : c + 1;
                     if (nextCol < maxCols) {
                         let nextCell = matrix[r] ? (matrix[r][nextCol] || {}) : {};
                         if (!nextCell.bl && !hasCustomBorders && !(nextCell.bt || nextCell.bb || nextCell.bl || nextCell.br)) {
                             ctx.beginPath(); ctx.strokeStyle = "#d4d4d4"; ctx.lineWidth = 0.5;
-                            ctx.moveTo(cx + cw, cy); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                            ctx.moveTo(drawX + drawW, drawY); ctx.lineTo(drawX + drawW, drawY + drawH); ctx.stroke();
                         }
                     }
                 }
             }
         }
 
-        // ПРОХОД 3: Отрисовка контента ячеек
+        // ПРОХОД 3: Отрисовка текста
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -328,8 +339,8 @@
 
                 if (lookup && lookup.isMain) {
                     let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += widths[i];
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += heights[i];
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
                     cw = fullW * zoom;
                     ch = fullH * zoom;
                 }
@@ -356,7 +367,7 @@
             }
         }
 
-        // Синяя рамка границ листа (теперь жестко по границам maxRows и maxCols матрицы)
+        // Синяя рамка физических границ листа
         let endRowRect = getCellRect(maxRows - 1, 0);
         let endColRect = getCellRect(0, maxCols - 1);
         let boundaryX = ROW_NUM_WIDTH + (endColRect.x + endColRect.w - scrollX) * zoom;
@@ -364,9 +375,11 @@
 
         ctx.strokeStyle = "#0f62fe";
         ctx.lineWidth = 2.0;
-        if (boundaryX >= ROW_NUM_WIDTH && boundaryY >= COL_NUM_HEIGHT) {
-            ctx.beginPath(); ctx.moveTo(boundaryX, COL_NUM_HEIGHT); ctx.lineTo(boundaryX, boundaryY); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(ROW_NUM_WIDTH, boundaryY); ctx.lineTo(boundaryX, boundaryY); ctx.stroke();
+        if (boundaryX >= ROW_NUM_WIDTH) {
+            ctx.beginPath(); ctx.moveTo(boundaryX, COL_NUM_HEIGHT); ctx.lineTo(boundaryX, Math.max(boundaryY, COL_NUM_HEIGHT)); ctx.stroke();
+        }
+        if (boundaryY >= COL_NUM_HEIGHT) {
+            ctx.beginPath(); ctx.moveTo(ROW_NUM_WIDTH, boundaryY); ctx.lineTo(Math.max(boundaryX, ROW_NUM_WIDTH), boundaryY); ctx.stroke();
         }
 
         // Заголовки колонок (A, B, C...)
