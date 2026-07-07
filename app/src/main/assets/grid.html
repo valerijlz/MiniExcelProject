@@ -90,12 +90,17 @@
         heights = Array(maxRows).fill(20);
         lastFilledRow = maxRows - 1;
         lastFilledCol = maxCols - 1;
-        // Защита от ошибки: при первом запуске жестко ставим зум 1.0
         zoom = 1.0;
-        draw();
+        
+        // Рисуем только если canvas уже имеет физический размер в DOM
+        if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+            draw();
+        }
     }
 
     function resizeCanvas() {
+        if (canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
+
         const dpr = window.devicePixelRatio || 1;
         canvas.width = canvas.clientWidth * dpr;
         canvas.height = canvas.clientHeight * dpr;
@@ -103,7 +108,7 @@
         ctx.resetTransform();
         ctx.scale(dpr, dpr);
 
-        if (widths.length > 0 && canvas.clientWidth > 0 && matrix.length > 0 && matrix[0].length > 0) {
+        if (widths.length > 0) {
             let totalSheetW = 0; 
             for(let i = 0; i < maxCols; i++) totalSheetW += (widths[i] || 64);
             let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
@@ -177,7 +182,10 @@
             scrollY = 0;
             editor.style.display = 'none';
             selectedCell = null;
-            draw();
+            
+            if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+                resizeCanvas();
+            }
             
             AndroidBridge.onStatus("Данные успешно загружены. Строк: " + maxRows + ", Колонок: " + maxCols);
         } catch(e) {
@@ -194,7 +202,9 @@
     }
 
     function draw() {
+        // Защита от критического падения: если матрица пуста или вью-контейнер не готов
         if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) return;
+        if (!canvas.clientWidth || !canvas.clientHeight) return;
         
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         ctx.save();
@@ -263,11 +273,11 @@
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 let hasCustomBorders = cellData.bt || cellData.bb || cellData.bl || cellData.br;
 
-                // Округляем пиксели для предотвращения эффекта размытия/стирания тонких линий
-                let drawX = Math.floor(cx);
-                let drawY = Math.floor(cy);
-                let drawW = Math.ceil(cw);
-                let drawH = Math.ceil(ch);
+                // Используем смещение +0.5 для идеально четких линий без эффекта «жирности»
+                let startX = Math.round(cx) + 0.5;
+                let startY = Math.round(cy) + 0.5;
+                let endX = Math.round(cx + cw) + 0.5;
+                let endY = Math.round(cy + ch) + 0.5;
 
                 // 1. ВЕРХНЯЯ ЛИНИЯ
                 ctx.beginPath();
@@ -276,7 +286,7 @@
                 } else {
                     ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4"; ctx.lineWidth = 0.5;
                 }
-                ctx.moveTo(drawX, drawY); ctx.lineTo(drawX + drawW, drawY); ctx.stroke();
+                ctx.moveTo(startX, startY); ctx.lineTo(endX, startY); ctx.stroke();
 
                 // 2. ЛЕВАЯ ЛИНИЯ
                 ctx.beginPath();
@@ -285,7 +295,7 @@
                 } else {
                     ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4"; ctx.lineWidth = 0.5;
                 }
-                ctx.moveTo(drawX, drawY); ctx.lineTo(drawX, drawY + drawH); ctx.stroke();
+                ctx.moveTo(startX, startY); ctx.lineTo(startX, endY); ctx.stroke();
 
                 // 3. НИЖНЯЯ ЛИНИЯ
                 let isLastRow = lookup && lookup.m ? (lookup.m.er === maxRows - 1) : (r === maxRows - 1);
@@ -293,32 +303,32 @@
                     ctx.beginPath();
                     ctx.strokeStyle = cellData.bbc || "#000000";
                     ctx.lineWidth = cellData.bb ? 1.5 : 0.5;
-                    ctx.moveTo(drawX, drawY + drawH); ctx.lineTo(drawX + drawW, drawY + drawH); ctx.stroke();
+                    ctx.moveTo(startX, endY); ctx.lineTo(endX, endY); ctx.stroke();
                 } else {
                     let nextRow = lookup && lookup.m ? lookup.m.er + 1 : r + 1;
                     if (nextRow < maxRows) {
                         let nextCell = matrix[nextRow] ? (matrix[nextRow][c] || {}) : {};
                         if (!nextCell.bt && !hasCustomBorders && !(nextCell.bt || nextCell.bb || nextCell.bl || nextCell.br)) {
                             ctx.beginPath(); ctx.strokeStyle = "#d4d4d4"; ctx.lineWidth = 0.5;
-                            ctx.moveTo(drawX, drawY + drawH); ctx.lineTo(drawX + drawW, drawY + drawH); ctx.stroke();
+                            ctx.moveTo(startX, endY); ctx.lineTo(endX, endY); ctx.stroke();
                         }
                     }
                 }
 
-                // 4. ПРАВАЯ ЛИНИЯ (Жесткая отрисовка без затирания)
+                // 4. ПРАВАЯ ЛИНИЯ
                 let isLastCol = lookup && lookup.m ? (lookup.m.ec === maxCols - 1) : (c === maxCols - 1);
                 if (cellData.br || isLastCol) {
                     ctx.beginPath();
                     ctx.strokeStyle = cellData.brc || "#000000";
                     ctx.lineWidth = cellData.br ? 1.5 : 0.5;
-                    ctx.moveTo(drawX + drawW, drawY); ctx.lineTo(drawX + drawW, drawY + drawH); ctx.stroke();
+                    ctx.moveTo(endX, startY); ctx.lineTo(endX, endY); ctx.stroke();
                 } else {
                     let nextCol = lookup && lookup.m ? lookup.m.ec + 1 : c + 1;
                     if (nextCol < maxCols) {
                         let nextCell = matrix[r] ? (matrix[r][nextCol] || {}) : {};
                         if (!nextCell.bl && !hasCustomBorders && !(nextCell.bt || nextCell.bb || nextCell.bl || nextCell.br)) {
                             ctx.beginPath(); ctx.strokeStyle = "#d4d4d4"; ctx.lineWidth = 0.5;
-                            ctx.moveTo(drawX + drawW, drawY); ctx.lineTo(drawX + drawW, drawY + drawH); ctx.stroke();
+                            ctx.moveTo(endX, startY); ctx.lineTo(endX, endY); ctx.stroke();
                         }
                     }
                 }
@@ -559,7 +569,6 @@
         initEmptyGrid();
         if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
             requestDataFromAndroid();
-            setTimeout(resizeCanvas, 150);
         }
     };
 </script>
