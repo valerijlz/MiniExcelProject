@@ -226,15 +226,80 @@
                     rect.h = 0; for(let i=m.sr; i<=m.er; i++) rect.h += heights[i];
                 }
 
-                // Фоновый цвет
                 let cellData = matrix[r][c] || {};
+                
+                // Фоновый цвет
                 ctx.fillStyle = cellData.bg ? cellData.bg : "#ffffff";
                 ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
-                // Сетка (границы)
-                ctx.strokeStyle = "#e1e1e1";
-                ctx.lineWidth = 1 / zoom;
-                ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+                // --- УМНАЯ ОТРИСОВКА ГРАНИЦ ---
+                // Функция-хелпер для определения толщины линии в зависимости от стиля POI
+                function getBorderWidth(styleName) {
+                    if (!styleName || styleName === "NONE") return 0;
+                    if (styleName === "THICK") return 2.5;
+                    if (styleName === "MEDIUM" || styleName === "MEDIUM_DASHED") return 1.5;
+                    return 0.75; // Для THIN, DASHED, DOTTED и т.д.
+                }
+
+                ctx.save();
+                
+                // На дефолтной сетке рисуем тонкие линии, если нет кастомных границ
+                let hasCustomBorders = cellData.bt || cellData.bb || cellData.bl || cellData.br;
+
+                // ВЕРХНЯЯ ГРАНИЦА
+                ctx.beginPath();
+                if (cellData.bt) {
+                    ctx.strokeStyle = cellData.btc || "#000000";
+                    ctx.lineWidth = getBorderWidth(cellData.bt) / zoom;
+                } else {
+                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#e1e1e1";
+                    ctx.lineWidth = 1 / zoom;
+                }
+                ctx.moveTo(rect.x, rect.y);
+                ctx.lineTo(rect.x + rect.w, rect.y);
+                ctx.stroke();
+
+                // НИЖНЯЯ ГРАНИЦА
+                ctx.beginPath();
+                if (cellData.bb) {
+                    ctx.strokeStyle = cellData.bbc || "#000000";
+                    ctx.lineWidth = getBorderWidth(cellData.bb) / zoom;
+                } else {
+                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#e1e1e1";
+                    ctx.lineWidth = 1 / zoom;
+                }
+                ctx.moveTo(rect.x, rect.y + rect.h);
+                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+                ctx.stroke();
+
+                // ЛЕВАЯ ГРАНИЦА
+                ctx.beginPath();
+                if (cellData.bl) {
+                    ctx.strokeStyle = cellData.blc || "#000000";
+                    ctx.lineWidth = getBorderWidth(cellData.bl) / zoom;
+                } else {
+                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#e1e1e1";
+                    ctx.lineWidth = 1 / zoom;
+                }
+                ctx.moveTo(rect.x, rect.y);
+                ctx.lineTo(rect.x, rect.y + rect.h);
+                ctx.stroke();
+
+                // ПРАВАЯ ГРАНИЦА
+                ctx.beginPath();
+                if (cellData.br) {
+                    ctx.strokeStyle = cellData.brc || "#000000";
+                    ctx.lineWidth = getBorderWidth(cellData.br) / zoom;
+                } else {
+                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#e1e1e1";
+                    ctx.lineWidth = 1 / zoom;
+                }
+                ctx.moveTo(rect.x + rect.w, rect.y);
+                ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+                ctx.stroke();
+
+                ctx.restore();
+                // ------------------------------------
 
                 // Текст
                 let val = cellData.v !== undefined ? String(cellData.v) : "";
