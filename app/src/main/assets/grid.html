@@ -125,7 +125,6 @@
             }
             const payload = JSON.parse(rawJson);
             
-            // Если матрица пустая (первый запуск), инициализируем дефолтную сетку
             if (!payload.matrix || payload.matrix.length === 0) {
                 initEmptyGrid();
                 return;
@@ -187,7 +186,7 @@
             AndroidBridge.onStatus("Итоговая ширина первой колонки: " + widths[0] + "px");
         } catch(e) {
             AndroidBridge.onStatus("Ошибка разбора JSON: " + e.message);
-            initEmptyGrid(); // В случае сбоя оставляем пустую рабочую сетку
+            initEmptyGrid();
         }
     }
 
@@ -205,7 +204,6 @@
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         ctx.save();
 
-        // Отрезаем область под сетку данных, оставляя шапки фиксированными
         ctx.beginPath();
         ctx.rect(ROW_NUM_WIDTH, COL_NUM_HEIGHT, canvas.clientWidth - ROW_NUM_WIDTH, canvas.clientHeight - COL_NUM_HEIGHT);
         ctx.clip();
@@ -214,8 +212,6 @@
         ctx.scale(zoom, zoom);
         ctx.translate(scrollX, scrollY);
 
-        // 1. Отрисовка ячеек
-        // Вспомогательная функция для определения толщины линии
         function getBorderWidth(styleName) {
             if (!styleName || styleName === "NONE") return 0;
             if (styleName === "THICK") return 2.5;
@@ -223,7 +219,7 @@
             return 0.75;
         }
 
-        // ПРОХОД 1: Отрисовка фонов и текста ячеек
+        // ПРОХОД 1: Фоновые цвета и тексты
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let m = getMergedCellInfo(r, c);
@@ -237,11 +233,9 @@
 
                 let cellData = matrix[r][c] || {};
                 
-                // Фоновый цвет
                 ctx.fillStyle = cellData.bg ? cellData.bg : "#ffffff";
                 ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
-                // Текст ячейки
                 let val = cellData.v !== undefined ? String(cellData.v) : "";
                 if (val) {
                     ctx.save();
@@ -262,7 +256,7 @@
             }
         }
 
-        // ПРОХОД 2: Отрисовка сетки и кастомных границ поверх всех фонов
+        // ПРОХОД 2: Все границы поверх фонов
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let m = getMergedCellInfo(r, c);
@@ -279,7 +273,7 @@
 
                 ctx.save();
 
-                // ВЕРХНЯЯ ГРАНИЦА
+                // ВЕРХНЯЯ
                 ctx.beginPath();
                 if (cellData.bt) {
                     ctx.strokeStyle = cellData.btc || "#000000";
@@ -292,7 +286,7 @@
                 ctx.lineTo(rect.x + rect.w, rect.y);
                 ctx.stroke();
 
-                // НИЖНЯЯ ГРАНИЦА
+                // НИЖНЯЯ
                 ctx.beginPath();
                 if (cellData.bb) {
                     ctx.strokeStyle = cellData.bbc || "#000000";
@@ -305,7 +299,7 @@
                 ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
                 ctx.stroke();
 
-                // ЛЕВАЯ ГРАНИЦА
+                // ЛЕВАЯ
                 ctx.beginPath();
                 if (cellData.bl) {
                     ctx.strokeStyle = cellData.blc || "#000000";
@@ -318,7 +312,7 @@
                 ctx.lineTo(rect.x, rect.y + rect.h);
                 ctx.stroke();
 
-                // ПРАВАЯ ГРАНИЦА
+                // ПРАВАЯ
                 ctx.beginPath();
                 if (cellData.br) {
                     ctx.strokeStyle = cellData.brc || "#000000";
@@ -333,30 +327,9 @@
 
                 ctx.restore();
             }
-
-
-                // Текст
-                let val = cellData.v !== undefined ? String(cellData.v) : "";
-                if (val) {
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.rect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
-                    ctx.clip();
-
-                    let fontStyle = "";
-                    if (cellData.bold) fontStyle += "bold ";
-                    if (cellData.italic) fontStyle += "italic ";
-                    ctx.font = `${fontStyle}11px Arial`;
-                    ctx.fillStyle = cellData.color ? cellData.color : "#000000";
-                    ctx.textBaseline = "middle";
-                    
-                    ctx.fillText(val, rect.x + 4, rect.y + rect.h / 2);
-                    ctx.restore();
-                }
-            }
         }
 
-        // Подсветка выделенной ячейки
+        // Выделение ячейки
         if (selectedCell) {
             let m = getMergedCellInfo(selectedCell.r, selectedCell.c);
             let r = m ? m.sr : selectedCell.r;
@@ -373,7 +346,7 @@
 
         ctx.restore();
 
-        // 2. Статичные заголовки колонок (A, B, C...)
+        // 2. Шапки колонок (A, B, C...)
         ctx.save();
         ctx.fillStyle = "#f3f3f3";
         ctx.fillRect(ROW_NUM_WIDTH, 0, canvas.clientWidth - ROW_NUM_WIDTH, COL_NUM_HEIGHT);
@@ -401,7 +374,7 @@
         }
         ctx.restore();
 
-        // 3. Статичные заголовки строк (1, 2, 3...)
+        // 3. Шапки строк (1, 2, 3...)
         ctx.save();
         ctx.fillStyle = "#f3f3f3";
         ctx.fillRect(0, COL_NUM_HEIGHT, ROW_NUM_WIDTH, canvas.clientHeight - COL_NUM_HEIGHT);
@@ -429,22 +402,20 @@
         }
         ctx.restore();
 
-        // Угловой квадрат (пересечение шапок)
+        // Угловой квадрат
         ctx.fillStyle = "#e1e1e1";
         ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#bbb";
         ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
     }
 
-    // --- ОБРАБОТКА ТАЧ-СОБЫТИЙ (СКРОЛЛ, ЗУМ И КЛИКИ) ---
+    // --- ОБРАБОТКА ТАЧ-СОБЫТИЙ ---
     canvas.addEventListener('touchstart', e => {
         isDragging = true;
         if (e.touches.length === 1) {
-            // Одиночное касание для скролла
             lastTouchX = e.touches[0].clientX;
             lastTouchY = e.touches[0].clientY;
         } else if (e.touches.length === 2) {
-            // Двойное касание для масштабирования (Pinch-to-Zoom)
             let dx = e.touches[0].clientX - e.touches[1].clientX;
             let dy = e.touches[0].clientY - e.touches[1].clientY;
             startTouchDist = Math.sqrt(dx * dx + dy * dy);
@@ -456,7 +427,6 @@
         if (!isDragging) return;
 
         if (e.touches.length === 1) {
-            // Скролл одним пальцем
             let dx = e.touches[0].clientX - lastTouchX;
             let dy = e.touches[0].clientY - lastTouchY;
             scrollX += dx / zoom;
@@ -464,14 +434,12 @@
             lastTouchX = e.touches[0].clientX;
             lastTouchY = e.touches[0].clientY;
             
-            // Ограничения, чтобы таблица не улетала за границы экрана
             if (scrollX > 0) scrollX = 0;
             if (scrollY > 0) scrollY = 0;
             
             editor.style.display = 'none';
             draw();
         } else if (e.touches.length === 2) {
-            // Зум двумя пальцами
             let dx = e.touches[0].clientX - e.touches[1].clientX;
             let dy = e.touches[0].clientY - e.touches[1].clientY;
             let currentDist = Math.sqrt(dx * dx + dy * dy);
@@ -480,7 +448,6 @@
                 let factor = currentDist / startTouchDist;
                 zoom = startZoom * factor;
                 
-                // Жесткие рамки для зума (от 25% до 200%)
                 if (zoom < 0.25) zoom = 0.25;
                 if (zoom > 2.0) zoom = 2.0;
                 
@@ -494,7 +461,6 @@
             isDragging = false;
             startTouchDist = 0;
 
-            // Обработка обычного клика/тапа по ячейке
             if (e.changedTouches.length === 1) {
                 let clickX = e.changedTouches[0].clientX;
                 let clickY = e.changedTouches[0].clientY;
@@ -522,7 +488,6 @@
                 }
             }
         } else if (e.touches.length === 1) {
-            // Если один палец убрали, а второй остался — перестраиваем координату скролла
             lastTouchX = e.touches[0].clientX;
             lastTouchY = e.touches[0].clientY;
         }
