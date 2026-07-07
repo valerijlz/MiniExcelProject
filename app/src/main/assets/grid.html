@@ -215,10 +215,19 @@
         ctx.translate(scrollX, scrollY);
 
         // 1. Отрисовка ячеек
+        // Вспомогательная функция для определения толщины линии
+        function getBorderWidth(styleName) {
+            if (!styleName || styleName === "NONE") return 0;
+            if (styleName === "THICK") return 2.5;
+            if (styleName === "MEDIUM" || styleName === "MEDIUM_DASHED") return 1.5;
+            return 0.75;
+        }
+
+        // ПРОХОД 1: Отрисовка фонов и текста ячеек
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let m = getMergedCellInfo(r, c);
-                if (m && (r !== m.sr || c !== m.sc)) continue; // Рисуем только главную ячейку из объединенных
+                if (m && (r !== m.sr || c !== m.sc)) continue;
 
                 let rect = getCellRect(r, c);
                 if (m) {
@@ -232,19 +241,43 @@
                 ctx.fillStyle = cellData.bg ? cellData.bg : "#ffffff";
                 ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
 
-                // --- УМНАЯ ОТРИСОВКА ГРАНИЦ ---
-                // Функция-хелпер для определения толщины линии в зависимости от стиля POI
-                function getBorderWidth(styleName) {
-                    if (!styleName || styleName === "NONE") return 0;
-                    if (styleName === "THICK") return 2.5;
-                    if (styleName === "MEDIUM" || styleName === "MEDIUM_DASHED") return 1.5;
-                    return 0.75; // Для THIN, DASHED, DOTTED и т.д.
+                // Текст ячейки
+                let val = cellData.v !== undefined ? String(cellData.v) : "";
+                if (val) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
+                    ctx.clip();
+
+                    let fontStyle = "";
+                    if (cellData.bold) fontStyle += "bold ";
+                    if (cellData.italic) fontStyle += "italic ";
+                    ctx.font = `${fontStyle}11px Arial`;
+                    ctx.fillStyle = cellData.color ? cellData.color : "#000000";
+                    ctx.textBaseline = "middle";
+                    
+                    ctx.fillText(val, rect.x + 4, rect.y + rect.h / 2);
+                    ctx.restore();
+                }
+            }
+        }
+
+        // ПРОХОД 2: Отрисовка сетки и кастомных границ поверх всех фонов
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let m = getMergedCellInfo(r, c);
+                if (m && (r !== m.sr || c !== m.sc)) continue;
+
+                let rect = getCellRect(r, c);
+                if (m) {
+                    rect.w = 0; for(let i=m.sc; i<=m.ec; i++) rect.w += widths[i];
+                    rect.h = 0; for(let i=m.sr; i<=m.er; i++) rect.h += heights[i];
                 }
 
-                ctx.save();
-                
-                // На дефолтной сетке рисуем тонкие линии, если нет кастомных границ
+                let cellData = matrix[r][c] || {};
                 let hasCustomBorders = cellData.bt || cellData.bb || cellData.bl || cellData.br;
+
+                ctx.save();
 
                 // ВЕРХНЯЯ ГРАНИЦА
                 ctx.beginPath();
@@ -299,7 +332,8 @@
                 ctx.stroke();
 
                 ctx.restore();
-                // ------------------------------------
+            }
+
 
                 // Текст
                 let val = cellData.v !== undefined ? String(cellData.v) : "";
