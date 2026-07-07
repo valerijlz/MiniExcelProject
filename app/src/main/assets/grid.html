@@ -86,7 +86,6 @@
                 matrix[r][c] = { v: "" };
             }
         }
-        // Жесткий компактный дефолт
         widths = Array(maxCols).fill(34);
         heights = Array(maxRows).fill(18);
         lastFilledRow = maxRows - 1;
@@ -96,12 +95,11 @@
 
     function resizeCanvas() {
         const dpr = window.devicePixelRatio || 1;
-        // Умножаем внутреннее разрешение Canvas на плотность пикселей экрана, чтобы убрать гигантизм и размытие
         canvas.width = canvas.clientWidth * dpr;
         canvas.height = canvas.clientHeight * dpr;
         
         ctx.resetTransform();
-        ctx.scale(dpr, dpr); // Масштабируем контекст под экран устройства
+        ctx.scale(dpr, dpr);
 
         if (widths.length > 0 && canvas.clientWidth > 0) {
             let totalSheetW = 0; 
@@ -135,8 +133,6 @@
             lastFilledRow = 0;
             lastFilledCol = 0;
 
-            const dpr = window.devicePixelRatio || 1;
-            // Принимаем точные пиксели из Java один к одному
             widths = [];
             for (let c = 0; c < maxCols; c++) {
                 let w = incomingWidths[c];
@@ -165,23 +161,20 @@
             if (lastFilledRow === 0) lastFilledRow = maxRows - 1;
             if (lastFilledCol === 0) lastFilledCol = maxCols - 1;
 
-            // Автоматический зум: подгоняем масштаб под экран, если документ шире дисплея
             let totalSheetW = 0; for(let i=0; i<=lastFilledCol; i++) totalSheetW += widths[i];
             let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
             if (totalSheetW > screenWorkW && screenWorkW > 0) {
-                // Таблица плавно сожмется ровно настолько, чтобы целиком войти в экран смартфона
                 zoom = screenWorkW / totalSheetW;
-                if (zoom < 0.25) zoom = 0.25; // Минимальный порог, чтобы не превратить в точку
+                if (zoom < 0.25) zoom = 0.25;
                 if (zoom > 1.0) zoom = 1.0;
             } else {
-                zoom = 1.0; // Если документ небольшой, открываем в оригинальном масштабе 1:1
+                zoom = 1.0;
             }
 
             editor.style.display = 'none';
             selectedCell = null;
             draw();
             
-            // Выводим в лог то, что получилось после обработки для контроля
             AndroidBridge.onStatus("Итоговая ширина первой колонки: " + widths[0] + "px");
         } catch(e) {
             AndroidBridge.onStatus("Ошибка Canvas: " + e.message);
@@ -211,6 +204,7 @@
 
         ctx.textBaseline = 'middle';
         
+        // ПРОХОД 1: Фоны ячеек
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -233,14 +227,120 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
-                let cellData = matrix[r][c];
-                ctx.fillStyle = (cellData && cellData.bg) ? cellData.bg : "#ffffff";
+                let cellData = matrix[r][c] || {};
+                ctx.fillStyle = cellData.bg ? cellData.bg : "#ffffff";
                 ctx.fillRect(cx, cy, cw, ch);
+            }
+        }
 
-                ctx.strokeStyle = "#d4d4d4";
-                ctx.lineWidth = 0.5;
-                ctx.strokeRect(cx, cy, cw, ch);
+        // ПРОХОД 2: Границы сетки и индивидуальные линии (с защитой от затирания)
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let lookup = mergeLookup[`${r}_${c}`];
+                if (lookup && lookup.isChild) continue; 
 
+                let rect = getCellRect(r, c);
+                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
+
+                if (lookup && lookup.isMain) {
+                    let fullW = 0; let fullH = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += widths[i];
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += heights[i];
+                    cw = fullW * zoom;
+                    ch = fullH * zoom;
+                }
+
+                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
+
+                let cellData = matrix[r][c] || {};
+                let hasCustomBorders = cellData.bt || cellData.bb || cellData.bl || cellData.br;
+
+                // 1. ВЕРХНЯЯ ЛИНИЯ
+                ctx.beginPath();
+                if (cellData.bt) {
+                    ctx.strokeStyle = cellData.btc || "#000000";
+                    ctx.lineWidth = 1.5;
+                } else {
+                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4";
+                    ctx.lineWidth = 0.5;
+                }
+                ctx.moveTo(cx, cy); ctx.lineTo(cx + cw, cy); ctx.stroke();
+
+                // 2. ЛЕВАЯ ЛИНИЯ
+                ctx.beginPath();
+                if (cellData.bl) {
+                    ctx.strokeStyle = cellData.blc || "#000000";
+                    ctx.lineWidth = 1.5;
+                } else {
+                    ctx.strokeStyle = hasCustomBorders ? "transparent" : "#d4d4d4";
+                    ctx.lineWidth = 0.5;
+                }
+                ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + ch); ctx.stroke();
+
+                // 3. НИЖНЯЯ ЛИНИЯ (Принудительно для края или если кастомная)
+                let isLastRow = lookup ? (lookup.m ? lookup.m.er === maxRows - 1 : r === maxRows - 1) : (r === maxRows - 1);
+                if (cellData.bb || isLastRow) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = cellData.bbc || "#000000";
+                    ctx.lineWidth = cellData.bb ? 1.5 : 0.5;
+                    ctx.moveTo(cx, cy + ch); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                } else {
+                    let nextRow = lookup && lookup.m ? lookup.m.er + 1 : r + 1;
+                    if (nextRow < maxRows) {
+                        let nextCell = matrix[nextRow][c] || {};
+                        if (!nextCell.bt && !hasCustomBorders && !(nextCell.bt || nextCell.bb || nextCell.bl || nextCell.br)) {
+                            ctx.beginPath(); ctx.strokeStyle = "#d4d4d4"; ctx.lineWidth = 0.5;
+                            ctx.moveTo(cx, cy + ch); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                        }
+                    }
+                }
+
+                // 4. ПРАВАЯ ЛИНИЯ (Исправляет баг невидимости вертикальных границ)
+                let isLastCol = lookup ? (lookup.m ? lookup.m.ec === maxCols - 1 : c === maxCols - 1) : (c === maxCols - 1);
+                if (cellData.br || isLastCol) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = cellData.brc || "#000000";
+                    ctx.lineWidth = cellData.br ? 1.5 : 0.5;
+                    ctx.moveTo(cx + cw, cy); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                } else {
+                    let nextCol = lookup && lookup.m ? lookup.m.ec + 1 : c + 1;
+                    if (nextCol < maxCols) {
+                        let nextCell = matrix[r][nextCol] || {};
+                        if (!nextCell.bl && !hasCustomBorders && !(nextCell.bt || nextCell.bb || nextCell.bl || nextCell.br)) {
+                            ctx.beginPath(); ctx.strokeStyle = "#d4d4d4"; ctx.lineWidth = 0.5;
+                            ctx.moveTo(cx + cw, cy); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                        }
+                    }
+                }
+            }
+        }
+
+        // ПРОХОД 3: Отрисовка контента (текста) ячеек поверх сетки
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let lookup = mergeLookup[`${r}_${c}`];
+                if (lookup && lookup.isChild) continue; 
+
+                let rect = getCellRect(r, c);
+                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
+
+                if (lookup && lookup.isMain) {
+                    let fullW = 0; let fullH = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += widths[i];
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += heights[i];
+                    cw = fullW * zoom;
+                    ch = fullH * zoom;
+                }
+
+                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
+
+                let cellData = matrix[r][c];
                 let text = (cellData && cellData.v !== undefined) ? String(cellData.v) : "";
                 if (text !== "") {
                     ctx.save();
@@ -248,101 +348,61 @@
                     ctx.rect(cx + 2, cy, cw - 4, ch);
                     ctx.clip();
 
-                    // Цвет текста: если передан из Java — берем его, иначе стандартный черный
-                    ctx.fillStyle = cell.color ? cell.color : "#000000";
+                    ctx.fillStyle = (cellData && cellData.color) ? cellData.color : "#000000";
                     let fontStyle = "";
                     if (cellData && cellData.bold) fontStyle += "bold ";
                     if (cellData && cellData.italic) fontStyle += "italic ";
-                    ctx.font = `${fontStyle}${10 * zoom}px Arial`;
+                    ctx.font = `${fontStyle}${11 * zoom}px Arial`;
 
                     ctx.fillText(text, cx + 5, cy + ch / 2);
                     ctx.restore();
                 }
-                // Отрисовка индивидуальных цветных границ Excel
-                ctx.lineWidth = 1;
-
-                if (cell.bt) { // Верхняя граница
-                    ctx.strokeStyle = cell.btc || "#000000";
-                    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.stroke();
-                }
-                if (cell.bb) { // Нижняя граница
-                    ctx.strokeStyle = cell.bbc || "#000000";
-                    ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.stroke();
-                }
-                if (cell.bl) { // Левая граница
-                    ctx.strokeStyle = cell.blc || "#000000";
-                    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + h); ctx.stroke();
-                }
-                if (cell.br) { // Правая граница
-                    ctx.strokeStyle = cell.brc || "#000000";
-                    ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.stroke();
-                }
             }
         }
 
+        // Синяя рамка границ заполненности листа
         let endRowRect = getCellRect(lastFilledRow, 0);
         let endColRect = getCellRect(0, lastFilledCol);
-        
         let boundaryX = ROW_NUM_WIDTH + (endColRect.x + endColRect.w - scrollX) * zoom;
         let boundaryY = COL_NUM_HEIGHT + (endRowRect.y + endRowRect.h - scrollY) * zoom;
 
         ctx.strokeStyle = "#0f62fe";
         ctx.lineWidth = 2.0;
-        
         if (boundaryX >= ROW_NUM_WIDTH && boundaryY >= COL_NUM_HEIGHT) {
-            ctx.beginPath();
-            ctx.moveTo(boundaryX, COL_NUM_HEIGHT);
-            ctx.lineTo(boundaryX, boundaryY);
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.moveTo(ROW_NUM_WIDTH, boundaryY);
-            ctx.lineTo(boundaryX, boundaryY);
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(boundaryX, COL_NUM_HEIGHT); ctx.lineTo(boundaryX, boundaryY); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(ROW_NUM_WIDTH, boundaryY); ctx.lineTo(boundaryX, boundaryY); ctx.stroke();
         }
 
+        // Заголовки колонок (A, B, C...)
         ctx.lineWidth = 0.5;
-        
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
             let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
             let cw = rect.w * zoom;
-
             if (cx + cw < ROW_NUM_WIDTH || cx > canvas.clientWidth) continue;
 
-            ctx.fillStyle = "#f1f1f1";
-            ctx.fillRect(cx, 0, cw, COL_NUM_HEIGHT);
-            ctx.strokeStyle = "#d4d4d4";
-            ctx.strokeRect(cx, 0, cw, COL_NUM_HEIGHT);
-
-            ctx.fillStyle = "#444444";
-            ctx.font = `bold 10px Arial`;
-            ctx.textAlign = 'center';
+            ctx.fillStyle = "#f1f1f1"; ctx.fillRect(cx, 0, cw, COL_NUM_HEIGHT);
+            ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(cx, 0, cw, COL_NUM_HEIGHT);
+            ctx.fillStyle = "#444444"; ctx.font = `bold 10px Arial`; ctx.textAlign = 'center';
             ctx.fillText(getColName(c), cx + cw / 2, COL_NUM_HEIGHT / 2);
         }
 
+        // Заголовки строк (1, 2, 3...)
         for (let r = 0; r < maxRows; r++) {
             let rect = getCellRect(r, 0);
             let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
             let ch = rect.h * zoom;
-
             if (cy + ch < COL_NUM_HEIGHT || cy > canvas.clientHeight) continue;
 
-            ctx.fillStyle = "#f1f1f1";
-            ctx.fillRect(0, cy, ROW_NUM_WIDTH, ch);
-            ctx.strokeStyle = "#d4d4d4";
-            ctx.strokeRect(0, cy, ROW_NUM_WIDTH, ch);
-
-            ctx.fillStyle = "#666666";
-            ctx.font = `bold 9px Arial`;
-            ctx.textAlign = 'center';
+            ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, cy, ROW_NUM_WIDTH, ch);
+            ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, cy, ROW_NUM_WIDTH, ch);
+            ctx.fillStyle = "#666666"; ctx.font = `bold 9px Arial`; ctx.textAlign = 'center';
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, cy + ch / 2);
         }
 
-        ctx.fillStyle = "#f1f1f1";
-        ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
-        ctx.strokeStyle = "#d4d4d4";
-        ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        // Левый верхний угол-заглушка
+        ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
         ctx.restore();
     }
@@ -350,7 +410,6 @@
     function getScrollLimits() {
         let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += widths[i];
         let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += heights[i];
-        
         let maxSX = Math.max(0, totalW - (canvas.clientWidth - ROW_NUM_WIDTH) / zoom);
         let maxSY = Math.max(0, totalH - (canvas.clientHeight - COL_NUM_HEIGHT) / zoom);
         return { x: maxSX, y: maxSY };
@@ -476,7 +535,7 @@
     }
 
     function saveCurrentEditorValue() {
-        if (selectedCell) {
+        if (selectedCell && matrix[selectedCell.r] && matrix[selectedCell.r][selectedCell.c]) {
             matrix[selectedCell.r][selectedCell.c].v = editor.value.trim();
         }
     }
@@ -491,7 +550,6 @@
         initEmptyGrid();
         if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
             requestDataFromAndroid();
-            // Повторный принудительный замер через 150мс, когда WebView точно «встал» в контейнер
             setTimeout(resizeCanvas, 150);
         }
     };
