@@ -50,7 +50,9 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
-
+        // Добавьте эти строки туда, где настраивается ваш webView:
+        webView.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE); // Запрещаем кэш
+        webView.clearCache(true); // Принудительно чистим кэш при каждом запуске
         // 1. Сначала настраиваем параметры
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
