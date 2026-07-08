@@ -52,7 +52,7 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.clearHistory();
         tableWebView.clearFormData();
 
-        // 1. Инициализируем настройки ПРАВИЛЬНО и без дубликатов
+        // 1. Инициализируем настройки
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         
@@ -69,7 +69,7 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
 
-        // 2. РЕГИСТРИРУЕМ мост данных и клиент ДО загрузки URL
+        // 2. Регистрация моста данных и клиента ДО загрузки URL
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
 
@@ -293,3 +293,113 @@ public class MainActivity extends AppCompatActivity {
                 int numRegions = sheet.getNumMergedRegions();
                 for (int i = 0; i < numRegions; i++) {
                     CellRangeAddress region = sheet.getMergedRegion(i);
+                    if (region != null) {
+                        JSONObject mergeObj = new JSONObject();
+                        mergeObj.put("sr", region.getFirstRow());
+                        mergeObj.put("er", region.getLastRow());
+                        mergeObj.put("sc", region.getFirstColumn());
+                        mergeObj.put("ec", region.getLastColumn());
+                        jsonMerges.put(mergeObj);
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            workbook.close();
+
+            JSONObject payload = new JSONObject();
+            payload.put("matrix", jsonTable);
+            payload.put("merges", jsonMerges);
+            payload.put("widths", jsonColWidths);
+            payload.put("heights", jsonRowHeights);
+
+            cachedJsonPayload = payload.toString();
+
+            tableWebView.post(() -> {
+                tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
+            });
+
+        } catch (Throwable e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Критический сбой разбора файла: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    public class AndroidBridge {
+        @JavascriptInterface
+        public String getExcelData() {
+            if (cachedJsonPayload == null || cachedJsonPayload.trim().isEmpty() || cachedJsonPayload.equals("{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}")) {
+                return "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
+            }
+
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Таблица успешно загружена!", Toast.LENGTH_SHORT).show());
+            return cachedJsonPayload;
+        }
+
+        @JavascriptInterface
+        public void saveFileData(String base64Data) {
+            runOnUiThread(() -> {
+                if (currentFileUri == null) {
+                    Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                    intent.putExtra(Intent.EXTRA_TITLE, "Table.xlsx");
+                    saveFileLauncher.launch(intent);
+                    return;
+                }
+
+                try {
+                    byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
+                    String jsonString = new String(decodedBytes, StandardCharsets.UTF_8);
+                    JSONArray jsonTable = new JSONArray(jsonString);
+
+                    Workbook workbook;
+                    try (InputStream is = getContentResolver().openInputStream(currentFileUri)) {
+                        workbook = WorkbookFactory.create(is);
+                    }
+
+                    Sheet sheet = workbook.getSheetAt(0);
+
+                    for (int r = 0; r < jsonTable.length(); r++) {
+                        JSONArray jsonRow = jsonTable.getJSONArray(r);
+                        Row row = sheet.getRow(r);
+                        if (row == null) row = sheet.createRow(r);
+
+                        for (int c = 0; c < jsonRow.length(); c++) {
+                            String value = jsonRow.getString(c);
+                            Cell cell = row.getCell(c);
+                            if (cell == null) cell = row.createCell(c);
+                            
+                            try {
+                                double num = Double.parseDouble(value);
+                                cell.setCellValue(num);
+                            } catch (NumberFormatException e) {
+                                cell.setCellValue(value);
+                            }
+                        }
+                    }
+
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    workbook.write(baos);
+                    byte[] workbookBytes = baos.toByteArray();
+                    workbook.close();
+
+                    try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
+                         FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
+                        fos.write(workbookBytes);
+                        fos.flush();
+                    }
+
+                    Toast.makeText(MainActivity.this, "Изменения успешно сохранены!", Toast.LENGTH_SHORT).show();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Toast.makeText(MainActivity.this, "Ошибка сохранения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void onStatus(String message) {
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show());
+        }
+    }
+}
