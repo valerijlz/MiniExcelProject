@@ -49,16 +49,12 @@
     const ROW_NUM_WIDTH = 38;
     const COL_NUM_HEIGHT = 20;
 
-    let lastFilledRow = 0;
-    let lastFilledCol = 0;
-
+    let selectedCell = null;
     let isDragging = false;
     let lastTouchX = 0;
     let lastTouchY = 0;
     let startTouchDist = 0;
     let startZoom = 1.0;
-    let selectedCell = null;
-    let isDataLoaded = false;
 
     function getColName(colIndex) {
         let name = "";
@@ -89,8 +85,6 @@
         }
         widths = Array(maxCols).fill(64);
         heights = Array(maxRows).fill(20);
-        lastFilledRow = maxRows - 1;
-        lastFilledCol = maxCols - 1;
         zoom = 1.0;
         
         if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
@@ -100,17 +94,25 @@
     }
 
     function updateCanvasDimensions() {
-        if (canvas.clientWidth === 0 || canvas.clientHeight === 0) return false;
+        if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0) return false;
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = canvas.clientWidth * dpr;
-        canvas.height = canvas.clientHeight * dpr;
+        
+        // Защита от дробных размеров контейнера
+        const displayW = Math.floor(canvas.clientWidth);
+        const displayH = Math.floor(canvas.clientHeight);
+        
+        if (canvas.width !== displayW * dpr || canvas.height !== displayH * dpr) {
+            canvas.width = displayW * dpr;
+            canvas.height = displayH * dpr;
+        }
+        
         ctx.resetTransform();
         ctx.scale(dpr, dpr);
         return true;
     }
 
     function autoFitZoom() {
-        if (canvas.clientWidth === 0 || widths.length === 0) return;
+        if (!canvas || canvas.clientWidth === 0 || widths.length === 0) return;
         let totalSheetW = 0; 
         for(let i = 0; i < maxCols; i++) totalSheetW += (widths[i] || 64);
         let screenWorkW = canvas.clientWidth - ROW_NUM_WIDTH;
@@ -122,26 +124,6 @@
             zoom = 1.0;
         }
     }
-
-    // Следим за реальным появлением Canvas на экране устройства
-    const resizeObserver = new ResizeObserver(entries => {
-        for (let entry of entries) {
-            if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
-                if (updateCanvasDimensions()) {
-                    if (!isDataLoaded) {
-                        initEmptyGrid();
-                        if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
-                            requestDataFromAndroid();
-                        }
-                    } else {
-                        autoFitZoom();
-                        draw();
-                    }
-                }
-            }
-        }
-    });
-    resizeObserver.observe(canvas);
 
     function requestDataFromAndroid() {
         try {
@@ -170,24 +152,6 @@
                 heights[r] = (h && h > 0) ? Math.round(h) : 20;
             }
 
-            lastFilledRow = 0;
-            lastFilledCol = 0;
-            for (let r = 0; r < maxRows; r++) {
-                for (let c = 0; c < maxCols; c++) {
-                    let val = (matrix[r][c] && matrix[r][c].v !== undefined) ? String(matrix[r][c].v).trim() : "";
-                    if (val !== "") {
-                        let mInfo = getMergedCellInfo(r, c);
-                        let checkR = mInfo ? mInfo.er : r;
-                        let checkC = mInfo ? mInfo.ec : c;
-                        if (checkR > lastFilledRow) lastFilledRow = checkR;
-                        if (checkC > lastFilledCol) lastFilledCol = checkC;
-                    }
-                }
-            }
-            if (lastFilledRow === 0) lastFilledRow = maxRows - 1;
-            if (lastFilledCol === 0) lastFilledCol = maxCols - 1;
-
-            isDataLoaded = true;
             scrollX = 0;
             scrollY = 0;
             editor.style.display = 'none';
@@ -198,7 +162,7 @@
                 autoFitZoom();
                 draw();
             }
-            AndroidBridge.onStatus("Данные загружены успешно. Строк: " + maxRows);
+            AndroidBridge.onStatus("Данные загружены. Строк: " + maxRows);
         } catch(e) {
             if (window.AndroidBridge && typeof AndroidBridge.onStatus === 'function') {
                 AndroidBridge.onStatus("Ошибка Canvas: " + e.message);
@@ -215,8 +179,9 @@
     }
 
     function draw() {
+        // Абсолютная защита: если WebView еще не выделил пиксели, прерываем функцию без расчетов
+        if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
         if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) return;
-        if (canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
         
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         ctx.save();
@@ -232,7 +197,7 @@
 
         ctx.textBaseline = 'middle';
         
-        // ПРОХОД 1: Отрисовка фона
+        // ПРОХОД 1: Цветной фон ячеек
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -255,13 +220,14 @@
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
-                ctx.fillStyle = cellData.bg ? cellData.bg : "#ffffff";
-                ctx.fillRect(cx, cy, cw, ch);
+                if (cellData.bg) {
+                    ctx.fillStyle = cellData.bg;
+                    ctx.fillRect(cx, cy, cw, ch);
+                }
             }
         }
 
-        // ПРОХОД 2: Отрисовка стабильной сетки (Решает проблему вертикальных линий)
-        ctx.lineWidth = 1.0;
+        // ПРОХОД 2: Границы (Изолированная отрисовка каждой ячейки для 100% проявления линий)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -285,38 +251,39 @@
 
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 
-                let startX = Math.round(cx);
-                let startY = Math.round(cy);
-                let endX = Math.round(cx + cw);
-                let endY = Math.round(cy + ch);
+                // Субпиксельное смещение для сохранения единой толщины линий при любом зуме
+                let startX = Math.floor(cx) + 0.5;
+                let startY = Math.floor(cy) + 0.5;
+                let endX = Math.floor(cx + cw) + 0.5;
+                let endY = Math.floor(cy + ch) + 0.5;
 
-                // Верхняя граница
+                // Верхняя линия
                 ctx.beginPath();
                 ctx.strokeStyle = cellData.bt ? (cellData.btc || "#000000") : "#d4d4d4";
-                ctx.lineWidth = cellData.bt ? 2.0 : 1.0;
+                ctx.lineWidth = cellData.bt ? 1.5 : 0.5;
                 ctx.moveTo(startX, startY); ctx.lineTo(endX, startY); ctx.stroke();
 
-                // Левая граница
+                // Левая линия
                 ctx.beginPath();
                 ctx.strokeStyle = cellData.bl ? (cellData.blc || "#000000") : "#d4d4d4";
-                ctx.lineWidth = cellData.bl ? 2.0 : 1.0;
+                ctx.lineWidth = cellData.bl ? 1.5 : 0.5;
                 ctx.moveTo(startX, startY); ctx.lineTo(startX, endY); ctx.stroke();
 
-                // Нижняя граница
+                // Нижняя линия
                 ctx.beginPath();
                 ctx.strokeStyle = cellData.bb ? (cellData.bbc || "#000000") : "#d4d4d4";
-                ctx.lineWidth = cellData.bb ? 2.0 : 1.0;
+                ctx.lineWidth = cellData.bb ? 1.5 : 0.5;
                 ctx.moveTo(startX, endY); ctx.lineTo(endX, endY); ctx.stroke();
 
-                // Правая граница (Принудительно замыкаем каждую ячейку, чтобы линии не исчезали)
+                // Правая линия (Больше не зависит от соседей, не затирается)
                 ctx.beginPath();
                 ctx.strokeStyle = cellData.br ? (cellData.brc || "#000000") : "#d4d4d4";
-                ctx.lineWidth = cellData.br ? 2.0 : 1.0;
+                ctx.lineWidth = cellData.br ? 1.5 : 0.5;
                 ctx.moveTo(endX, startY); ctx.lineTo(endX, endY); ctx.stroke();
             }
         }
 
-        // ПРОХОД 3: Текст ячеек
+        // ПРОХОД 3: Отрисовка текста
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -358,27 +325,33 @@
             }
         }
 
-        // Исправленная синяя рамка физических границ листа (Обеспечивает видимость как по X, так и по Y)
-        let endRowRect = getCellRect(maxRows - 1, 0);
-        let endColRect = getCellRect(0, maxCols - 1);
-        let boundaryX = ROW_NUM_WIDTH + (endColRect.x + endColRect.w - scrollX) * zoom;
-        let boundaryY = COL_NUM_HEIGHT + (endRowRect.y + endRowRect.h - scrollY) * zoom;
+        // Жесткий и гарантированный расчет синей рамки краев листа
+        let sheetTotalW = 0; for (let i = 0; i < maxCols; i++) sheetTotalW += (widths[i] || 64);
+        let sheetTotalH = 0; for (let i = 0; i < maxRows; i++) sheetTotalH += (heights[i] || 20);
+        
+        let boundaryX = ROW_NUM_WIDTH + (sheetTotalW - scrollX) * zoom;
+        let boundaryY = COL_NUM_HEIGHT + (sheetTotalH - scrollY) * zoom;
 
         ctx.strokeStyle = "#0f62fe";
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 2.0;
         
-        ctx.beginPath();
-        ctx.moveTo(Math.max(ROW_NUM_WIDTH, boundaryX), COL_NUM_HEIGHT);
-        ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), Math.max(COL_NUM_HEIGHT, boundaryY));
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(ROW_NUM_WIDTH, Math.max(COL_NUM_HEIGHT, boundaryY));
-        ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), Math.max(COL_NUM_HEIGHT, boundaryY));
-        ctx.stroke();
+        // Вертикальный синий маркер справа
+        if (boundaryX >= ROW_NUM_WIDTH) {
+            ctx.beginPath();
+            ctx.moveTo(boundaryX, COL_NUM_HEIGHT);
+            ctx.lineTo(boundaryX, Math.max(COL_NUM_HEIGHT, boundaryY));
+            ctx.stroke();
+        }
+        // Горизонтальный синий маркер снизу
+        if (boundaryY >= COL_NUM_HEIGHT) {
+            ctx.beginPath();
+            ctx.moveTo(ROW_NUM_WIDTH, boundaryY);
+            ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), boundaryY);
+            ctx.stroke();
+        }
 
         // Заголовки колонок (A, B, C...)
-        ctx.lineWidth = 1.0;
+        ctx.lineWidth = 0.5;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
             let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
@@ -404,7 +377,7 @@
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, cy + ch / 2);
         }
 
-        // Угловая заглушка
+        // Левый верхний угол-заглушка
         ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
@@ -412,6 +385,7 @@
     }
 
     function getScrollLimits() {
+        if (!canvas || canvas.clientWidth === 0) return { x: 0, y: 0 };
         let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || 64);
         let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += (heights[i] || 20);
         let maxSX = Math.max(0, totalW - (canvas.clientWidth - ROW_NUM_WIDTH) / zoom);
@@ -419,7 +393,21 @@
         return { x: maxSX, y: maxSY };
     }
 
+    // Динамический наблюдатель: Перерисует интерфейс ТОЛЬКО когда Android WebView даст физические пиксели
+    const viewWatcher = new ResizeObserver(() => {
+        if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+            updateCanvasDimensions();
+            if (matrix.length === 0) {
+                initEmptyGrid();
+            }
+            autoFitZoom();
+            draw();
+        }
+    });
+    viewWatcher.observe(canvas);
+
     canvas.addEventListener('touchstart', function(e) {
+        if (canvas.clientWidth === 0) return;
         if (e.touches.length === 1) {
             isDragging = true;
             lastTouchX = e.touches[0].pageX;
@@ -432,6 +420,7 @@
     });
 
     canvas.addEventListener('touchmove', function(e) {
+        if (canvas.clientWidth === 0) return;
         if (e.touches.length === 1 && isDragging) {
             let dx = e.touches[0].pageX - lastTouchX;
             let dy = e.touches[0].pageY - lastTouchY;
@@ -464,12 +453,13 @@
         }
     });
 
-    canvas.addEventListener('touchend', function(e) {
+    canvas.addEventListener('touchend', function() {
         isDragging = false;
-        if (e.touches.length < 2) startTouchDist = 0;
+        startTouchDist = 0;
     });
 
     canvas.addEventListener('click', function(e) {
+        if (canvas.clientWidth === 0) return;
         const rect = canvas.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         const clickY = e.clientY - rect.top;
@@ -541,6 +531,8 @@
         if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
             updateCanvasDimensions();
             initEmptyGrid();
+        }
+        if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
             requestDataFromAndroid();
         }
     };
