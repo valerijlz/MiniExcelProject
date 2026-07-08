@@ -47,49 +47,46 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
+        // Принудительно чистим кэш самого WebView при старте
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
-        // Добавьте эти строки туда, где настраивается ваш webView:
-        webView.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE); // Запрещаем кэш
-        webView.clearCache(true); // Принудительно чистим кэш при каждом запуске
-        // 1. Сначала настраиваем параметры
+
+        // 1. Инициализируем настройки ПРАВИЛЬНО и без дубликатов
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
-        // Запрет кэширования внутри WebView
-        webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
-        tableWebView.clearCache(true);
-        // -----------------------------------------------
-        // --- ДОБАВЬТЕ ЭТИ СТРОКИ ДЛЯ БЛОКИРОВКИ СИСТЕМНОГО РАЗДУВАНИЯ ---
-        webSettings.setTextZoom(100); // Жестко фиксирует масштаб текста и элементов на 100%
-        webSettings.setUseWideViewPort(true);
-        webSettings.setLoadWithOverviewMode(true);
-        // ---------------------------------------------------------------
-        webSettings.setDomStorageEnabled(true);
-        webSettings.setAllowFileAccess(true);
+        
+        // Жесткий запрет кэширования на уровне конфигурации
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
-        webSettings.setSupportZoom(false);
-        webSettings.setBuiltInZoomControls(false);
+        // Фиксация системного масштабирования элементов и текста на 100%
+        webSettings.setTextZoom(100); 
         webSettings.setUseWideViewPort(true);
         webSettings.setLoadWithOverviewMode(true);
-        webSettings.setTextZoom(100);
+        webSettings.setSupportZoom(false);
+        webSettings.setBuiltInZoomControls(false);
+        
+        webSettings.setDomStorageEnabled(true);
+        webSettings.setAllowFileAccess(true);
 
-        // 2. СТРОГО ДО ЗАГРУЗКИ URL регистрируем мост данных и клиент
+        // 2. РЕГИСТРИРУЕМ мост данных и клиент ДО загрузки URL
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
 
-        // 3. Только теперь загружаем сам интерфейс
-        tableWebView.loadUrl("file:///android_asset/grid.html");
+        // 3. Отладочный клиент для вывода ошибок JS в консоль Logcat (Тег: WebViewJS)
         tableWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
-    @Override
-    public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
-        android.util.Log.d("WebViewJS", consoleMessage.message() + " -- From line "
-                + consoleMessage.lineNumber() + " of "
-                + consoleMessage.sourceId());
-        return true;
-    }
-});
+            @Override
+            public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
+                android.util.Log.d("WebViewJS", consoleMessage.message() + " -- From line "
+                        + consoleMessage.lineNumber() + " of "
+                        + consoleMessage.sourceId());
+                return true;
+            }
+        });
+
+        // 4. Загружаем сам веб-интерфейс
+        tableWebView.loadUrl("file:///android_asset/grid.html");
+        
         initFileLaunchers();
 
         openButton.setOnClickListener(v -> {
@@ -252,7 +249,6 @@ public class MainActivity extends AppCompatActivity {
                                         } catch (Throwable ignored) {}
                                     }
 
-                                    // Безопасное чтение границ
                                     try {
                                         if (style.getBorderTop() != BorderStyle.NONE) {
                                             cellObj.put("bt", style.getBorderTop().name());
@@ -297,114 +293,3 @@ public class MainActivity extends AppCompatActivity {
                 int numRegions = sheet.getNumMergedRegions();
                 for (int i = 0; i < numRegions; i++) {
                     CellRangeAddress region = sheet.getMergedRegion(i);
-                    if (region != null) {
-                        JSONObject mergeObj = new JSONObject();
-                        mergeObj.put("sr", region.getFirstRow());
-                        mergeObj.put("er", region.getLastRow());
-                        mergeObj.put("sc", region.getFirstColumn());
-                        mergeObj.put("ec", region.getLastColumn());
-                        jsonMerges.put(mergeObj);
-                    }
-                }
-            } catch (Throwable ignored) {}
-
-            workbook.close();
-
-            JSONObject payload = new JSONObject();
-            payload.put("matrix", jsonTable);
-            payload.put("merges", jsonMerges);
-            payload.put("widths", jsonColWidths);
-            payload.put("heights", jsonRowHeights);
-
-            cachedJsonPayload = payload.toString();
-
-            tableWebView.post(() -> {
-                tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
-            });
-
-        } catch (Throwable e) {
-            e.printStackTrace();
-            Toast.makeText(this, "Критический сбой разбора файла: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    public class AndroidBridge {
-        @JavascriptInterface
-        public String getExcelData() {
-        if (cachedJsonPayload == null || cachedJsonPayload.trim().isEmpty() || cachedJsonPayload.equals("{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}")) {
-        // Возвращаем пустую структуру без вызова Toast-ошибки, это нормальный старт приложения
-        return "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
-        }
-
-        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Таблица успешно загружена!", Toast.LENGTH_SHORT).show());
-        return cachedJsonPayload;
-    }
-
-        @JavascriptInterface
-        public void saveFileData(String base64Data) {
-            runOnUiThread(() -> {
-                if (currentFileUri == null) {
-                    Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-                    intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-                    intent.putExtra(Intent.EXTRA_TITLE, "Table.xlsx");
-                    saveFileLauncher.launch(intent);
-                    return;
-                }
-
-                try {
-                    byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
-                    String jsonString = new String(decodedBytes, StandardCharsets.UTF_8);
-                    JSONArray jsonTable = new JSONArray(jsonString);
-
-                    Workbook workbook;
-                    try (InputStream is = getContentResolver().openInputStream(currentFileUri)) {
-                        workbook = WorkbookFactory.create(is);
-                    }
-
-                    Sheet sheet = workbook.getSheetAt(0);
-
-                    for (int r = 0; r < jsonTable.length(); r++) {
-                        JSONArray jsonRow = jsonTable.getJSONArray(r);
-                        Row row = sheet.getRow(r);
-                        if (row == null) row = sheet.createRow(r);
-
-                        for (int c = 0; c < jsonRow.length(); c++) {
-                            String value = jsonRow.getString(c);
-                            Cell cell = row.getCell(c);
-                            if (cell == null) cell = row.createCell(c);
-                            
-                            try {
-                                double num = Double.parseDouble(value);
-                                cell.setCellValue(num);
-                            } catch (NumberFormatException e) {
-                                cell.setCellValue(value);
-                            }
-                        }
-                    }
-
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    workbook.write(baos);
-                    byte[] workbookBytes = baos.toByteArray();
-                    workbook.close();
-
-                    try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
-                         FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
-                        fos.write(workbookBytes);
-                        fos.flush();
-                    }
-
-                    Toast.makeText(MainActivity.this, "Изменения успешно сохранены!", Toast.LENGTH_SHORT).show();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    Toast.makeText(MainActivity.this, "Ошибка сохранения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
-                }
-            });
-        }
-
-        @JavascriptInterface
-        public void onStatus(String message) {
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show());
-        }
-    }
-}
