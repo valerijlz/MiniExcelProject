@@ -277,18 +277,21 @@ public class MainActivity extends AppCompatActivity {
             }
 
             // Шаг 2: Исправление вертикальных (и горизонтальных) границ внутри объединенных ячеек
+            // Шаг 2: Исправление вертикальных (и горизонтальных) границ внутри объединенных ячеек
             JSONArray jsonMerges = new JSONArray();
             try {
                 int numRegions = sheet.getNumMergedRegions();
                 for (int i = 0; i < numRegions; i++) {
                     CellRangeAddress region = sheet.getMergedRegion(i);
                     if (region != null) {
-                        if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() > maxColsCount) continue;
+                        // ИСПРАВЛЕНО: Правильная проверка на выход за границы матрицы (индексы от 0 до maxColsCount-1)
+                        if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() >= maxColsCount) continue;
 
                         JSONObject mergeObj = new JSONObject();
                         mergeObj.put("sr", region.getFirstRow());
                         mergeObj.put("er", Math.min(region.getLastRow(), lastRowIdx));
                         mergeObj.put("sc", region.getFirstColumn());
+                        // Ограничиваем правый край строго размером нашей таблицы
                         mergeObj.put("ec", Math.min(region.getLastColumn(), maxColsCount - 1));
                         jsonMerges.put(mergeObj);
 
@@ -297,16 +300,19 @@ public class MainActivity extends AppCompatActivity {
                         if (mainCell != null && mainCell.getCellStyle() != null) {
                             CellStyle mainStyle = mainCell.getCellStyle();
                             
-                            for (int r = region.getFirstRow(); r <= Math.min(region.getLastRow(), lastRowIdx); r++) {
+                            int finalEndRow = Math.min(region.getLastRow(), lastRowIdx);
+                            int finalEndCol = Math.min(region.getLastColumn(), maxColsCount - 1);
+
+                            for (int r = region.getFirstRow(); r <= finalEndRow; r++) {
                                 JSONArray rowArray = jsonTable.getJSONArray(r);
-                                for (int c = region.getFirstColumn(); c <= Math.min(region.getLastColumn(), maxColsCount - 1); c++) {
+                                for (int c = region.getFirstColumn(); c <= finalEndCol; c++) {
                                     JSONObject cellObj = rowArray.getJSONObject(c);
 
                                     if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != BorderStyle.NONE) {
                                         cellObj.put("bl", mainStyle.getBorderLeft().name());
                                         cellObj.put("blc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getLeftBorderColor())));
                                     }
-                                    if (c == region.getLastColumn() && mainStyle.getBorderRight() != BorderStyle.NONE) {
+                                    if (c == finalEndCol && mainStyle.getBorderRight() != BorderStyle.NONE) {
                                         cellObj.put("br", mainStyle.getBorderRight().name());
                                         cellObj.put("brc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getRightBorderColor())));
                                     }
@@ -314,7 +320,7 @@ public class MainActivity extends AppCompatActivity {
                                         cellObj.put("bt", mainStyle.getBorderTop().name());
                                         cellObj.put("btc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getTopBorderColor())));
                                     }
-                                    if (r == region.getLastRow() && mainStyle.getBorderBottom() != BorderStyle.NONE) {
+                                    if (r == finalEndRow && mainStyle.getBorderBottom() != BorderStyle.NONE) {
                                         cellObj.put("bb", mainStyle.getBorderBottom().name());
                                         cellObj.put("bbc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getBottomBorderColor())));
                                     }
