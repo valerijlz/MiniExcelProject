@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, target-densitydpi=device-dpi">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MiniExcel Rigid Engine</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #f3f3f3; }
@@ -85,7 +85,7 @@
         }
         widths = Array(maxCols).fill(64);
         heights = Array(maxRows).fill(20);
-        zoom = 1.0;
+        merges = [];
         
         if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
             updateCanvasDimensions();
@@ -131,13 +131,19 @@
             if (!rawJson) return;
             const payload = JSON.parse(rawJson);
             
+            // ЗАЩИТА: Если Excel-файл еще не выбран или пуст, инициализируем дефолтную сетку
+            if (!payload.matrix || payload.matrix.length === 0) {
+                initEmptyGrid();
+                return;
+            }
+
             matrix = payload.matrix;
             merges = payload.merges || [];
             let incomingWidths = payload.widths || [];
             let incomingHeights = payload.heights || [];
             
             maxRows = matrix.length;
-            maxCols = matrix[0].length;
+            maxCols = matrix[0] ? matrix[0].length : 12;
 
             widths = [];
             for (let c = 0; c < maxCols; c++) {
@@ -179,9 +185,13 @@
 
     function draw() {
         if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
-        if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) return;
         
+        // Коррекция: Даже если данных нет, мы всё равно очищаем экран и рисуем пустые сетки, а не выходим из функции
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+        if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) {
+            return; 
+        }
+        
         ctx.save();
 
         let mergeLookup = {};
@@ -195,7 +205,7 @@
 
         ctx.textBaseline = 'middle';
         
-        // 1. ФОН
+        // 1. ФОН ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -219,12 +229,12 @@
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 if (cellData.bg) {
                     ctx.fillStyle = cellData.bg;
-                    ctx.fillRect(cx, cy, cw, ch);
+                    ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
                 }
             }
         }
 
-        // 2. ГРАНИЦЫ (Индивидуальный обвод ячеек — решает проблему пропадания вертикальных линий)
+        // 2. ГРАНИЦЫ (Математически точный расчет стыков пикселей)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -247,38 +257,39 @@
 
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 
-                let startX = Math.floor(cx) + 0.5;
-                let startY = Math.floor(cy) + 0.5;
-                let endX = Math.floor(cx + cw) + 0.5;
-                let endY = Math.floor(cy + ch) + 0.5;
+                // Используем Math.round для предотвращения микро-щелей на HighDPI экранах Android
+                let startX = Math.round(cx);
+                let startY = Math.round(cy);
+                let endX = Math.round(cx + cw);
+                let endY = Math.round(cy + ch);
 
                 // Верх
                 ctx.beginPath();
                 ctx.strokeStyle = cellData.bt ? (cellData.btc || "#000000") : "#d4d4d4";
                 ctx.lineWidth = cellData.bt ? 1.5 : 0.5;
-                ctx.moveTo(startX, startY); ctx.lineTo(endX, startY); ctx.stroke();
+                ctx.moveTo(startX, startY + 0.5); ctx.lineTo(endX, startY + 0.5); ctx.stroke();
 
                 // Лево
                 ctx.beginPath();
                 ctx.strokeStyle = cellData.bl ? (cellData.blc || "#000000") : "#d4d4d4";
                 ctx.lineWidth = cellData.bl ? 1.5 : 0.5;
-                ctx.moveTo(startX, startY); ctx.lineTo(startX, endY); ctx.stroke();
+                ctx.moveTo(startX + 0.5, startY); ctx.lineTo(startX + 0.5, endY); ctx.stroke();
 
                 // Низ
                 ctx.beginPath();
                 ctx.strokeStyle = cellData.bb ? (cellData.bbc || "#000000") : "#d4d4d4";
                 ctx.lineWidth = cellData.bb ? 1.5 : 0.5;
-                ctx.moveTo(startX, endY); ctx.lineTo(endX, endY); ctx.stroke();
+                ctx.moveTo(startX, endY - 0.5); ctx.lineTo(endX, endY - 0.5); ctx.stroke();
 
                 // Право
                 ctx.beginPath();
                 ctx.strokeStyle = cellData.br ? (cellData.brc || "#000000") : "#d4d4d4";
                 ctx.lineWidth = cellData.br ? 1.5 : 0.5;
-                ctx.moveTo(endX, startY); ctx.lineTo(endX, endY); ctx.stroke();
+                ctx.moveTo(endX - 0.5, startY); ctx.lineTo(endX - 0.5, endY); ctx.stroke();
             }
         }
 
-        // 3. ТЕКСТ
+        // 3. ТЕКСТ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -319,12 +330,12 @@
             }
         }
 
-        // СИНЯЯ РАМКА ГРАНИЦ ЛИСТА
+        // 4. СИНЯЯ РАМКА ОГРАНИЧЕНИЯ ЛИСТА (Жёсткое пиксельное выравнивание)
         let sheetTotalW = 0; for (let i = 0; i < maxCols; i++) sheetTotalW += (widths[i] || 64);
         let sheetTotalH = 0; for (let i = 0; i < maxRows; i++) sheetTotalH += (heights[i] || 20);
         
-        let boundaryX = ROW_NUM_WIDTH + (sheetTotalW - scrollX) * zoom;
-        let boundaryY = COL_NUM_HEIGHT + (sheetTotalH - scrollY) * zoom;
+        let boundaryX = Math.round(ROW_NUM_WIDTH + (sheetTotalW - scrollX) * zoom);
+        let boundaryY = Math.round(COL_NUM_HEIGHT + (sheetTotalH - scrollY) * zoom);
 
         ctx.strokeStyle = "#0f62fe";
         ctx.lineWidth = 2.0;
@@ -342,7 +353,7 @@
             ctx.stroke();
         }
 
-        // ЗАГОЛОВКИ КОЛОНОК
+        // 5. ЗАГОЛОВКИ КОЛОНОК (A, B, C...)
         ctx.lineWidth = 0.5;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -350,25 +361,32 @@
             let cw = rect.w * zoom;
             if (cx + cw < ROW_NUM_WIDTH || cx > canvas.clientWidth) continue;
 
-            ctx.fillStyle = "#f1f1f1"; ctx.fillRect(cx, 0, cw, COL_NUM_HEIGHT);
-            ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(cx, 0, cw, COL_NUM_HEIGHT);
+            let rx = Math.round(cx);
+            let rw = Math.round(cx + cw) - rx;
+
+            ctx.fillStyle = "#f1f1f1"; ctx.fillRect(rx, 0, rw, COL_NUM_HEIGHT);
+            ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(rx, 0, rw, COL_NUM_HEIGHT);
             ctx.fillStyle = "#444444"; ctx.font = `bold 10px Arial`; ctx.textAlign = 'center';
-            ctx.fillText(getColName(c), cx + cw / 2, COL_NUM_HEIGHT / 2);
+            ctx.fillText(getColName(c), rx + rw / 2, COL_NUM_HEIGHT / 2);
         }
 
-        // ЗАГОЛОВКИ СТРОК
+        // 6. ЗАГОЛОВКИ СТРОК (1, 2, 3...)
         for (let r = 0; r < maxRows; r++) {
             let rect = getCellRect(r, 0);
             let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
             let ch = rect.h * zoom;
             if (cy + ch < COL_NUM_HEIGHT || cy > canvas.clientHeight) continue;
 
-            ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, cy, ROW_NUM_WIDTH, ch);
-            ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, cy, ROW_NUM_WIDTH, ch);
+            let ry = Math.round(cy);
+            let rh = Math.round(cy + ch) - ry;
+
+            ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, ry, ROW_NUM_WIDTH, rh);
+            ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, ry, ROW_NUM_WIDTH, rh);
             ctx.fillStyle = "#666666"; ctx.font = `bold 9px Arial`; ctx.textAlign = 'center';
-            ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, cy + ch / 2);
+            ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, ry + rh / 2);
         }
 
+        // Угловатая заглушка 0:0
         ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
@@ -502,19 +520,21 @@
         draw();
     });
 
-    // Новая циклическая функция безопасного старта
+    // Безопасный старт
     window.onload = function() {
+        initEmptyGrid(); // Сразу рисуем дефолтный пустой шаблон, чтобы не было белого экрана
         let attempts = 0;
         function tryInit() {
             if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
                 updateCanvasDimensions();
-                initEmptyGrid();
                 if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
                     requestDataFromAndroid();
+                } else {
+                    draw();
                 }
             } else if (attempts < 10) {
                 attempts++;
-                setTimeout(tryInit, 100); // Если WebView еще не выдал размеры, ждем 100мс и пробуем снова
+                setTimeout(tryInit, 100);
             }
         }
         tryInit();
