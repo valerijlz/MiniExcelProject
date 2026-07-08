@@ -289,7 +289,7 @@
             }
         }
 
-        // 3. ТЕКСТ ЯЧЕЕК
+// 3. ТЕКСТ ЯЧЕЕК (Свободное перетекание для одиночных пустых соседних ячеек)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -312,19 +312,47 @@
 
                 let cellData = matrix[r] ? matrix[r][c] : null;
                 let text = (cellData && cellData.v !== undefined) ? String(cellData.v) : "";
+                
                 if (text !== "") {
                     ctx.save();
-                    ctx.beginPath();
-                    ctx.rect(cx + 2, cy, cw - 4, ch);
-                    ctx.clip();
-
+                    
                     ctx.fillStyle = (cellData && cellData.color) ? cellData.color : "#000000";
                     let fontStyle = "";
                     if (cellData && cellData.bold) fontStyle += "bold ";
                     if (cellData && cellData.italic) fontStyle += "italic ";
                     ctx.font = `${fontStyle}${11 * zoom}px Arial`;
 
-                    ctx.fillText(text, cx + 5, cy + ch / 2);
+                    // Если это объединенная ячейка, всегда обрезаем по её полному размеру
+                    if (lookup && lookup.isMain) {
+                        ctx.beginPath();
+                        ctx.rect(cx + 2, cy, cw - 4, ch);
+                        ctx.clip();
+                        ctx.fillText(text, cx + 5, cy + ch / 2);
+                    } else {
+                        // Для одиночных ячеек проверяем, сколько пустых ячеек справа мы можем занять
+                        let availableW = cw;
+                        let nextCol = c + 1;
+                        
+                        while (nextCol < maxCols) {
+                            let nextLookup = mergeLookup[`${r}_${nextCol}`];
+                            let nextCellData = matrix[r] ? matrix[r][nextCol] : null;
+                            let nextCellText = (nextCellData && nextCellData.v !== undefined) ? String(nextCellData.v) : "";
+                            
+                            // Если следующая ячейка не пустая, или имеет фон, или она часть объединения — стоп
+                            if (nextCellText !== "" || (nextCellData && nextCellData.bg) || nextLookup) {
+                                break;
+                            }
+                            availableW += (widths[nextCol] || 64) * zoom;
+                            nextCol++;
+                        }
+
+                        ctx.beginTransaction;
+                        ctx.beginPath();
+                        ctx.rect(cx + 2, cy, availableW - 4, ch);
+                        ctx.clip();
+                        ctx.fillText(text, cx + 5, cy + ch / 2);
+                    }
+                    
                     ctx.restore();
                 }
             }
