@@ -47,19 +47,14 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
-        // Принудительно чистим кэш самого WebView при старте
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
 
-        // 1. Инициализируем настройки
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
-        
-        // Жесткий запрет кэширования на уровне конфигурации
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         
-        // Фиксация системного масштабирования элементов и текста на 100%
         webSettings.setTextZoom(100); 
         webSettings.setUseWideViewPort(true);
         webSettings.setLoadWithOverviewMode(true);
@@ -69,11 +64,9 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setDomStorageEnabled(true);
         webSettings.setAllowFileAccess(true);
 
-        // 2. Регистрация моста данных и клиента ДО загрузки URL
         tableWebView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         tableWebView.setWebViewClient(new WebViewClient());
 
-        // 3. Отладочный клиент для вывода ошибок JS в консоль Logcat (Тег: WebViewJS)
         tableWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
@@ -84,7 +77,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // 4. Загружаем сам веб-интерфейс
         tableWebView.loadUrl("file:///android_asset/grid.html");
         
         initFileLaunchers();
@@ -165,21 +157,18 @@ public class MainActivity extends AppCompatActivity {
             if (lastRowIdx > 1000) lastRowIdx = 1000;
             if (lastRowIdx < 0) lastRowIdx = 0;
 
+            // Умный подсчет максимального числа колонок (Защита синей рамки)
             int maxColsCount = 0;
             for (int r = 0; r <= lastRowIdx; r++) {
                 Row row = sheet.getRow(r);
                 if (row != null) {
-                    // Используем getLastCellNum, но если строка пустая, она не раздует нам таблицу
                     int lastCellNum = row.getLastCellNum();
                     if (lastCellNum > maxColsCount) {
                         maxColsCount = lastCellNum;
                     }
                 }
             }
-            // ЗАЩИТА: Если POI считает, что колонок слишком много (например, из-за стилей), ограничиваем физическим присутствием контента
-            if (maxColsCount > 40) { 
-                maxColsCount = 40; // Не даем синей рамке уйти за пределы разумного экспортного листа
-            }
+            if (maxColsCount > 40) maxColsCount = 40;
             if (maxColsCount < 5) maxColsCount = 5;
 
             JSONArray jsonColWidths = new JSONArray();
@@ -196,13 +185,12 @@ public class MainActivity extends AppCompatActivity {
                 jsonColWidths.put(widthInPx);
             }
 
-// --- НАЧАЛО ИСПРАВЛЕННОГО БЛОКА СБОРА ДАННЫХ ---
             DataFormatter formatter = new DataFormatter();
             JSONArray jsonTable = new JSONArray();
             JSONArray jsonRowHeights = new JSONArray();
 
-            // Шаг 1: Сначала собираем базовые данные и тексты ячеек
-            for (let r = 0; r <= lastRowIdx; r++) {
+            // Шаг 1: Сбор базовой структуры и метаданных
+            for (int r = 0; r <= lastRowIdx; r++) {
                 Row row = sheet.getRow(r);
                 
                 int heightInPx = 18;
@@ -255,22 +243,29 @@ public class MainActivity extends AppCompatActivity {
                                         } catch (Throwable ignored) {}
                                     }
 
-                                    // Базовый сбор индивидуальных границ ячейки
                                     if (style.getBorderTop() != BorderStyle.NONE) {
                                         cellObj.put("bt", style.getBorderTop().name());
-                                        cellObj.put("btc", getHexColor(HSSFColor.getIndexHash().get((int) style.getTopBorderColor())));
+                                        HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getTopBorderColor());
+                                        String bc = getHexColor(hc);
+                                        cellObj.put("btc", bc != null ? bc : "#000000");
                                     }
                                     if (style.getBorderBottom() != BorderStyle.NONE) {
                                         cellObj.put("bb", style.getBorderBottom().name());
-                                        cellObj.put("bbc", getHexColor(HSSFColor.getIndexHash().get((int) style.getBottomBorderColor())));
+                                        HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getBottomBorderColor());
+                                        String bc = getHexColor(hc);
+                                        cellObj.put("bbc", bc != null ? bc : "#000000");
                                     }
                                     if (style.getBorderLeft() != BorderStyle.NONE) {
                                         cellObj.put("bl", style.getBorderLeft().name());
-                                        cellObj.put("blc", getHexColor(HSSFColor.getIndexHash().get((int) style.getLeftBorderColor())));
+                                        HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getLeftBorderColor());
+                                        String bc = getHexColor(hc);
+                                        cellObj.put("blc", bc != null ? bc : "#000000");
                                     }
                                     if (style.getBorderRight() != BorderStyle.NONE) {
                                         cellObj.put("br", style.getBorderRight().name());
-                                        cellObj.put("brc", getHexColor(HSSFColor.getIndexHash().get((int) style.getRightBorderColor())));
+                                        HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getRightBorderColor());
+                                        String bc = getHexColor(hc);
+                                        cellObj.put("brc", bc != null ? bc : "#000000");
                                     }
                                 }
                             } catch (Throwable ignored) {}
@@ -281,15 +276,13 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(jsonRow);
             }
 
-            // Шаг 2: ИСПРАВЛЕНИЕ ВЕРТИКАЛЬНЫХ ГРАНИЦ В ОБЪЕДИНЕНИЯХ
-            // Пробегаемся по всем регионам и насильно копируем внешние границы на все внутренние ячейки региона
+            // Шаг 2: Исправление вертикальных (и горизонтальных) границ внутри объединенных ячеек
             JSONArray jsonMerges = new JSONArray();
             try {
                 int numRegions = sheet.getNumMergedRegions();
                 for (int i = 0; i < numRegions; i++) {
                     CellRangeAddress region = sheet.getMergedRegion(i);
                     if (region != null) {
-                        // Ограничиваем сборку рамками нашей рабочей матрицы
                         if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() > maxColsCount) continue;
 
                         JSONObject mergeObj = new JSONObject();
@@ -299,34 +292,28 @@ public class MainActivity extends AppCompatActivity {
                         mergeObj.put("ec", Math.min(region.getLastColumn(), maxColsCount - 1));
                         jsonMerges.put(mergeObj);
 
-                        // Берем главную (топовую) ячейку, чтобы узнать её эталонные границы
                         Row mainRow = sheet.getRow(region.getFirstRow());
                         Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
                         if (mainCell != null && mainCell.getCellStyle() != null) {
                             CellStyle mainStyle = mainCell.getCellStyle();
                             
-                            // Проходим по всем ячейкам внутри этого объединения и проставляем им "внешний кант"
                             for (int r = region.getFirstRow(); r <= Math.min(region.getLastRow(), lastRowIdx); r++) {
                                 JSONArray rowArray = jsonTable.getJSONArray(r);
                                 for (int c = region.getFirstColumn(); c <= Math.min(region.getLastColumn(), maxColsCount - 1); c++) {
                                     JSONObject cellObj = rowArray.getJSONObject(c);
 
-                                    // Если ячейка находится на левом краю объединения -> копируем левую границу главной ячейки
                                     if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != BorderStyle.NONE) {
                                         cellObj.put("bl", mainStyle.getBorderLeft().name());
                                         cellObj.put("blc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getLeftBorderColor())));
                                     }
-                                    // Если на правом краю -> копируем правую границу
                                     if (c == region.getLastColumn() && mainStyle.getBorderRight() != BorderStyle.NONE) {
                                         cellObj.put("br", mainStyle.getBorderRight().name());
                                         cellObj.put("brc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getRightBorderColor())));
                                     }
-                                    // Если на верхнем краю
                                     if (r == region.getFirstRow() && mainStyle.getBorderTop() != BorderStyle.NONE) {
                                         cellObj.put("bt", mainStyle.getBorderTop().name());
                                         cellObj.put("btc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getTopBorderColor())));
                                     }
-                                    // Если на нижнем краю
                                     if (r == region.getLastRow() && mainStyle.getBorderBottom() != BorderStyle.NONE) {
                                         cellObj.put("bb", mainStyle.getBorderBottom().name());
                                         cellObj.put("bbc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getBottomBorderColor())));
@@ -338,8 +325,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             } catch (Throwable ignored) {}
 
-            // Шаг 3: ИСПРАВЛЕНИЕ НАЛОЖЕНИЯ СМЕЖНЫХ ГРАНИЦ (Убираем жирноту)
-            // Если у текущей ячейки есть верхняя граница, а у верхней ячейки есть нижняя — убираем верхнюю у текущей, чтобы они не суммировались
+            // Шаг 3: Сглаживание и удаление наложений смежных границ ячеек
             for (int r = 1; r < jsonTable.length(); r++) {
                 JSONArray currentRow = jsonTable.getJSONArray(r);
                 JSONArray prevRow = jsonTable.getJSONArray(r - 1);
@@ -347,11 +333,10 @@ public class MainActivity extends AppCompatActivity {
                     JSONObject currentCell = currentRow.getJSONObject(c);
                     JSONObject prevCell = prevRow.getJSONObject(c);
                     if (currentCell.has("bt") && prevCell.has("bb")) {
-                        currentCell.remove("bt"); // Движок Canvas отрисует только нижнюю границу предыдущей строки, предотвращая двоение
+                        currentCell.remove("bt");
                     }
                 }
             }
-            // То же самое для вертикальных смежных границ (лево/право)
             for (int r = 0; r < jsonTable.length(); r++) {
                 JSONArray rowArray = jsonTable.getJSONArray(r);
                 for (int c = 1; c < rowArray.length(); c++) {
@@ -362,7 +347,6 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
             }
-            // --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
 
             workbook.close();
 
@@ -452,7 +436,7 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(MainActivity.this, "Изменения успешно сохранены!", Toast.LENGTH_SHORT).show();
                 } catch (Exception e) {
                     e.printStackTrace();
-                    Toast.makeText(MainActivity.this, "Ошибка сохранения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+                    Toast.makeText(MainActivity.this, "Ошибка保存ения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
                 }
             });
         }
