@@ -245,7 +245,13 @@
             }
         }
 
-        // 2. ГРАНИЦЫ
+// 2. ГРАНИЦЫ (ОПТИМИЗИРОВАНО: Сетка больше не пропадает и не тормозит при скролле)
+        ctx.save();
+        // Устанавливаем базовый стиль для стандартной сетки
+        ctx.strokeStyle = "#d4d4d4";
+        ctx.lineWidth = Math.max(1.0, 0.5 * zoom); // Защита от исчезновения линии при отдалении
+
+        ctx.beginPath();
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -266,38 +272,64 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
+                let startX = Math.floor(cx);
+                let startY = Math.floor(cy);
+                let endX = Math.floor(cx + cw);
+                let endY = Math.floor(cy + ch);
+
+                // Рисуем базовую сетку (только право и низ, чтобы линии не дублировались)
+                ctx.moveTo(startX, endY); ctx.lineTo(endX, endY);
+                ctx.moveTo(endX, startY); ctx.lineTo(endX, endY);
+            }
+        }
+        ctx.stroke(); // Отрисовываем всю стандартную сетку за один проход
+
+        // Отдельный проход для редких кастомных толстых рамок (если они есть в cellData)
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let lookup = mergeLookup[`${r}_${c}`];
+                if (lookup && lookup.isChild) continue;
+
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
-                
+                if (!cellData.bt && !cellData.bl && !cellData.bb && !cellData.br) continue;
+
+                let rect = getCellRect(r, c);
+                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
+
+                if (lookup && lookup.isMain) {
+                    let fullW = 0; let fullH = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
+                    cw = fullW * zoom; ch = fullH * zoom;
+                }
+
                 let startX = Math.round(cx);
                 let startY = Math.round(cy);
                 let endX = Math.round(cx + cw);
                 let endY = Math.round(cy + ch);
 
-                // Верх
-                ctx.beginPath();
-                ctx.strokeStyle = cellData.bt ? (cellData.btc || "#000000") : "#d4d4d4";
-                ctx.lineWidth = cellData.bt ? 1.5 : 0.5;
-                ctx.moveTo(startX, startY + 0.5); ctx.lineTo(endX, startY + 0.5); ctx.stroke();
-
-                // Лево
-                ctx.beginPath();
-                ctx.strokeStyle = cellData.bl ? (cellData.blc || "#000000") : "#d4d4d4";
-                ctx.lineWidth = cellData.bl ? 1.5 : 0.5;
-                ctx.moveTo(startX + 0.5, startY); ctx.lineTo(startX + 0.5, endY); ctx.stroke();
-
-                // Низ
-                ctx.beginPath();
-                ctx.strokeStyle = cellData.bb ? (cellData.bbc || "#000000") : "#d4d4d4";
-                ctx.lineWidth = cellData.bb ? 1.5 : 0.5;
-                ctx.moveTo(startX, endY - 0.5); ctx.lineTo(endX, endY - 0.5); ctx.stroke();
-
-                // Право
-                ctx.beginPath();
-                ctx.strokeStyle = cellData.br ? (cellData.brc || "#000000") : "#d4d4d4";
-                ctx.lineWidth = cellData.br ? 1.5 : 0.5;
-                ctx.moveTo(endX - 0.5, startY); ctx.lineTo(endX - 0.5, endY); ctx.stroke();
+                if (cellData.bt) {
+                    ctx.beginPath(); ctx.strokeStyle = cellData.btc || "#000000"; ctx.lineWidth = 2;
+                    ctx.moveTo(startX, startY); ctx.lineTo(endX, startY); ctx.stroke();
+                }
+                if (cellData.bl) {
+                    ctx.beginPath(); ctx.strokeStyle = cellData.blc || "#000000"; ctx.lineWidth = 2;
+                    ctx.moveTo(startX, startY); ctx.lineTo(startX, endY); ctx.stroke();
+                }
+                if (cellData.bb) {
+                    ctx.beginPath(); ctx.strokeStyle = cellData.bbc || "#000000"; ctx.lineWidth = 2;
+                    ctx.moveTo(startX, endY); ctx.lineTo(endX, endY); ctx.stroke();
+                }
+                if (cellData.br) {
+                    ctx.beginPath(); ctx.strokeStyle = cellData.brc || "#000000"; ctx.lineWidth = 2;
+                    ctx.moveTo(endX, startY); ctx.lineTo(endX, endY); ctx.stroke();
+                }
             }
         }
+        ctx.restore();
 
         // 3. ТЕКСТ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
