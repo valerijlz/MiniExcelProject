@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.util.Base64;
+import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -50,8 +51,9 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
-        Log.d("MiniExcelDebug", "Финальный JSON содержит регионов: " + jsonMerges.length());
-        Log.d("MiniExcelDebug", "Пример JSON: " + cachedJsonPayload.substring(0, Math.min(1000, cachedJsonPayload.length())));
+
+        // УБРАНЫ ОШИБОЧНЫЕ ЛОГИ, КОТОРЫЕ КРАШИЛИ КОМПИЛЯТОР
+
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
@@ -158,7 +160,6 @@ public class MainActivity extends AppCompatActivity {
             if (lastRowIdx > 1000) lastRowIdx = 1000;
             if (lastRowIdx < 0) lastRowIdx = 0;
 
-            // Умный подсчет максимального числа колонок (Защита синей рамки)
             int maxColsCount = 0;
             for (int r = 0; r <= lastRowIdx; r++) {
                 Row row = sheet.getRow(r);
@@ -172,7 +173,7 @@ public class MainActivity extends AppCompatActivity {
             if (maxColsCount > 40) maxColsCount = 40;
             if (maxColsCount < 5) maxColsCount = 5;
 
-            JSONArray jsonColWidths = new JSONArray();
+            JSONArray jsonWidths = new JSONArray();
             for (int c = 0; c < maxColsCount; c++) {
                 int widthInPx = 64;
                 try {
@@ -183,12 +184,12 @@ public class MainActivity extends AppCompatActivity {
                     }
                 } catch (Throwable ignored) {}
                 if (widthInPx < 15) widthInPx = 15;
-                jsonColWidths.put(widthInPx);
+                jsonWidths.put(widthInPx);
             }
 
             DataFormatter formatter = new DataFormatter();
             JSONArray jsonTable = new JSONArray();
-            JSONArray jsonRowHeights = new JSONArray();
+            JSONArray jsonHeights = new JSONArray();
 
             // Шаг 1: Сбор базовой структуры и метаданных
             for (int r = 0; r <= lastRowIdx; r++) {
@@ -198,7 +199,7 @@ public class MainActivity extends AppCompatActivity {
                 if (row != null && row.getHeightInPoints() > 0) {
                     heightInPx = (int) (row.getHeightInPoints() * 1.33);
                 }
-                jsonRowHeights.put(heightInPx);
+                jsonHeights.put(heightInPx);
 
                 JSONArray jsonRow = new JSONArray();
                 for (int c = 0; c < maxColsCount; c++) {
@@ -246,27 +247,35 @@ public class MainActivity extends AppCompatActivity {
 
                                     if (style.getBorderTop() != BorderStyle.NONE) {
                                         cellObj.put("bt", style.getBorderTop().name());
-                                        HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getTopBorderColor());
-                                        String bc = getHexColor(hc);
-                                        cellObj.put("btc", bc != null ? bc : "#000000");
+                                        try {
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getTopBorderColor());
+                                            String bc = getHexColor(hc);
+                                            cellObj.put("btc", bc != null ? bc : "#000000");
+                                        } catch (Throwable ignored) {}
                                     }
                                     if (style.getBorderBottom() != BorderStyle.NONE) {
                                         cellObj.put("bb", style.getBorderBottom().name());
-                                        HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getBottomBorderColor());
-                                        String bc = getHexColor(hc);
-                                        cellObj.put("bbc", bc != null ? bc : "#000000");
+                                        try {
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getBottomBorderColor());
+                                            String bc = getHexColor(hc);
+                                            cellObj.put("bbc", bc != null ? bc : "#000000");
+                                        } catch (Throwable ignored) {}
                                     }
                                     if (style.getBorderLeft() != BorderStyle.NONE) {
                                         cellObj.put("bl", style.getBorderLeft().name());
-                                        HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getLeftBorderColor());
-                                        String bc = getHexColor(hc);
-                                        cellObj.put("blc", bc != null ? bc : "#000000");
+                                        try {
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getLeftBorderColor());
+                                            String bc = getHexColor(hc);
+                                            cellObj.put("blc", bc != null ? bc : "#000000");
+                                        } catch (Throwable ignored) {}
                                     }
                                     if (style.getBorderRight() != BorderStyle.NONE) {
                                         cellObj.put("br", style.getBorderRight().name());
-                                        HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getRightBorderColor());
-                                        String bc = getHexColor(hc);
-                                        cellObj.put("brc", bc != null ? bc : "#000000");
+                                        try {
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getRightBorderColor());
+                                            String bc = getHexColor(hc);
+                                            cellObj.put("brc", bc != null ? bc : "#000000");
+                                        } catch (Throwable ignored) {}
                                     }
                                 }
                             } catch (Throwable ignored) {}
@@ -277,15 +286,13 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(jsonRow);
             }
 
-            // Шаг 2: Исправление вертикальных (и горизонтальных) границ внутри объединенных ячеек
-            // Шаг 2: Исправление вертикальных (и горизонтальных) границ внутри объединенных ячеек
+            // Шаг 2: Сбор объединенных регионов и проброс рамок
             JSONArray jsonMerges = new JSONArray();
             try {
                 int numRegions = sheet.getNumMergedRegions();
                 for (int i = 0; i < numRegions; i++) {
                     CellRangeAddress region = sheet.getMergedRegion(i);
                     if (region != null) {
-                        // ИСПРАВЛЕНО: Правильная проверка на выход за границы матрицы (индексы от 0 до maxColsCount-1)
                         if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() >= maxColsCount) continue;
 
                         JSONObject mergeObj = new JSONObject();
@@ -293,7 +300,7 @@ public class MainActivity extends AppCompatActivity {
                         mergeObj.put("er", Math.min(region.getLastRow(), lastRowIdx));
                         mergeObj.put("sc", region.getFirstColumn());
                         mergeObj.put("ec", Math.min(region.getLastColumn(), maxColsCount - 1));
-                        jsonMerges.put(mergeObj); // Добавляем в массив
+                        jsonMerges.put(mergeObj);
 
                         Row mainRow = sheet.getRow(region.getFirstRow());
                         Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
@@ -308,22 +315,32 @@ public class MainActivity extends AppCompatActivity {
                                 for (int c = region.getFirstColumn(); c <= finalEndCol; c++) {
                                     JSONObject cellObj = rowArray.getJSONObject(c);
 
-                                    if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != BorderStyle.NONE) {
-                                        cellObj.put("bl", mainStyle.getBorderLeft().name());
-                                        cellObj.put("blc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getLeftBorderColor())));
-                                    }
-                                    if (c == finalEndCol && mainStyle.getBorderRight() != BorderStyle.NONE) {
-                                        cellObj.put("br", mainStyle.getBorderRight().name());
-                                        cellObj.put("brc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getRightBorderColor())));
-                                    }
-                                    if (r == region.getFirstRow() && mainStyle.getBorderTop() != BorderStyle.NONE) {
-                                        cellObj.put("bt", mainStyle.getBorderTop().name());
-                                        cellObj.put("btc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getTopBorderColor())));
-                                    }
-                                    if (r == finalEndRow && mainStyle.getBorderBottom() != BorderStyle.NONE) {
-                                        cellObj.put("bb", mainStyle.getBorderBottom().name());
-                                        cellObj.put("bbc", getHexColor(HSSFColor.getIndexHash().get((int) mainStyle.getBottomBorderColor())));
-                                    }
+                                    try {
+                                        if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != BorderStyle.NONE) {
+                                            cellObj.put("bl", mainStyle.getBorderLeft().name());
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) mainStyle.getLeftBorderColor());
+                                            String bc = getHexColor(hc);
+                                            cellObj.put("blc", bc != null ? bc : "#000000");
+                                        }
+                                        if (c == finalEndCol && mainStyle.getBorderRight() != BorderStyle.NONE) {
+                                            cellObj.put("br", mainStyle.getBorderRight().name());
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) mainStyle.getRightBorderColor());
+                                            String bc = getHexColor(hc);
+                                            cellObj.put("brc", bc != null ? bc : "#000000");
+                                        }
+                                        if (r == region.getFirstRow() && mainStyle.getBorderTop() != BorderStyle.NONE) {
+                                            cellObj.put("bt", mainStyle.getBorderTop().name());
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) mainStyle.getTopBorderColor());
+                                            String bc = getHexColor(hc);
+                                            cellObj.put("btc", bc != null ? bc : "#000000");
+                                        }
+                                        if (r == finalEndRow && mainStyle.getBorderBottom() != BorderStyle.NONE) {
+                                            cellObj.put("bb", mainStyle.getBorderBottom().name());
+                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) mainStyle.getBottomBorderColor());
+                                            String bc = getHexColor(hc);
+                                            cellObj.put("bbc", bc != null ? bc : "#000000");
+                                        }
+                                    } catch (Throwable ignored) {}
                                 }
                             }
                         }
@@ -333,123 +350,4 @@ public class MainActivity extends AppCompatActivity {
 
             // Шаг 3: Сглаживание и удаление наложений смежных границ ячеек
             for (int r = 1; r < jsonTable.length(); r++) {
-                JSONArray currentRow = jsonTable.getJSONArray(r);
-                JSONArray prevRow = jsonTable.getJSONArray(r - 1);
-                for (int c = 0; c < currentRow.length(); c++) {
-                    JSONObject currentCell = currentRow.getJSONObject(c);
-                    JSONObject prevCell = prevRow.getJSONObject(c);
-                    if (currentCell.has("bt") && prevCell.has("bb")) {
-                        currentCell.remove("bt");
-                    }
-                }
-            }
-            for (int r = 0; r < jsonTable.length(); r++) {
-                JSONArray rowArray = jsonTable.getJSONArray(r);
-                for (int c = 1; c < rowArray.length(); c++) {
-                    JSONObject currentCell = rowArray.getJSONObject(c);
-                    JSONObject prevCell = rowArray.getJSONObject(c - 1);
-                    if (currentCell.has("bl") && prevCell.has("br")) {
-                        currentCell.remove("bl");
-                    }
-                }
-            }
-
-            workbook.close();
-
-            JSONObject payload = new JSONObject();
-            payload.put("matrix", jsonTable);
-            payload.put("widths", jsonWidths);
-            payload.put("heights", jsonHeights);
-            payload.put("merges", jsonMerges); // <-- ПРОВЕРЬТЕ ЭТУ СТРОКУ! Она должна быть именно здесь
-
-            cachedJsonPayload = payload.toString();
-
-            tableWebView.post(() -> {
-                tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
-            });
-
-        } catch (Throwable e) {
-            e.printStackTrace();
-            Toast.makeText(this, "Критический сбой разбора файла: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    public class AndroidBridge {
-        @JavascriptInterface
-        public String getExcelData() {
-            if (cachedJsonPayload == null || cachedJsonPayload.trim().isEmpty() || cachedJsonPayload.equals("{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}")) {
-                return "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
-            }
-
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Таблица успешно загружена!", Toast.LENGTH_SHORT).show());
-            return cachedJsonPayload;
-        }
-
-        @JavascriptInterface
-        public void saveFileData(String base64Data) {
-            runOnUiThread(() -> {
-                if (currentFileUri == null) {
-                    Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-                    intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    intent.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-                    intent.putExtra(Intent.EXTRA_TITLE, "Table.xlsx");
-                    saveFileLauncher.launch(intent);
-                    return;
-                }
-
-                try {
-                    byte[] decodedBytes = Base64.decode(base64Data, Base64.DEFAULT);
-                    String jsonString = new String(decodedBytes, StandardCharsets.UTF_8);
-                    JSONArray jsonTable = new JSONArray(jsonString);
-
-                    Workbook workbook;
-                    try (InputStream is = getContentResolver().openInputStream(currentFileUri)) {
-                        workbook = WorkbookFactory.create(is);
-                    }
-
-                    Sheet sheet = workbook.getSheetAt(0);
-
-                    for (int r = 0; r < jsonTable.length(); r++) {
-                        JSONArray jsonRow = jsonTable.getJSONArray(r);
-                        Row row = sheet.getRow(r);
-                        if (row == null) row = sheet.createRow(r);
-
-                        for (int c = 0; c < jsonRow.length(); c++) {
-                            String value = jsonRow.getString(c);
-                            Cell cell = row.getCell(c);
-                            if (cell == null) cell = row.createCell(c);
-                            
-                            try {
-                                double num = Double.parseDouble(value);
-                                cell.setCellValue(num);
-                            } catch (NumberFormatException e) {
-                                cell.setCellValue(value);
-                            }
-                        }
-                    }
-
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    workbook.write(baos);
-                    byte[] workbookBytes = baos.toByteArray();
-                    workbook.close();
-
-                    try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(currentFileUri, "rwt");
-                         FileOutputStream fos = new FileOutputStream(pfd.getFileDescriptor())) {
-                        fos.write(workbookBytes);
-                        fos.flush();
-                    }
-
-                    Toast.makeText(MainActivity.this, "Изменения успешно сохранены!", Toast.LENGTH_SHORT).show();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    Toast.makeText(MainActivity.this, "Ошибка保存ения: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
-                }
-            });
-        }
-
-        @JavascriptInterface
-        public void onStatus(String message) {
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show());
-        }
-    }
-}
+                JSONArray currentRow
