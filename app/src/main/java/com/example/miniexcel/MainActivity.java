@@ -119,7 +119,6 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // БЕЗОПАСНЫЙ ПЕРЕХОДНИК: Открытие файла вынесено в фоновый поток (Thread)
     private void pipeExcelToWebView(Uri fileUri) {
         new Thread(() -> {
             try (InputStream inputStream = getContentResolver().openInputStream(fileUri)) {
@@ -128,7 +127,6 @@ public class MainActivity extends AppCompatActivity {
                 
                 if (workbook.getNumberOfSheets() > 0) {
                     Sheet sheet = workbook.getSheetAt(0);
-                    // Вызываем парсинг листа (он выполнится в этом же фоновом потоке)
                     parseSheetToJson(sheet); 
                 } else {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this, "Файл пуст", Toast.LENGTH_SHORT).show());
@@ -140,7 +138,6 @@ public class MainActivity extends AppCompatActivity {
         }).start();
     }
 
-    // ОСНОВНОЙ ПАРСЕР: Формирует JSON структуры во вторичном потоке
     private void parseSheetToJson(org.apache.poi.ss.usermodel.Sheet sheet) {
         JSONArray jsonTable = new JSONArray();
         JSONArray jsonWidths = new JSONArray();
@@ -210,76 +207,55 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(rowArray);
             }
 
-            // Обработка объединенных регионов и их рамок
+            // Обработка объединенных регионов
             int numRegions = sheet.getNumMergedRegions();
             for (int i = 0; i < numRegions; i++) {
                 org.apache.poi.ss.util.CellRangeAddress region = sheet.getMergedRegion(i);
                 if (region != null) {
                     if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() >= maxColsCount) continue;
 
-                    int finalEndRow = Math.min(region.getLastRow(), lastRowIdx);
-                    int finalEndCol = Math.min(region.getLastColumn(), maxColsCount - 1);
-
                     JSONObject mergeObj = new JSONObject();
                     mergeObj.put("sr", region.getFirstRow());
-                    mergeObj.put("er", finalEndRow);
+                    mergeObj.put("er", region.getLastRow());
                     mergeObj.put("sc", region.getFirstColumn());
-                    mergeObj.put("ec", finalEndCol);
+                    mergeObj.put("ec", region.getLastColumn());
                     jsonMerges.put(mergeObj);
-
-                    org.apache.poi.ss.usermodel.Row mainRow = sheet.getRow(region.getFirstRow());
-                    org.apache.poi.ss.usermodel.Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
-                    
-                    if (mainCell != null && mainCell.getCellStyle() != null) {
-                        org.apache.poi.ss.usermodel.CellStyle mainStyle = mainCell.getCellStyle();
-
-                        for (int r = region.getFirstRow(); r <= finalEndRow; r++) {
-                            JSONArray currentRow = jsonTable.getJSONArray(r);
-                            for (int c = region.getFirstColumn(); c <= finalEndCol; c++) {
-                                JSONObject cellObj = currentRow.getJSONObject(c);
-
-                                if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
-                                    cellObj.put("bl", mainStyle.getBorderLeft().name());
-                                }
-                                if (c == finalEndCol && mainStyle.getBorderRight() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
-                                    cellObj.put("br", mainStyle.getBorderRight().name());
-                                }
-                                if (r == region.getFirstRow() && mainStyle.getBorderTop() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
-                                    cellObj.put("bt", mainStyle.getBorderTop().name());
-                                }
-                                if (r == finalEndRow && mainStyle.getBorderBottom() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
-                                    cellObj.put("bb", mainStyle.getBorderBottom().name());
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
-            // Финальная сборка Payload структуры
-            JSONObject payload = new JSONObject();
-            payload.put("matrix", jsonTable);
-            payload.put("widths", jsonWidths);
-            payload.put("heights", jsonHeights);
-            payload.put("merges", jsonMerges);
+            // Сборка финального JSON-пакета данных
+            JSONObject rootPayload = new JSONObject();
+            rootPayload.put("matrix", jsonTable);
+            rootPayload.put("widths", jsonWidths);
+            rootPayload.put("heights", jsonHeights);
+            rootPayload.put("merges", jsonMerges);
 
-            cachedJsonPayload = payload.toString();
-            android.util.Log.d("MiniExcelDebug", "Фон: JSON собран. Регионов: " + jsonMerges.length());
+            // Сохраняем в кэш-переменную класса
+            cachedJsonPayload = rootPayload.toString();
 
-            // Триггер обновления WebView перенаправляем СТРОГО в UI-поток
-            if (tableWebView != null) {
-                tableWebView.post(() -> tableWebView.evaluateJavascript("requestDataFromAndroid();", null));
-            }
+            // Возвращаемся в UI-поток, чтобы скомандовать WebView обновить сетку
+            runOnUiThread(() -> {
+                if (tableWebView != null) {
+                    tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
+                }
+            });
 
         } catch (Exception e) {
-            android.util.Log.e("MiniExcelDebug", "Ошибка формирования JSON: " + e.getMessage());
+            android.util.Log.e("MiniExcelDebug", "Ошибка парсинга в JSON: " + e.getMessage());
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка обработки структуры файла", Toast.LENGTH_SHORT).show());
         }
     }
 
+    // Класс моста между Java и JavaScript движком Canvas
     public class AndroidBridge {
         @JavascriptInterface
-        public String getExcelDataAsJson() {
+        public String getExcelData() {
             return cachedJsonPayload;
+        }
+
+        @JavascriptInterface
+        public void onStatus(String message) {
+            Log.d("MiniExcelStatus", message);
         }
     }
 }
