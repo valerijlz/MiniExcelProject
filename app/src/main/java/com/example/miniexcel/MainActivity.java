@@ -223,7 +223,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            // Сборка финального JSON-пакета данных
+// Сборка финального JSON-пакета данных
             JSONObject rootPayload = new JSONObject();
             rootPayload.put("matrix", jsonTable);
             rootPayload.put("widths", jsonWidths);
@@ -233,11 +233,10 @@ public class MainActivity extends AppCompatActivity {
             // Сохраняем в кэш-переменную класса
             cachedJsonPayload = rootPayload.toString();
 
-            // Возвращаемся в UI-поток, чтобы скомандовать WebView обновить сетку
-            runOnUiThread(() -> {
-                if (tableWebView != null) {
-                    tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
-                }
+            // ИСПРАВЛЕНО: Безопасное обновление без блокировки UI-потока WebView
+            tableWebView.post(() -> {
+                // Передаем команду через setTimeout в JS, чтобы разгрузить стек вызовов Android
+                tableWebView.evaluateJavascript("setTimeout(function() { requestDataFromAndroid(); }, 50);", null);
             });
 
         } catch (Exception e) {
