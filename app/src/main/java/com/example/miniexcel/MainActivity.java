@@ -26,7 +26,10 @@ public class MainActivity extends AppCompatActivity {
     private WebView tableWebView;
     private Button openButton, saveButton;
     private Uri currentFileUri = null;
-    private volatile String cachedJsonPayload = "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
+    
+    // Держим дефолтный пустой JSON, чтобы WebView не падал при инициализации
+    private final String EMPTY_PAYLOAD = "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
+    private volatile String cachedJsonPayload = EMPTY_PAYLOAD;
 
     private ActivityResultLauncher<Intent> openFileLauncher;
     private ActivityResultLauncher<Intent> saveFileLauncher;
@@ -40,9 +43,33 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         tableWebView = findViewById(R.id.tableWebView);
 
+        setupWebView();
+        initFileLaunchers();
+
+        openButton.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            String[] mimeTypes = {
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/vnd.ms-excel"
+            };
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+            openFileLauncher.launch(intent);
+        });
+
+        saveButton.setOnClickListener(v -> {
+            if (tableWebView != null) {
+                tableWebView.post(() -> tableWebView.evaluateJavascript("exportExcelToAndroid();", null));
+            }
+        });
+    }
+
+    private void setupWebView() {
+        if (tableWebView == null) return;
+
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
-        tableWebView.clearFormData();
 
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
@@ -63,32 +90,13 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
-                android.util.Log.d("WebViewJS", consoleMessage.message() + " -- From line "
-                        + consoleMessage.lineNumber() + " of "
-                        + consoleMessage.sourceId());
+                android.util.Log.d("WebViewJS", consoleMessage.message() + " -- Line "
+                        + consoleMessage.lineNumber() + " of " + consoleMessage.sourceId());
                 return true;
             }
         });
 
         tableWebView.loadUrl("file:///android_asset/grid.html");
-        
-        initFileLaunchers();
-
-        openButton.setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("*/*");
-            String[] mimeTypes = {
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    "application/vnd.ms-excel"
-            };
-            intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
-            openFileLauncher.launch(intent);
-        });
-
-        saveButton.setOnClickListener(v -> {
-            tableWebView.post(() -> tableWebView.evaluateJavascript("exportExcelToAndroid();", null));
-        });
     }
 
     private void initFileLaunchers() {
@@ -112,7 +120,9 @@ public class MainActivity extends AppCompatActivity {
                         Uri uri = result.getData().getData();
                         if (uri != null) {
                             currentFileUri = uri;
-                            tableWebView.post(() -> tableWebView.evaluateJavascript("exportExcelToAndroid();", null));
+                            if (tableWebView != null) {
+                                tableWebView.post(() -> tableWebView.evaluateJavascript("exportExcelToAndroid();", null));
+                            }
                         }
                     }
                 }
@@ -120,15 +130,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void pipeExcelToWebView(Uri fileUri) {
-        // Защита от зависаний: Сбрасываем старый кэш в Java и чистим сетку в JS перед парсингом
-        cachedJsonPayload = "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
-        tableWebView.post(() -> tableWebView.evaluateJavascript("if(typeof initEmptyGrid === 'function'){ initEmptyGrid(); }", null));
+        // УТЕЧКА ПАМЯТИ И ФРИЗЫ ИСПРАВЛЕНЫ ТУТ: 
+        // 1. Полностью сбрасываем кэш в Java-памяти до парсинга.
+        cachedJsonPayload = EMPTY_PAYLOAD;
+        
+        // 2. Перезагружаем страницу grid.html. Это очищает контекст JS-движка V8, 
+        // убирая из ОЗУ структуры старого открытого документа.
+        tableWebView.post(() -> tableWebView.loadUrl("file:///android_asset/grid.html"));
 
         new Thread(() -> {
-            try (InputStream inputStream = getContentResolver().openInputStream(fileUri)) {
-                android.util.Log.d("MiniExcelDebug", "Фон: Чтение книги Excel...");
-                Workbook workbook = WorkbookFactory.create(inputStream);
+            // Использование try-with-resources гарантирует закрытие InputStream и Workbook (освобождает нативную память POI)
+            try (InputStream inputStream = getContentResolver().openInputStream(fileUri);
+                 Workbook workbook = WorkbookFactory.create(inputStream)) {
                 
+                android.util.Log.d("MiniExcelDebug", "Фон: Успешно открыта книга Excel.");
                 if (workbook.getNumberOfSheets() > 0) {
                     Sheet sheet = workbook.getSheetAt(0);
                     parseSheetToJson(sheet); 
@@ -136,9 +151,12 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this, "Файл пуст", Toast.LENGTH_SHORT).show());
                 }
             } catch (Exception e) {
-                android.util.Log.e("MiniExcelDebug", "Ошибка чтения файла по Uri: " + e.getMessage());
+                android.util.Log.e("MiniExcelDebug", "Ошибка чтения файла: " + e.getMessage());
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка чтения файла", Toast.LENGTH_SHORT).show());
             }
+            
+            // Намекаем системе, что пора собрать отработанные объекты строк/ячеек POI
+            System.gc();
         }).start();
     }
 
@@ -160,13 +178,11 @@ public class MainActivity extends AppCompatActivity {
         if (maxColsCount == 0) maxColsCount = 12;
 
         try {
-            // Сбор ширин колонок
             for (int c = 0; c < maxColsCount; c++) {
                 int w = sheet.getColumnWidth(c) / 35;
                 jsonWidths.put(w > 0 ? w : 64);
             }
 
-            // Сбор строк, высот и контента ячеек
             for (int r = 0; r <= lastRowIdx; r++) {
                 org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
                 int h = (row != null) ? (int)(row.getHeightInPoints() * 1.33) : 20;
@@ -211,7 +227,6 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(rowArray);
             }
 
-            // Обработка объединенных регионов
             int numRegions = sheet.getNumMergedRegions();
             for (int i = 0; i < numRegions; i++) {
                 org.apache.poi.ss.util.CellRangeAddress region = sheet.getMergedRegion(i);
@@ -227,19 +242,19 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            // Сборка финального JSON-пакета данных
             JSONObject rootPayload = new JSONObject();
             rootPayload.put("matrix", jsonTable);
             rootPayload.put("widths", jsonWidths);
             rootPayload.put("heights", jsonHeights);
             rootPayload.put("merges", jsonMerges);
 
-            // Сохраняем в кэш-переменную класса
+            // Кэшируем новую строку
             cachedJsonPayload = rootPayload.toString();
 
-            // Безопасное обновление без блокировки UI-потока WebView через setTimeout в JS
+            // Безопасно пингуем JS-скрипт. Так как чуть выше мы сделали loadUrl,
+            // страница гарантированно чистая и готова принять данные заново.
             tableWebView.post(() -> {
-                tableWebView.evaluateJavascript("setTimeout(function() { requestDataFromAndroid(); }, 50);", null);
+                tableWebView.evaluateJavascript("setTimeout(function() { requestDataFromAndroid(); }, 150);", null);
             });
 
         } catch (Exception e) {
@@ -248,7 +263,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Класс моста между Java и JavaScript движком Canvas
     public class AndroidBridge {
         @JavascriptInterface
         public String getExcelData() {
