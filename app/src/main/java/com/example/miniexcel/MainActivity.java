@@ -120,6 +120,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void pipeExcelToWebView(Uri fileUri) {
+        // Защита от зависаний: Сбрасываем старый кэш в Java и чистим сетку в JS перед парсингом
+        cachedJsonPayload = "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
+        tableWebView.post(() -> tableWebView.evaluateJavascript("if(typeof initEmptyGrid === 'function'){ initEmptyGrid(); }", null));
+
         new Thread(() -> {
             try (InputStream inputStream = getContentResolver().openInputStream(fileUri)) {
                 android.util.Log.d("MiniExcelDebug", "Фон: Чтение книги Excel...");
@@ -223,7 +227,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-// Сборка финального JSON-пакета данных
+            // Сборка финального JSON-пакета данных
             JSONObject rootPayload = new JSONObject();
             rootPayload.put("matrix", jsonTable);
             rootPayload.put("widths", jsonWidths);
@@ -233,9 +237,8 @@ public class MainActivity extends AppCompatActivity {
             // Сохраняем в кэш-переменную класса
             cachedJsonPayload = rootPayload.toString();
 
-            // ИСПРАВЛЕНО: Безопасное обновление без блокировки UI-потока WebView
+            // Безопасное обновление без блокировки UI-потока WebView через setTimeout в JS
             tableWebView.post(() -> {
-                // Передаем команду через setTimeout в JS, чтобы разгрузить стек вызовов Android
                 tableWebView.evaluateJavascript("setTimeout(function() { requestDataFromAndroid(); }, 50);", null);
             });
 
