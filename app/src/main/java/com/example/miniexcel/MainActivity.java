@@ -15,7 +15,6 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
-import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -100,7 +99,7 @@ public class MainActivity extends AppCompatActivity {
                         Uri uri = result.getData().getData();
                         if (uri != null) {
                             currentFileUri = uri;
-                            pipeExcelToWebView(uri); // Вызов метода парсинга по Uri
+                            pipeExcelToWebView(uri); 
                         }
                     }
                 }
@@ -120,24 +119,29 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    // Метод-переходник: открывает поток из Uri и извлекает первую страницу Excel
+    // БЕЗОПАСНЫЙ ПЕРЕХОДНИК: Открытие файла вынесено в фоновый поток (Thread)
     private void pipeExcelToWebView(Uri fileUri) {
-        try (InputStream inputStream = getContentResolver().openInputStream(fileUri)) {
-            Workbook workbook = WorkbookFactory.create(inputStream);
-            if (workbook.getNumberOfSheets() > 0) {
-                Sheet sheet = workbook.getSheetAt(0);
-                pipeExcelToWebView(sheet); // Передаем страницу в основной парсер
-            } else {
-                Toast.makeText(this, "Файл пуст", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try (InputStream inputStream = getContentResolver().openInputStream(fileUri)) {
+                android.util.Log.d("MiniExcelDebug", "Фон: Чтение книги Excel...");
+                Workbook workbook = WorkbookFactory.create(inputStream);
+                
+                if (workbook.getNumberOfSheets() > 0) {
+                    Sheet sheet = workbook.getSheetAt(0);
+                    // Вызываем парсинг листа (он выполнится в этом же фоновом потоке)
+                    parseSheetToJson(sheet); 
+                } else {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "Файл пуст", Toast.LENGTH_SHORT).show());
+                }
+            } catch (Exception e) {
+                android.util.Log.e("MiniExcelDebug", "Ошибка чтения файла по Uri: " + e.getMessage());
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка чтения файла", Toast.LENGTH_SHORT).show());
             }
-        } catch (Exception e) {
-            android.util.Log.e("MiniExcelDebug", "Ошибка чтения файла по Uri: " + e.getMessage());
-            Toast.makeText(this, "Ошибка чтения файла", Toast.LENGTH_SHORT).show();
-        }
+        }).start();
     }
 
-    // Основной метод парсинга страницы в JSON
-    private void pipeExcelToWebView(org.apache.poi.ss.usermodel.Sheet sheet) {
+    // ОСНОВНОЙ ПАРСЕР: Формирует JSON структуры во вторичном потоке
+    private void parseSheetToJson(org.apache.poi.ss.usermodel.Sheet sheet) {
         JSONArray jsonTable = new JSONArray();
         JSONArray jsonWidths = new JSONArray();
         JSONArray jsonHeights = new JSONArray();
@@ -146,7 +150,6 @@ public class MainActivity extends AppCompatActivity {
         int lastRowIdx = sheet.getLastRowNum();
         int maxColsCount = 0;
 
-        // 1. Считаем максимальное количество колонок
         for (int r = 0; r <= lastRowIdx; r++) {
             org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
             if (row != null && row.getLastCellNum() > maxColsCount) {
@@ -156,13 +159,13 @@ public class MainActivity extends AppCompatActivity {
         if (maxColsCount == 0) maxColsCount = 12;
 
         try {
-            // 2. Сбор ширин колонок
+            // Сбор ширин колонок
             for (int c = 0; c < maxColsCount; c++) {
                 int w = sheet.getColumnWidth(c) / 35;
                 jsonWidths.put(w > 0 ? w : 64);
             }
 
-            // 3. Сбор строк, высот и ячеек
+            // Сбор строк, высот и контента ячеек
             for (int r = 0; r <= lastRowIdx; r++) {
                 org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
                 int h = (row != null) ? (int)(row.getHeightInPoints() * 1.33) : 20;
@@ -171,7 +174,7 @@ public class MainActivity extends AppCompatActivity {
                 JSONArray rowArray = new JSONArray();
                 for (int c = 0; c < maxColsCount; c++) {
                     JSONObject cellObj = new JSONObject();
-                    cellObj.put("v", ""); // Дефолтное значение
+                    cellObj.put("v", ""); 
 
                     if (row != null) {
                         org.apache.poi.ss.usermodel.Cell cell = row.getCell(c);
@@ -207,7 +210,7 @@ public class MainActivity extends AppCompatActivity {
                 jsonTable.put(rowArray);
             }
 
-            // 4. Сбор объединенных регионов и прокидывание их рамок
+            // Обработка объединенных регионов и их рамок
             int numRegions = sheet.getNumMergedRegions();
             for (int i = 0; i < numRegions; i++) {
                 org.apache.poi.ss.util.CellRangeAddress region = sheet.getMergedRegion(i);
@@ -224,7 +227,6 @@ public class MainActivity extends AppCompatActivity {
                     mergeObj.put("ec", finalEndCol);
                     jsonMerges.put(mergeObj);
 
-                    // Копируем рамки от главной ячейки по периметру объединения
                     org.apache.poi.ss.usermodel.Row mainRow = sheet.getRow(region.getFirstRow());
                     org.apache.poi.ss.usermodel.Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
                     
@@ -254,7 +256,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
-            // 5. Финальная сборка payload
+            // Финальная сборка Payload структуры
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
             payload.put("widths", jsonWidths);
@@ -262,24 +264,18 @@ public class MainActivity extends AppCompatActivity {
             payload.put("merges", jsonMerges);
 
             cachedJsonPayload = payload.toString();
-            android.util.Log.d("MiniExcelDebug", "JSON упакован успешно. Объединений: " + jsonMerges.length());
+            android.util.Log.d("MiniExcelDebug", "Фон: JSON собран. Регионов: " + jsonMerges.length());
 
-            // 6. Отправка в WebView в UI-потоке
+            // Триггер обновления WebView перенаправляем СТРОГО в UI-поток
             if (tableWebView != null) {
-                tableWebView.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
-                    }
-                });
+                tableWebView.post(() -> tableWebView.evaluateJavascript("requestDataFromAndroid();", null));
             }
 
         } catch (Exception e) {
-            android.util.Log.e("MiniExcelDebug", "Критическая ошибка парсинга: " + e.getMessage());
+            android.util.Log.e("MiniExcelDebug", "Ошибка формирования JSON: " + e.getMessage());
         }
     }
 
-    // Класс моста взаимодействия Java -> JavaScript (WebView)
     public class AndroidBridge {
         @JavascriptInterface
         public String getExcelDataAsJson() {
