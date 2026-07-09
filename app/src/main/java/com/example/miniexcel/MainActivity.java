@@ -4,8 +4,6 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.ParcelFileDescriptor;
-import android.util.Base64;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
@@ -19,15 +17,10 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import org.apache.poi.hssf.util.HSSFColor;
 import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.ss.util.CellRangeAddress;
-import org.apache.poi.xssf.usermodel.XSSFColor;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
-import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -51,8 +44,6 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
-
-        // УБРАНЫ ОШИБОЧНЫЕ ЛОГИ, КОТОРЫЕ КРАШИЛИ КОМПИЛЯТОР
 
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
@@ -109,7 +100,7 @@ public class MainActivity extends AppCompatActivity {
                         Uri uri = result.getData().getData();
                         if (uri != null) {
                             currentFileUri = uri;
-                            pipeExcelToWebView(uri);
+                            pipeExcelToWebView(uri); // Вызов метода парсинга по Uri
                         }
                     }
                 }
@@ -129,162 +120,170 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
-    private String getHexColor(Color color) {
-        if (color == null) return null;
-        try {
-            if (color instanceof XSSFColor) {
-                byte[] rgb = ((XSSFColor) color).getARGB();
-                if (rgb != null && rgb.length == 4) {
-                    return String.format("#%02x%02x%02x", rgb[1], rgb[2], rgb[3]);
-                }
-            } else if (color instanceof HSSFColor) {
-                short[] triplet = ((HSSFColor) color).getTriplet();
-                if (triplet != null && triplet.length == 3) {
-                    return String.format("#%02x%02x%02x", triplet[0], triplet[1], triplet[2]);
-                }
+    // Метод-переходник: открывает поток из Uri и извлекает первую страницу Excel
+    private void pipeExcelToWebView(Uri fileUri) {
+        try (InputStream inputStream = getContentResolver().openInputStream(fileUri)) {
+            Workbook workbook = WorkbookFactory.create(inputStream);
+            if (workbook.getNumberOfSheets() > 0) {
+                Sheet sheet = workbook.getSheetAt(0);
+                pipeExcelToWebView(sheet); // Передаем страницу в основной парсер
+            } else {
+                Toast.makeText(this, "Файл пуст", Toast.LENGTH_SHORT).show();
             }
-        } catch (Throwable ignored) {}
-        return null;
-    }
-
-private void pipeExcelToWebView(org.apache.poi.ss.usermodel.Sheet sheet) {
-    JSONArray jsonTable = new JSONArray();
-    JSONArray jsonWidths = new JSONArray();
-    JSONArray jsonHeights = new JSONArray();
-    JSONArray jsonMerges = new JSONArray();
-
-    int lastRowIdx = sheet.getLastRowNum();
-    int maxColsCount = 0;
-
-    // 1. Считаем максимальное количество колонок
-    for (int r = 0; r <= lastRowIdx; r++) {
-        org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
-        if (row != null && row.getLastCellNum() > maxColsCount) {
-            maxColsCount = row.getLastCellNum();
+        } catch (Exception e) {
+            android.util.Log.e("MiniExcelDebug", "Ошибка чтения файла по Uri: " + e.getMessage());
+            Toast.makeText(this, "Ошибка чтения файла", Toast.LENGTH_SHORT).show();
         }
     }
-    if (maxColsCount == 0) maxColsCount = 12;
 
-    try {
-        // 2. Сбор ширин колонок
-        for (int c = 0; c < maxColsCount; c++) {
-            int w = sheet.getColumnWidth(c) / 35;
-            jsonWidths.put(w > 0 ? w : 64);
-        }
+    // Основной метод парсинга страницы в JSON
+    private void pipeExcelToWebView(org.apache.poi.ss.usermodel.Sheet sheet) {
+        JSONArray jsonTable = new JSONArray();
+        JSONArray jsonWidths = new JSONArray();
+        JSONArray jsonHeights = new JSONArray();
+        JSONArray jsonMerges = new JSONArray();
 
-        // 3. Сбор строк, высот и ячеек
+        int lastRowIdx = sheet.getLastRowNum();
+        int maxColsCount = 0;
+
+        // 1. Считаем максимальное количество колонок
         for (int r = 0; r <= lastRowIdx; r++) {
             org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
-            int h = (row != null) ? (int)(row.getHeightInPoints() * 1.33) : 20;
-            jsonHeights.put(h > 0 ? h : 20);
+            if (row != null && row.getLastCellNum() > maxColsCount) {
+                maxColsCount = row.getLastCellNum();
+            }
+        }
+        if (maxColsCount == 0) maxColsCount = 12;
 
-            JSONArray rowArray = new JSONArray();
+        try {
+            // 2. Сбор ширин колонок
             for (int c = 0; c < maxColsCount; c++) {
-                JSONObject cellObj = new JSONObject();
-                cellObj.put("v", ""); // Дефолтное значение
-
-                if (row != null) {
-                    org.apache.poi.ss.usermodel.Cell cell = row.getCell(c);
-                    if (cell != null) {
-                        switch (cell.getCellType()) {
-                            case STRING: 
-                                cellObj.put("v", cell.getStringCellValue()); 
-                                break;
-                            case NUMERIC: 
-                                if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
-                                    cellObj.put("v", cell.getDateCellValue().toString());
-                                } else {
-                                    cellObj.put("v", cell.getNumericCellValue());
-                                }
-                                break;
-                            case FORMULA:
-                                try { cellObj.put("v", cell.getStringCellValue()); } 
-                                catch(Exception e1) {
-                                    try { cellObj.put("v", cell.getNumericCellValue()); } 
-                                    catch(Exception ignored) {}
-                                }
-                                break;
-                            case BOOLEAN: 
-                                cellObj.put("v", cell.getBooleanCellValue()); 
-                                break;
-                            default: 
-                                cellObj.put("v", "");
-                        }
-                    }
-                }
-                rowArray.put(cellObj);
+                int w = sheet.getColumnWidth(c) / 35;
+                jsonWidths.put(w > 0 ? w : 64);
             }
-            jsonTable.put(rowArray);
-        }
 
-        // 4. Сбор объединенных регионов и прокидывание их рамок
-        int numRegions = sheet.getNumMergedRegions();
-        for (int i = 0; i < numRegions; i++) {
-            org.apache.poi.ss.util.CellRangeAddress region = sheet.getMergedRegion(i);
-            if (region != null) {
-                if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() >= maxColsCount) continue;
+            // 3. Сбор строк, высот и ячеек
+            for (int r = 0; r <= lastRowIdx; r++) {
+                org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
+                int h = (row != null) ? (int)(row.getHeightInPoints() * 1.33) : 20;
+                jsonHeights.put(h > 0 ? h : 20);
 
-                int finalEndRow = Math.min(region.getLastRow(), lastRowIdx);
-                int finalEndCol = Math.min(region.getLastColumn(), maxColsCount - 1);
+                JSONArray rowArray = new JSONArray();
+                for (int c = 0; c < maxColsCount; c++) {
+                    JSONObject cellObj = new JSONObject();
+                    cellObj.put("v", ""); // Дефолтное значение
 
-                JSONObject mergeObj = new JSONObject();
-                mergeObj.put("sr", region.getFirstRow());
-                mergeObj.put("er", finalEndRow);
-                mergeObj.put("sc", region.getFirstColumn());
-                mergeObj.put("ec", finalEndCol);
-                jsonMerges.put(mergeObj);
-
-                // Копируем рамки от главной ячейки по периметру объединения
-                org.apache.poi.ss.usermodel.Row mainRow = sheet.getRow(region.getFirstRow());
-                org.apache.poi.ss.usermodel.Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
-                
-                if (mainCell != null && mainCell.getCellStyle() != null) {
-                    org.apache.poi.ss.usermodel.CellStyle mainStyle = mainCell.getCellStyle();
-
-                    for (int r = region.getFirstRow(); r <= finalEndRow; r++) {
-                        JSONArray currentRow = jsonTable.getJSONArray(r);
-                        for (int c = region.getFirstColumn(); c <= finalEndCol; c++) {
-                            JSONObject cellObj = currentRow.getJSONObject(c);
-
-                            if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
-                                cellObj.put("bl", mainStyle.getBorderLeft().name());
-                            }
-                            if (c == finalEndCol && mainStyle.getBorderRight() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
-                                cellObj.put("br", mainStyle.getBorderRight().name());
-                            }
-                            if (r == region.getFirstRow() && mainStyle.getBorderTop() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
-                                cellObj.put("bt", mainStyle.getBorderTop().name());
-                            }
-                            if (r == finalEndRow && mainStyle.getBorderBottom() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
-                                cellObj.put("bb", mainStyle.getBorderBottom().name());
+                    if (row != null) {
+                        org.apache.poi.ss.usermodel.Cell cell = row.getCell(c);
+                        if (cell != null) {
+                            switch (cell.getCellType()) {
+                                case STRING: 
+                                    cellObj.put("v", cell.getStringCellValue()); 
+                                    break;
+                                case NUMERIC: 
+                                    if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
+                                        cellObj.put("v", cell.getDateCellValue().toString());
+                                    } else {
+                                        cellObj.put("v", cell.getNumericCellValue());
+                                    }
+                                    break;
+                                case FORMULA:
+                                    try { cellObj.put("v", cell.getStringCellValue()); } 
+                                    catch(Exception e1) {
+                                        try { cellObj.put("v", cell.getNumericCellValue()); } 
+                                        catch(Exception ignored) {}
+                                    }
+                                    break;
+                                case BOOLEAN: 
+                                    cellObj.put("v", cell.getBooleanCellValue()); 
+                                    break;
+                                default: 
+                                    cellObj.put("v", "");
                             }
                         }
                     }
+                    rowArray.put(cellObj);
+                }
+                jsonTable.put(rowArray);
+            }
+
+            // 4. Сбор объединенных регионов и прокидывание их рамок
+            int numRegions = sheet.getNumMergedRegions();
+            for (int i = 0; i < numRegions; i++) {
+                org.apache.poi.ss.util.CellRangeAddress region = sheet.getMergedRegion(i);
+                if (region != null) {
+                    if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() >= maxColsCount) continue;
+
+                    int finalEndRow = Math.min(region.getLastRow(), lastRowIdx);
+                    int finalEndCol = Math.min(region.getLastColumn(), maxColsCount - 1);
+
+                    JSONObject mergeObj = new JSONObject();
+                    mergeObj.put("sr", region.getFirstRow());
+                    mergeObj.put("er", finalEndRow);
+                    mergeObj.put("sc", region.getFirstColumn());
+                    mergeObj.put("ec", finalEndCol);
+                    jsonMerges.put(mergeObj);
+
+                    // Копируем рамки от главной ячейки по периметру объединения
+                    org.apache.poi.ss.usermodel.Row mainRow = sheet.getRow(region.getFirstRow());
+                    org.apache.poi.ss.usermodel.Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
+                    
+                    if (mainCell != null && mainCell.getCellStyle() != null) {
+                        org.apache.poi.ss.usermodel.CellStyle mainStyle = mainCell.getCellStyle();
+
+                        for (int r = region.getFirstRow(); r <= finalEndRow; r++) {
+                            JSONArray currentRow = jsonTable.getJSONArray(r);
+                            for (int c = region.getFirstColumn(); c <= finalEndCol; c++) {
+                                JSONObject cellObj = currentRow.getJSONObject(c);
+
+                                if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
+                                    cellObj.put("bl", mainStyle.getBorderLeft().name());
+                                }
+                                if (c == finalEndCol && mainStyle.getBorderRight() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
+                                    cellObj.put("br", mainStyle.getBorderRight().name());
+                                }
+                                if (r == region.getFirstRow() && mainStyle.getBorderTop() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
+                                    cellObj.put("bt", mainStyle.getBorderTop().name());
+                                }
+                                if (r == finalEndRow && mainStyle.getBorderBottom() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
+                                    cellObj.put("bb", mainStyle.getBorderBottom().name());
+                                }
+                            }
+                        }
+                    }
                 }
             }
+
+            // 5. Финальная сборка payload
+            JSONObject payload = new JSONObject();
+            payload.put("matrix", jsonTable);
+            payload.put("widths", jsonWidths);
+            payload.put("heights", jsonHeights);
+            payload.put("merges", jsonMerges);
+
+            cachedJsonPayload = payload.toString();
+            android.util.Log.d("MiniExcelDebug", "JSON упакован успешно. Объединений: " + jsonMerges.length());
+
+            // 6. Отправка в WebView в UI-потоке
+            if (tableWebView != null) {
+                tableWebView.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
+                    }
+                });
+            }
+
+        } catch (Exception e) {
+            android.util.Log.e("MiniExcelDebug", "Критическая ошибка парсинга: " + e.getMessage());
         }
+    }
 
-        // 5. Финальная сборка payload
-        JSONObject payload = new JSONObject();
-        payload.put("matrix", jsonTable);
-        payload.put("widths", jsonWidths);
-        payload.put("heights", jsonHeights);
-        payload.put("merges", jsonMerges);
-
-        cachedJsonPayload = payload.toString();
-        android.util.Log.d("MiniExcelDebug", "JSON упакован успешно. Объединений: " + jsonMerges.length());
-
-        // 6. Отправка в WebView в UI-потоке
-        if (tableWebView != null) {
-            tableWebView.post(new Runnable() {
-                @Override
-                public void run() {
-                    tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
-                }
-            });
+    // Класс моста взаимодействия Java -> JavaScript (WebView)
+    public class AndroidBridge {
+        @JavascriptInterface
+        public String getExcelDataAsJson() {
+            return cachedJsonPayload;
         }
-
-    } catch (Exception e) {
-        android.util.Log.e("MiniExcelDebug", "Критическая ошибка парсинга: " + e.getMessage());
     }
 }
