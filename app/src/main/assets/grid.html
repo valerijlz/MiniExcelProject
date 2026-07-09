@@ -38,6 +38,7 @@
     let merges = [];
     let widths = [];
     let heights = [];
+    let mergeLookup = {}; // Глобальная карта объединений для стабильного доступа из любой точки
 
     let scrollX = 0;
     let scrollY = 0;
@@ -65,14 +66,32 @@
         return name;
     }
 
-    function getMergedCellInfo(row, col) {
-        for (let i = 0; i < merges.length; i++) {
-            let m = merges[i];
-            if (row >= m.sr && row <= m.er && col >= m.sc && col <= m.ec) {
-                return m;
+    function buildMergeLookup() {
+        mergeLookup = {};
+        merges.forEach(m => {
+            for (let r = m.sr; r <= m.er; r++) {
+                for (let c = m.sc; c <= m.ec; c++) {
+                    mergeLookup[`${r}_${c}`] = (r === m.sr && c === m.sc) 
+                        ? { isMain: true, isChild: false, m: m } 
+                        : { isMain: false, isChild: true, m: m };
+                }
             }
-        }
-        return null;
+        });
+    }
+
+    function getMergedCellInfo(row, col) {
+        let lookup = mergeLookup[`${row}_${col}`];
+        return lookup ? lookup.m : null;
+    }
+
+    // ИСПРАВЛЕНО: Добавлен искусственный запас +300px за синюю рамку для комфортного просмотра краев листа
+    function getScrollLimits() {
+        if (!canvas || canvas.clientWidth === 0) return { x: 0, y: 0 };
+        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || 64);
+        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += (heights[i] || 20);
+        let maxSX = Math.max(0, totalW - (canvas.clientWidth - ROW_NUM_WIDTH) / zoom + 300);
+        let maxSY = Math.max(0, totalH - (canvas.clientHeight - COL_NUM_HEIGHT) / zoom + 300);
+        return { x: maxSX, y: maxSY };
     }
 
     function initEmptyGrid() {
@@ -86,6 +105,7 @@
         widths = Array(maxCols).fill(64);
         heights = Array(maxRows).fill(20);
         merges = [];
+        mergeLookup = {};
         
         if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
             updateCanvasDimensions();
@@ -131,7 +151,6 @@
             if (!rawJson) return;
             const payload = JSON.parse(rawJson);
             
-            // ЗАЩИТА: Если Excel-файл еще не выбран или пуст, инициализируем дефолтную сетку
             if (!payload.matrix || payload.matrix.length === 0) {
                 initEmptyGrid();
                 return;
@@ -156,6 +175,9 @@
                 let h = incomingHeights[r];
                 heights[r] = (h && h > 0) ? Math.round(h) : 20;
             }
+
+            // ИСПРАВЛЕНО: Принудительный глобальный маппинг объединений при получении файла
+            buildMergeLookup();
 
             scrollX = 0;
             scrollY = 0;
@@ -186,23 +208,12 @@
     function draw() {
         if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
         
-        // Коррекция: Даже если данных нет, мы всё равно очищаем экран и рисуем пустые сетки, а не выходим из функции
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
         if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) {
             return; 
         }
         
         ctx.save();
-
-        let mergeLookup = {};
-        merges.forEach(m => {
-            for (let r = m.sr; r <= m.er; r++) {
-                for (let c = m.sc; c <= m.ec; c++) {
-                    mergeLookup[`${r}_${c}`] = (r === m.sr && c === m.sc) ? { isMain: true, m: m } : { isChild: true };
-                }
-            }
-        });
-
         ctx.textBaseline = 'middle';
         
         // 1. ФОН ЯЧЕЕК
@@ -234,7 +245,7 @@
             }
         }
 
-        // 2. ГРАНИЦЫ (Математически точный расчет стыков пикселей)
+        // 2. ГРАНИЦЫ
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -257,7 +268,6 @@
 
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 
-                // Используем Math.round для предотвращения микро-щелей на HighDPI экранах Android
                 let startX = Math.round(cx);
                 let startY = Math.round(cy);
                 let endX = Math.round(cx + cw);
@@ -289,7 +299,7 @@
             }
         }
 
-// 3. ТЕКСТ ЯЧЕЕК (Свободное перетекание для одиночных пустых соседних ячеек)
+        // 3. ТЕКСТ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -308,57 +318,49 @@
                     cw = fullW * zoom; ch = fullH * zoom;
                 }
 
-                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
-
                 let cellData = matrix[r] ? matrix[r][c] : null;
                 let text = (cellData && cellData.v !== undefined) ? String(cellData.v) : "";
                 
                 if (text !== "") {
-                    ctx.save();
+                    let availableW = cw;
                     
-                    ctx.fillStyle = (cellData && cellData.color) ? cellData.color : "#000000";
-                    let fontStyle = "";
-                    if (cellData && cellData.bold) fontStyle += "bold ";
-                    if (cellData && cellData.italic) fontStyle += "italic ";
-                    ctx.font = `${fontStyle}${11 * zoom}px Arial`;
-
-                    // Если это объединенная ячейка, всегда обрезаем по её полному размеру
-                    if (lookup && lookup.isMain) {
-                        ctx.beginPath();
-                        ctx.rect(cx + 2, cy, cw - 4, ch);
-                        ctx.clip();
-                        ctx.fillText(text, cx + 5, cy + ch / 2);
-                    } else {
-                        // Для одиночных ячеек проверяем, сколько пустых ячеек справа мы можем занять
-                        let availableW = cw;
+                    // ИСПРАВЛЕНО: Интеллектуальный расчет перетекания контента с проверкой свободного лимита справа
+                    if (!(lookup && lookup.isMain)) {
                         let nextCol = c + 1;
-                        
                         while (nextCol < maxCols) {
                             let nextLookup = mergeLookup[`${r}_${nextCol}`];
                             let nextCellData = matrix[r] ? matrix[r][nextCol] : null;
                             let nextCellText = (nextCellData && nextCellData.v !== undefined) ? String(nextCellData.v) : "";
                             
-                            // Если следующая ячейка не пустая, или имеет фон, или она часть объединения — стоп
                             if (nextCellText !== "" || (nextCellData && nextCellData.bg) || nextLookup) {
                                 break;
                             }
                             availableW += (widths[nextCol] || 64) * zoom;
                             nextCol++;
                         }
-
-                        ctx.beginTransaction;
-                        ctx.beginPath();
-                        ctx.rect(cx + 2, cy, availableW - 4, ch);
-                        ctx.clip();
-                        ctx.fillText(text, cx + 5, cy + ch / 2);
                     }
+
+                    // ИСПРАВЛЕНО: Проверка видимости привязана к availableW, текст больше не исчезает при уходе ячейки влево
+                    if (cx + availableW < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
+
+                    ctx.save();
+                    ctx.fillStyle = (cellData && cellData.color) ? cellData.color : "#000000";
+                    let fontStyle = "";
+                    if (cellData && cellData.bold) fontStyle += "bold ";
+                    if (cellData && cellData.italic) fontStyle += "italic ";
+                    ctx.font = `${fontStyle}${11 * zoom}px Arial`;
+
+                    ctx.beginPath();
+                    ctx.rect(cx + 2, cy, availableW - 4, ch);
+                    ctx.clip(); // Безопасный клиппинг по границе доступной ширины
+                    ctx.fillText(text, cx + 5, cy + ch / 2);
                     
                     ctx.restore();
                 }
             }
         }
 
-        // 4. СИНЯЯ РАМКА ОГРАНИЧЕНИЯ ЛИСТА (Жёсткое пиксельное выравнивание)
+        // 4. СИНЯЯ РАМКА ОГРАНИЧЕНИЯ ЛИСТА
         let sheetTotalW = 0; for (let i = 0; i < maxCols; i++) sheetTotalW += (widths[i] || 64);
         let sheetTotalH = 0; for (let i = 0; i < maxRows; i++) sheetTotalH += (heights[i] || 20);
         
@@ -419,15 +421,6 @@
         ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
         ctx.restore();
-    }
-
-    function getScrollLimits() {
-        if (!canvas || canvas.clientWidth === 0) return { x: 0, y: 0 };
-        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || 64);
-        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += (heights[i] || 20);
-        let maxSX = Math.max(0, totalW - (canvas.clientWidth - ROW_NUM_WIDTH) / zoom);
-        let maxSY = Math.max(0, totalH - (canvas.clientHeight - COL_NUM_HEIGHT) / zoom);
-        return { x: maxSX, y: maxSY };
     }
 
     const viewWatcher = new ResizeObserver(() => {
@@ -548,9 +541,8 @@
         draw();
     });
 
-    // Безопасный старт
     window.onload = function() {
-        initEmptyGrid(); // Сразу рисуем дефолтный пустой шаблон, чтобы не было белого экрана
+        initEmptyGrid(); 
         let attempts = 0;
         function tryInit() {
             if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
