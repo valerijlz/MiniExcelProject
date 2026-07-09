@@ -50,7 +50,8 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.clearCache(true);
         tableWebView.clearHistory();
         tableWebView.clearFormData();
-
+        Log.d("MiniExcelDebug", "Финальный JSON содержит регионов: " + jsonMerges.length());
+        Log.d("MiniExcelDebug", "Пример JSON: " + cachedJsonPayload.substring(0, Math.min(1000, cachedJsonPayload.length())));
         WebSettings webSettings = tableWebView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
@@ -291,9 +292,8 @@ public class MainActivity extends AppCompatActivity {
                         mergeObj.put("sr", region.getFirstRow());
                         mergeObj.put("er", Math.min(region.getLastRow(), lastRowIdx));
                         mergeObj.put("sc", region.getFirstColumn());
-                        // Ограничиваем правый край строго размером нашей таблицы
                         mergeObj.put("ec", Math.min(region.getLastColumn(), maxColsCount - 1));
-                        jsonMerges.put(mergeObj);
+                        jsonMerges.put(mergeObj); // Добавляем в массив
 
                         Row mainRow = sheet.getRow(region.getFirstRow());
                         Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
@@ -358,9 +358,9 @@ public class MainActivity extends AppCompatActivity {
 
             JSONObject payload = new JSONObject();
             payload.put("matrix", jsonTable);
-            payload.put("merges", jsonMerges);
-            payload.put("widths", jsonColWidths);
-            payload.put("heights", jsonRowHeights);
+            payload.put("widths", jsonWidths);
+            payload.put("heights", jsonHeights);
+            payload.put("merges", jsonMerges); // <-- ПРОВЕРЬТЕ ЭТУ СТРОКУ! Она должна быть именно здесь
 
             cachedJsonPayload = payload.toString();
 
