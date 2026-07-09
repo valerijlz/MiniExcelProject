@@ -147,207 +147,144 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
-    private void pipeExcelToWebView(Uri uri) {
-        try {
-            Workbook workbook;
-            try (InputStream is = getContentResolver().openInputStream(uri)) {
-                workbook = WorkbookFactory.create(is);
-            }
+private void pipeExcelToWebView(org.apache.poi.ss.usermodel.Sheet sheet) {
+    JSONArray jsonTable = new JSONArray();
+    JSONArray jsonWidths = new JSONArray();
+    JSONArray jsonHeights = new JSONArray();
+    JSONArray jsonMerges = new JSONArray();
 
-            Sheet sheet = workbook.getSheetAt(0);
-            
-            int lastRowIdx = sheet.getLastRowNum();
-            if (lastRowIdx > 1000) lastRowIdx = 1000;
-            if (lastRowIdx < 0) lastRowIdx = 0;
+    int lastRowIdx = sheet.getLastRowNum();
+    int maxColsCount = 0;
 
-            int maxColsCount = 0;
-            for (int r = 0; r <= lastRowIdx; r++) {
-                Row row = sheet.getRow(r);
-                if (row != null) {
-                    int lastCellNum = row.getLastCellNum();
-                    if (lastCellNum > maxColsCount) {
-                        maxColsCount = lastCellNum;
-                    }
-                }
-            }
-            if (maxColsCount > 40) maxColsCount = 40;
-            if (maxColsCount < 5) maxColsCount = 5;
+    // 1. Считаем максимальное количество колонок
+    for (int r = 0; r <= lastRowIdx; r++) {
+        org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
+        if (row != null && row.getLastCellNum() > maxColsCount) {
+            maxColsCount = row.getLastCellNum();
+        }
+    }
+    if (maxColsCount == 0) maxColsCount = 12;
 
-            JSONArray jsonWidths = new JSONArray();
+    try {
+        // 2. Сбор ширин колонок
+        for (int c = 0; c < maxColsCount; c++) {
+            int w = sheet.getColumnWidth(c) / 35;
+            jsonWidths.put(w > 0 ? w : 64);
+        }
+
+        // 3. Сбор строк, высот и ячеек
+        for (int r = 0; r <= lastRowIdx; r++) {
+            org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
+            int h = (row != null) ? (int)(row.getHeightInPoints() * 1.33) : 20;
+            jsonHeights.put(h > 0 ? h : 20);
+
+            JSONArray rowArray = new JSONArray();
             for (int c = 0; c < maxColsCount; c++) {
-                int widthInPx = 64;
-                try {
-                    int poiWidth = sheet.getColumnWidth(c);
-                    if (poiWidth > 0) {
-                        double characters = (double) poiWidth / 256.0;
-                        widthInPx = (int) Math.round(characters * 7.5);
-                    }
-                } catch (Throwable ignored) {}
-                if (widthInPx < 15) widthInPx = 15;
-                jsonWidths.put(widthInPx);
-            }
+                JSONObject cellObj = new JSONObject();
+                cellObj.put("v", ""); // Дефолтное значение
 
-            DataFormatter formatter = new DataFormatter();
-            JSONArray jsonTable = new JSONArray();
-            JSONArray jsonHeights = new JSONArray();
-
-            // Шаг 1: Сбор базовой структуры и метаданных
-            for (int r = 0; r <= lastRowIdx; r++) {
-                Row row = sheet.getRow(r);
-                
-                int heightInPx = 18;
-                if (row != null && row.getHeightInPoints() > 0) {
-                    heightInPx = (int) (row.getHeightInPoints() * 1.33);
-                }
-                jsonHeights.put(heightInPx);
-
-                JSONArray jsonRow = new JSONArray();
-                for (int c = 0; c < maxColsCount; c++) {
-                    JSONObject cellObj = new JSONObject();
-                    cellObj.put("v", "");
-
-                    if (row != null) {
-                        Cell cell = row.getCell(c);
-                        if (cell != null) {
-                            try {
-                                cellObj.put("v", formatter.formatCellValue(cell));
-                            } catch (Throwable e) {
+                if (row != null) {
+                    org.apache.poi.ss.usermodel.Cell cell = row.getCell(c);
+                    if (cell != null) {
+                        switch (cell.getCellType()) {
+                            case STRING: 
+                                cellObj.put("v", cell.getStringCellValue()); 
+                                break;
+                            case NUMERIC: 
+                                if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
+                                    cellObj.put("v", cell.getDateCellValue().toString());
+                                } else {
+                                    cellObj.put("v", cell.getNumericCellValue());
+                                }
+                                break;
+                            case FORMULA:
+                                try { cellObj.put("v", cell.getStringCellValue()); } 
+                                catch(Exception e1) {
+                                    try { cellObj.put("v", cell.getNumericCellValue()); } 
+                                    catch(Exception ignored) {}
+                                }
+                                break;
+                            case BOOLEAN: 
+                                cellObj.put("v", cell.getBooleanCellValue()); 
+                                break;
+                            default: 
                                 cellObj.put("v", "");
-                            }
-
-                            try {
-                                CellStyle style = cell.getCellStyle();
-                                if (style != null) {
-                                    Color bgColor = style.getFillForegroundColorColor();
-                                    if (bgColor != null && style.getFillPattern() != FillPatternType.NO_FILL) {
-                                        String hexBg = getHexColor(bgColor);
-                                        if (hexBg != null && !hexBg.equals("#000000")) {
-                                            cellObj.put("bg", hexBg);
-                                        }
-                                    }
-
-                                    int fontIdx = style.getFontIndex();
-                                    Font font = workbook.getFontAt(fontIdx);
-                                    if (font != null) {
-                                        if (font.getBold()) cellObj.put("bold", true);
-                                        if (font.getItalic()) cellObj.put("italic", true);
-                                        
-                                        try {
-                                            if (font instanceof org.apache.poi.xssf.usermodel.XSSFFont) {
-                                                String fontColor = getHexColor(((org.apache.poi.xssf.usermodel.XSSFFont) font).getXSSFColor());
-                                                if (fontColor != null) cellObj.put("color", fontColor);
-                                            } else if (font instanceof org.apache.poi.hssf.usermodel.HSSFFont) {
-                                                short colorIdx = font.getColor();
-                                                HSSFColor hssfColor = HSSFColor.getIndexHash().get((int) colorIdx);
-                                                String fontColor = getHexColor(hssfColor);
-                                                if (fontColor != null) cellObj.put("color", fontColor);
-                                            }
-                                        } catch (Throwable ignored) {}
-                                    }
-
-                                    if (style.getBorderTop() != BorderStyle.NONE) {
-                                        cellObj.put("bt", style.getBorderTop().name());
-                                        try {
-                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getTopBorderColor());
-                                            String bc = getHexColor(hc);
-                                            cellObj.put("btc", bc != null ? bc : "#000000");
-                                        } catch (Throwable ignored) {}
-                                    }
-                                    if (style.getBorderBottom() != BorderStyle.NONE) {
-                                        cellObj.put("bb", style.getBorderBottom().name());
-                                        try {
-                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getBottomBorderColor());
-                                            String bc = getHexColor(hc);
-                                            cellObj.put("bbc", bc != null ? bc : "#000000");
-                                        } catch (Throwable ignored) {}
-                                    }
-                                    if (style.getBorderLeft() != BorderStyle.NONE) {
-                                        cellObj.put("bl", style.getBorderLeft().name());
-                                        try {
-                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getLeftBorderColor());
-                                            String bc = getHexColor(hc);
-                                            cellObj.put("blc", bc != null ? bc : "#000000");
-                                        } catch (Throwable ignored) {}
-                                    }
-                                    if (style.getBorderRight() != BorderStyle.NONE) {
-                                        cellObj.put("br", style.getBorderRight().name());
-                                        try {
-                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) style.getRightBorderColor());
-                                            String bc = getHexColor(hc);
-                                            cellObj.put("brc", bc != null ? bc : "#000000");
-                                        } catch (Throwable ignored) {}
-                                    }
-                                }
-                            } catch (Throwable ignored) {}
                         }
                     }
-                    jsonRow.put(cellObj);
                 }
-                jsonTable.put(jsonRow);
+                rowArray.put(cellObj);
             }
+            jsonTable.put(rowArray);
+        }
 
-            // Шаг 2: Сбор объединенных регионов и проброс рамок
-            JSONArray jsonMerges = new JSONArray();
-            try {
-                int numRegions = sheet.getNumMergedRegions();
-                for (int i = 0; i < numRegions; i++) {
-                    CellRangeAddress region = sheet.getMergedRegion(i);
-                    if (region != null) {
-                        if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() >= maxColsCount) continue;
+        // 4. Сбор объединенных регионов и прокидывание их рамок
+        int numRegions = sheet.getNumMergedRegions();
+        for (int i = 0; i < numRegions; i++) {
+            org.apache.poi.ss.util.CellRangeAddress region = sheet.getMergedRegion(i);
+            if (region != null) {
+                if (region.getFirstRow() > lastRowIdx || region.getFirstColumn() >= maxColsCount) continue;
 
-                        JSONObject mergeObj = new JSONObject();
-                        mergeObj.put("sr", region.getFirstRow());
-                        mergeObj.put("er", Math.min(region.getLastRow(), lastRowIdx));
-                        mergeObj.put("sc", region.getFirstColumn());
-                        mergeObj.put("ec", Math.min(region.getLastColumn(), maxColsCount - 1));
-                        jsonMerges.put(mergeObj);
+                int finalEndRow = Math.min(region.getLastRow(), lastRowIdx);
+                int finalEndCol = Math.min(region.getLastColumn(), maxColsCount - 1);
 
-                        Row mainRow = sheet.getRow(region.getFirstRow());
-                        Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
-                        if (mainCell != null && mainCell.getCellStyle() != null) {
-                            CellStyle mainStyle = mainCell.getCellStyle();
-                            
-                            int finalEndRow = Math.min(region.getLastRow(), lastRowIdx);
-                            int finalEndCol = Math.min(region.getLastColumn(), maxColsCount - 1);
+                JSONObject mergeObj = new JSONObject();
+                mergeObj.put("sr", region.getFirstRow());
+                mergeObj.put("er", finalEndRow);
+                mergeObj.put("sc", region.getFirstColumn());
+                mergeObj.put("ec", finalEndCol);
+                jsonMerges.put(mergeObj);
 
-                            for (int r = region.getFirstRow(); r <= finalEndRow; r++) {
-                                JSONArray rowArray = jsonTable.getJSONArray(r);
-                                for (int c = region.getFirstColumn(); c <= finalEndCol; c++) {
-                                    JSONObject cellObj = rowArray.getJSONObject(c);
+                // Копируем рамки от главной ячейки по периметру объединения
+                org.apache.poi.ss.usermodel.Row mainRow = sheet.getRow(region.getFirstRow());
+                org.apache.poi.ss.usermodel.Cell mainCell = (mainRow != null) ? mainRow.getCell(region.getFirstColumn()) : null;
+                
+                if (mainCell != null && mainCell.getCellStyle() != null) {
+                    org.apache.poi.ss.usermodel.CellStyle mainStyle = mainCell.getCellStyle();
 
-                                    try {
-                                        if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != BorderStyle.NONE) {
-                                            cellObj.put("bl", mainStyle.getBorderLeft().name());
-                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) mainStyle.getLeftBorderColor());
-                                            String bc = getHexColor(hc);
-                                            cellObj.put("blc", bc != null ? bc : "#000000");
-                                        }
-                                        if (c == finalEndCol && mainStyle.getBorderRight() != BorderStyle.NONE) {
-                                            cellObj.put("br", mainStyle.getBorderRight().name());
-                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) mainStyle.getRightBorderColor());
-                                            String bc = getHexColor(hc);
-                                            cellObj.put("brc", bc != null ? bc : "#000000");
-                                        }
-                                        if (r == region.getFirstRow() && mainStyle.getBorderTop() != BorderStyle.NONE) {
-                                            cellObj.put("bt", mainStyle.getBorderTop().name());
-                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) mainStyle.getTopBorderColor());
-                                            String bc = getHexColor(hc);
-                                            cellObj.put("btc", bc != null ? bc : "#000000");
-                                        }
-                                        if (r == finalEndRow && mainStyle.getBorderBottom() != BorderStyle.NONE) {
-                                            cellObj.put("bb", mainStyle.getBorderBottom().name());
-                                            HSSFColor hc = HSSFColor.getIndexHash().get((int) mainStyle.getBottomBorderColor());
-                                            String bc = getHexColor(hc);
-                                            cellObj.put("bbc", bc != null ? bc : "#000000");
-                                        }
-                                    } catch (Throwable ignored) {}
-                                }
+                    for (int r = region.getFirstRow(); r <= finalEndRow; r++) {
+                        JSONArray currentRow = jsonTable.getJSONArray(r);
+                        for (int c = region.getFirstColumn(); c <= finalEndCol; c++) {
+                            JSONObject cellObj = currentRow.getJSONObject(c);
+
+                            if (c == region.getFirstColumn() && mainStyle.getBorderLeft() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
+                                cellObj.put("bl", mainStyle.getBorderLeft().name());
+                            }
+                            if (c == finalEndCol && mainStyle.getBorderRight() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
+                                cellObj.put("br", mainStyle.getBorderRight().name());
+                            }
+                            if (r == region.getFirstRow() && mainStyle.getBorderTop() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
+                                cellObj.put("bt", mainStyle.getBorderTop().name());
+                            }
+                            if (r == finalEndRow && mainStyle.getBorderBottom() != org.apache.poi.ss.usermodel.BorderStyle.NONE) {
+                                cellObj.put("bb", mainStyle.getBorderBottom().name());
                             }
                         }
                     }
                 }
-            } catch (Throwable ignored) {}
+            }
+        }
 
-            // Шаг 3: Сглаживание и удаление наложений смежных границ ячеек
-            for (int r = 1; r < jsonTable.length(); r++) {
-                JSONArray currentRow
+        // 5. Финальная сборка payload
+        JSONObject payload = new JSONObject();
+        payload.put("matrix", jsonTable);
+        payload.put("widths", jsonWidths);
+        payload.put("heights", jsonHeights);
+        payload.put("merges", jsonMerges);
+
+        cachedJsonPayload = payload.toString();
+        android.util.Log.d("MiniExcelDebug", "JSON упакован успешно. Объединений: " + jsonMerges.length());
+
+        // 6. Отправка в WebView в UI-потоке
+        if (tableWebView != null) {
+            tableWebView.post(new Runnable() {
+                @Override
+                public void run() {
+                    tableWebView.evaluateJavascript("requestDataFromAndroid();", null);
+                }
+            });
+        }
+
+    } catch (Exception e) {
+        android.util.Log.e("MiniExcelDebug", "Критическая ошибка парсинга: " + e.getMessage());
+    }
+}
