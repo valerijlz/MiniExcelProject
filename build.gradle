@@ -1,3 +1,4 @@
 plugins {
-    id 'com.android.application' version '8.2.2' apply false
+    // Добавьте эту строку (версию можно указать актуальную для вашей студии, например 1.9.20)
+    id 'org.jetbrains.kotlin.android' version '1.9.20' apply false
 }
