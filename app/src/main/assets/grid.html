@@ -241,12 +241,12 @@
             }
         }
 
-        // 2. GRIDLINES
+        // 2. ГРАНИЦЫ (ИСПРАВЛЕНО: Принудительная пошаговая отрисовка сетки толщиной не менее 1px)
         ctx.save();
         ctx.strokeStyle = "#d4d4d4";
-        ctx.lineWidth = Math.max(1.0, 0.5 * zoom);
+        // Гарантируем, что линия никогда не станет тоньше 1 реального пикселя и не исчезнет
+        ctx.lineWidth = Math.max(1.0, Math.round(1.0 * zoom)); 
 
-        ctx.beginPath();
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -267,60 +267,17 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
-                let startX = Math.floor(cx);
-                let startY = Math.floor(cy);
-                let endX = Math.floor(cx + cw);
-                let endY = Math.floor(cy + ch);
+                // Смещаем координаты на 0.5 для идеальной четкости линий в Canvas без размытия
+                let startX = Math.floor(cx) + 0.5;
+                let startY = Math.floor(cy) + 0.5;
+                let endX = Math.floor(cx + cw) + 0.5;
+                let endY = Math.floor(cy + ch) + 0.5;
 
+                // Рисуем каждую ячейку изолированным путем, чтобы WebView гарантированно применил stroke()
+                ctx.beginPath();
                 ctx.moveTo(startX, endY); ctx.lineTo(endX, endY);
                 ctx.moveTo(endX, startY); ctx.lineTo(endX, endY);
-            }
-        }
-        ctx.stroke(); 
-
-        // CUSTOM BORDERS
-        for (let r = 0; r < maxRows; r++) {
-            for (let c = 0; c < maxCols; c++) {
-                let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue;
-
-                let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
-                if (!cellData.bt && !cellData.bl && !cellData.bb && !cellData.br) continue;
-
-                let rect = getCellRect(r, c);
-                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
-                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
-                let cw = rect.w * zoom;
-                let ch = rect.h * zoom;
-
-                if (lookup && lookup.isMain) {
-                    let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
-                    cw = fullW * zoom; ch = fullH * zoom;
-                }
-
-                let startX = Math.round(cx);
-                let startY = Math.round(cy);
-                let endX = Math.round(cx + cw);
-                let endY = Math.round(cy + ch);
-
-                if (cellData.bt) {
-                    ctx.beginPath(); ctx.strokeStyle = cellData.btc || "#000000"; ctx.lineWidth = 2;
-                    ctx.moveTo(startX, startY); ctx.lineTo(endX, startY); ctx.stroke();
-                }
-                if (cellData.bl) {
-                    ctx.beginPath(); ctx.strokeStyle = cellData.blc || "#000000"; ctx.lineWidth = 2;
-                    ctx.moveTo(startX, startY); ctx.lineTo(startX, endY); ctx.stroke();
-                }
-                if (cellData.bb) {
-                    ctx.beginPath(); ctx.strokeStyle = cellData.bbc || "#000000"; ctx.lineWidth = 2;
-                    ctx.moveTo(startX, endY); ctx.lineTo(endX, endY); ctx.stroke();
-                }
-                if (cellData.br) {
-                    ctx.beginPath(); ctx.strokeStyle = cellData.brc || "#000000"; ctx.lineWidth = 2;
-                    ctx.moveTo(endX, startY); ctx.lineTo(endX, endY); ctx.stroke();
-                }
+                ctx.stroke();
             }
         }
         ctx.restore();
