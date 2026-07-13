@@ -15,7 +15,6 @@
             outline: none;
             padding: 0 4px;
             font-family: Arial, sans-serif;
-            font-size: 11px;
             box-sizing: border-box;
             background: white;
             z-index: 100;
@@ -38,7 +37,7 @@
     let merges = [];
     let widths = [];
     let heights = [];
-    let mergeLookup = {}; // Глобальная карта объединений для стабильного доступа из любой точки
+    let mergeLookup = {}; 
 
     let scrollX = 0;
     let scrollY = 0;
@@ -56,6 +55,7 @@
     let lastTouchY = 0;
     let startTouchDist = 0;
     let startZoom = 1.0;
+    let hasMoved = false;
 
     function getColName(colIndex) {
         let name = "";
@@ -84,7 +84,6 @@
         return lookup ? lookup.m : null;
     }
 
-    // ИСПРАВЛЕНО: Добавлен искусственный запас +300px за синюю рамку для комфортного просмотра краев листа
     function getScrollLimits() {
         if (!canvas || canvas.clientWidth === 0) return { x: 0, y: 0 };
         let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || 64);
@@ -176,7 +175,6 @@
                 heights[r] = (h && h > 0) ? Math.round(h) : 20;
             }
 
-            // ИСПРАВЛЕНО: Принудительный глобальный маппинг объединений при получении файла
             buildMergeLookup();
 
             scrollX = 0;
@@ -209,14 +207,12 @@
         if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
         
         ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-        if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) {
-            return; 
-        }
+        if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) return;
         
         ctx.save();
         ctx.textBaseline = 'middle';
         
-        // 1. ФОН ЯЧЕЕК
+        // 1. CELL BACKGROUNDS
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -245,11 +241,10 @@
             }
         }
 
-// 2. ГРАНИЦЫ (ОПТИМИЗИРОВАНО: Сетка больше не пропадает и не тормозит при скролле)
+        // 2. GRIDLINES
         ctx.save();
-        // Устанавливаем базовый стиль для стандартной сетки
         ctx.strokeStyle = "#d4d4d4";
-        ctx.lineWidth = Math.max(1.0, 0.5 * zoom); // Защита от исчезновения линии при отдалении
+        ctx.lineWidth = Math.max(1.0, 0.5 * zoom);
 
         ctx.beginPath();
         for (let r = 0; r < maxRows; r++) {
@@ -277,14 +272,13 @@
                 let endX = Math.floor(cx + cw);
                 let endY = Math.floor(cy + ch);
 
-                // Рисуем базовую сетку (только право и низ, чтобы линии не дублировались)
                 ctx.moveTo(startX, endY); ctx.lineTo(endX, endY);
                 ctx.moveTo(endX, startY); ctx.lineTo(endX, endY);
             }
         }
-        ctx.stroke(); // Отрисовываем всю стандартную сетку за один проход
+        ctx.stroke(); 
 
-        // Отдельный проход для редких кастомных толстых рамок (если они есть в cellData)
+        // CUSTOM BORDERS
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -331,7 +325,7 @@
         }
         ctx.restore();
 
-        // 3. ТЕКСТ ЯЧЕЕК
+        // 3. CELL TEXT
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -356,7 +350,6 @@
                 if (text !== "") {
                     let availableW = cw;
                     
-                    // ИСПРАВЛЕНО: Интеллектуальный расчет перетекания контента с проверкой свободного лимита справа
                     if (!(lookup && lookup.isMain)) {
                         let nextCol = c + 1;
                         while (nextCol < maxCols) {
@@ -372,7 +365,6 @@
                         }
                     }
 
-                    // ИСПРАВЛЕНО: Проверка видимости привязана к availableW, текст больше не исчезает при уходе ячейки влево
                     if (cx + availableW < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
                     ctx.save();
@@ -384,7 +376,7 @@
 
                     ctx.beginPath();
                     ctx.rect(cx + 2, cy, availableW - 4, ch);
-                    ctx.clip(); // Безопасный клиппинг по границе доступной ширины
+                    ctx.clip(); 
                     ctx.fillText(text, cx + 5, cy + ch / 2);
                     
                     ctx.restore();
@@ -392,7 +384,7 @@
             }
         }
 
-        // 4. СИНЯЯ РАМКА ОГРАНИЧЕНИЯ ЛИСТА
+        // 4. BLUE GRID SHEET EDGE BOUNDARY
         let sheetTotalW = 0; for (let i = 0; i < maxCols; i++) sheetTotalW += (widths[i] || 64);
         let sheetTotalH = 0; for (let i = 0; i < maxRows; i++) sheetTotalH += (heights[i] || 20);
         
@@ -415,7 +407,7 @@
             ctx.stroke();
         }
 
-        // 5. ЗАГОЛОВКИ КОЛОНОК (A, B, C...)
+        // 5. COLUMN HEADERS
         ctx.lineWidth = 0.5;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -432,7 +424,7 @@
             ctx.fillText(getColName(c), rx + rw / 2, COL_NUM_HEIGHT / 2);
         }
 
-        // 6. ЗАГОЛОВКИ СТРОК (1, 2, 3...)
+        // 6. ROW HEADERS
         for (let r = 0; r < maxRows; r++) {
             let rect = getCellRect(r, 0);
             let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
@@ -448,7 +440,7 @@
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, ry + rh / 2);
         }
 
-        // Угловатая заглушка 0:0
+        // Corner block 0:0
         ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
@@ -467,6 +459,7 @@
 
     canvas.addEventListener('touchstart', function(e) {
         if (canvas.clientWidth === 0) return;
+        hasMoved = false;
         if (e.touches.length === 1) {
             isDragging = true;
             lastTouchX = e.touches[0].pageX; lastTouchY = e.touches[0].pageY;
@@ -482,6 +475,8 @@
         if (e.touches.length === 1 && isDragging) {
             let dx = e.touches[0].pageX - lastTouchX;
             let dy = e.touches[0].pageY - lastTouchY;
+            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) hasMoved = true;
+
             scrollX -= dx / zoom; scrollY -= dy / zoom;
 
             let limits = getScrollLimits();
@@ -492,6 +487,7 @@
             if(editor.style.display === 'block') positionEditor();
             draw();
         } else if (e.touches.length === 2) {
+            hasMoved = true;
             const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
             if (startTouchDist > 0) {
                 let targetZoom = startZoom * (dist / startTouchDist);
@@ -505,12 +501,26 @@
         }
     });
 
-    canvas.addEventListener('touchend', function() { isDragging = false; startTouchDist = 0; });
+    canvas.addEventListener('touchend', function(e) { 
+        isDragging = false; 
+        startTouchDist = 0; 
+        if (!hasMoved && e.changedTouches.length > 0) {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.changedTouches[0].clientX - rect.left;
+            const clickY = e.changedTouches[0].clientY - rect.top;
+            handleGridClick(clickX, clickY);
+        }
+    });
 
     canvas.addEventListener('click', function(e) {
-        if (canvas.clientWidth === 0) return;
+        if (hasMoved) return;
         const rect = canvas.getBoundingClientRect();
-        const clickX = e.clientX - rect.left; const clickY = e.clientY - rect.top;
+        const clickX = e.clientX - rect.left; 
+        const clickY = e.clientY - rect.top;
+        handleGridClick(clickX, clickY);
+    });
+
+    function handleGridClick(clickX, clickY) {
         if (clickX < ROW_NUM_WIDTH || clickY < COL_NUM_HEIGHT) return;
 
         let targetX = (clickX - ROW_NUM_WIDTH) / zoom + scrollX;
@@ -534,13 +544,20 @@
             selectedCell = mergeInfo ? { r: mergeInfo.sr, c: mergeInfo.sc } : { r: foundR, c: foundC };
             showEditor();
         }
-    });
+    }
 
     function showEditor() {
         if (!selectedCell) return;
         let cellData = matrix[selectedCell.r] ? matrix[selectedCell.r][selectedCell.c] : null;
         editor.value = (cellData && cellData.v !== undefined) ? cellData.v : "";
         editor.style.display = 'block';
+        
+        let fontStyle = "";
+        if (cellData && cellData.bold) fontStyle += "bold ";
+        if (cellData && cellData.italic) fontStyle += "italic ";
+        editor.style.font = `${fontStyle}${11 * zoom}px Arial`;
+        editor.style.color = (cellData && cellData.color) ? cellData.color : "#000000";
+
         positionEditor();
         editor.focus();
     }
