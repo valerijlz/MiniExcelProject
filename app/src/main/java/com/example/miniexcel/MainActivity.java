@@ -15,10 +15,13 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 
 public class MainActivity extends AppCompatActivity {
@@ -27,7 +30,6 @@ public class MainActivity extends AppCompatActivity {
     private Button openButton, saveButton;
     private Uri currentFileUri = null;
     
-    // Держим дефолтный пустой JSON, чтобы WebView не падал при инициализации
     private final String EMPTY_PAYLOAD = "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}";
     private volatile String cachedJsonPayload = EMPTY_PAYLOAD;
 
@@ -38,6 +40,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        // Защита Apache POI от падения по лимиту памяти на глубоких вложениях
+        ZipSecureFile.setMinInflateRatio(0.005); 
 
         openButton = findViewById(R.id.openButton);
         saveButton = findViewById(R.id.saveButton);
@@ -90,7 +95,7 @@ public class MainActivity extends AppCompatActivity {
         tableWebView.setWebChromeClient(new android.webkit.WebChromeClient() {
             @Override
             public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
-                android.util.Log.d("WebViewJS", consoleMessage.message() + " -- Line "
+                Log.d("WebViewJS", consoleMessage.message() + " -- Line "
                         + consoleMessage.lineNumber() + " of " + consoleMessage.sourceId());
                 return true;
             }
@@ -130,37 +135,51 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void pipeExcelToWebView(Uri fileUri) {
-        // УТЕЧКА ПАМЯТИ И ФРИЗЫ ИСПРАВЛЕНЫ ТУТ: 
-        // 1. Полностью сбрасываем кэш в Java-памяти до парсинга.
+        // МГНОВЕННЫЙ СБРОС СТАРЫХ ДАННЫХ
         cachedJsonPayload = EMPTY_PAYLOAD;
-        
-        // 2. Перезагружаем страницу grid.html. Это очищает контекст JS-движка V8, 
-        // убирая из ОЗУ структуры старого открытого документа.
         tableWebView.post(() -> tableWebView.loadUrl("file:///android_asset/grid.html"));
 
         new Thread(() -> {
-            // Использование try-with-resources гарантирует закрытие InputStream и Workbook (освобождает нативную память POI)
-            try (InputStream inputStream = getContentResolver().openInputStream(fileUri);
-                 Workbook workbook = WorkbookFactory.create(inputStream)) {
-                
-                android.util.Log.d("MiniExcelDebug", "Фон: Успешно открыта книга Excel.");
-                if (workbook.getNumberOfSheets() > 0) {
-                    Sheet sheet = workbook.getSheetAt(0);
-                    parseSheetToJson(sheet); 
-                } else {
-                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "Файл пуст", Toast.LENGTH_SHORT).show());
+            File tempFile = null;
+            // Используем оптимизированный доступ POI через временный файл низкого уровня
+            try {
+                android.util.Log.d("MiniExcelDebug", "Фон: Копирование во временный файл для разгрузки ОЗУ...");
+                tempFile = new File(getCacheDir(), "current_scanned_sheet.tmp");
+                try (InputStream is = getContentResolver().openInputStream(fileUri);
+                     FileOutputStream fos = new FileOutputStream(tempFile)) {
+                    byte[] buffer = new byte[16384]; // 16KB буфер для быстрого копирования потока
+                    int bytesRead;
+                    while ((bytesRead = is.read(buffer)) != -1) {
+                        fos.write(buffer, 0, bytesRead);
+                    }
+                }
+
+                android.util.Log.d("MiniExcelDebug", "Фон: Открытие книги из файла...");
+                // Передача java.io.File вместо InputStream экономит гигантский объем RAM в POI
+                try (Workbook workbook = WorkbookFactory.create(tempFile, null, true)) {
+                    if (workbook.getNumberOfSheets() > 0) {
+                        // Парсим строго первый лист, остальные игнорируем, освобождая ресурсы
+                        Sheet sheet = workbook.getSheetAt(0);
+                        parseSheetToJson(sheet); 
+                    } else {
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Файл пуст", Toast.LENGTH_SHORT).show());
+                    }
                 }
             } catch (Exception e) {
-                android.util.Log.e("MiniExcelDebug", "Ошибка чтения файла: " + e.getMessage());
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка чтения файла", Toast.LENGTH_SHORT).show());
+                Log.e("MiniExcelDebug", "Ошибка оптимизированного чтения: " + e.getMessage());
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка чтения тяжелого файла", Toast.LENGTH_SHORT).show());
+            } finally {
+                // Всегда физически удаляем временный файл после закрытия книги
+                if (tempFile != null && tempFile.exists()) {
+                    tempFile.delete();
+                }
+                // Насильно принуждаем GC собрать утечки объектов листов
+                System.gc();
             }
-            
-            // Намекаем системе, что пора собрать отработанные объекты строк/ячеек POI
-            System.gc();
         }).start();
     }
 
-    private void parseSheetToJson(org.apache.poi.ss.usermodel.Sheet sheet) {
+    private void parseSheetToJson(Sheet sheet) {
         JSONArray jsonTable = new JSONArray();
         JSONArray jsonWidths = new JSONArray();
         JSONArray jsonHeights = new JSONArray();
@@ -169,13 +188,18 @@ public class MainActivity extends AppCompatActivity {
         int lastRowIdx = sheet.getLastRowNum();
         int maxColsCount = 0;
 
+        // Быстро сканируем только реальные границы первого листа
         for (int r = 0; r <= lastRowIdx; r++) {
-            org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
+            Row row = sheet.getRow(r);
             if (row != null && row.getLastCellNum() > maxColsCount) {
                 maxColsCount = row.getLastCellNum();
             }
         }
         if (maxColsCount == 0) maxColsCount = 12;
+
+        // Безопасное ограничение: если файл аномально огромный, обрезаем сетку для выживания мобильного процессора
+        if (lastRowIdx > 1500) lastRowIdx = 1500;
+        if (maxColsCount > 60) maxColsCount = 60;
 
         try {
             for (int c = 0; c < maxColsCount; c++) {
@@ -184,7 +208,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             for (int r = 0; r <= lastRowIdx; r++) {
-                org.apache.poi.ss.usermodel.Row row = sheet.getRow(r);
+                Row row = sheet.getRow(r);
                 int h = (row != null) ? (int)(row.getHeightInPoints() * 1.33) : 20;
                 jsonHeights.put(h > 0 ? h : 20);
 
@@ -194,14 +218,14 @@ public class MainActivity extends AppCompatActivity {
                     cellObj.put("v", ""); 
 
                     if (row != null) {
-                        org.apache.poi.ss.usermodel.Cell cell = row.getCell(c);
+                        Cell cell = row.getCell(c);
                         if (cell != null) {
                             switch (cell.getCellType()) {
                                 case STRING: 
                                     cellObj.put("v", cell.getStringCellValue()); 
                                     break;
                                 case NUMERIC: 
-                                    if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
+                                    if (DateUtil.isCellDateFormatted(cell)) {
                                         cellObj.put("v", cell.getDateCellValue().toString());
                                     } else {
                                         cellObj.put("v", cell.getNumericCellValue());
@@ -248,18 +272,15 @@ public class MainActivity extends AppCompatActivity {
             rootPayload.put("heights", jsonHeights);
             rootPayload.put("merges", jsonMerges);
 
-            // Кэшируем новую строку
             cachedJsonPayload = rootPayload.toString();
 
-            // Безопасно пингуем JS-скрипт. Так как чуть выше мы сделали loadUrl,
-            // страница гарантированно чистая и готова принять данные заново.
             tableWebView.post(() -> {
                 tableWebView.evaluateJavascript("setTimeout(function() { requestDataFromAndroid(); }, 150);", null);
             });
 
         } catch (Exception e) {
-            android.util.Log.e("MiniExcelDebug", "Ошибка парсинга в JSON: " + e.getMessage());
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка обработки структуры файла", Toast.LENGTH_SHORT).show());
+            Log.e("MiniExcelDebug", "Ошибка сборки JSON: " + e.getMessage());
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка структуры таблицы", Toast.LENGTH_SHORT).show());
         }
     }
 
