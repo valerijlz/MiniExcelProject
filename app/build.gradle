@@ -1,5 +1,7 @@
 plugins {
     id 'com.android.application'
+    // Добавьте эту строку ниже остальных плагинов:
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
@@ -35,4 +37,10 @@ dependencies {
     implementation 'org.apache.poi:poi:5.2.5'
     implementation 'org.apache.poi:poi-ooxml:5.2.5'
     implementation 'org.apache.xmlbeans:xmlbeans:5.1.1'
+    // Добавьте поддержку основных библиотек Kotlin и Корутин
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.20"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.6.2" // Для работы lifecycleScope
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3" // Для работы Корутин
+    
+    // Ваши старые зависимости (Apache POI и т.д.) остаются без изменений
 }
