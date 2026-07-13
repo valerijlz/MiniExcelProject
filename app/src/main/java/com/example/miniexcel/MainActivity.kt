@@ -79,6 +79,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupWebView() {
         tableWebView.apply {
+            // ИСПРАВЛЕНИЕ: Отключаем аппаратные сбои Canvas в новом SDK Android
+            // Переключаем WebView в режим программного рендеринга (Software Layer)
+            setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+
             clearCache(true)
             clearHistory()
             clearFormData()
