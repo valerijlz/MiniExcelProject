@@ -204,9 +204,18 @@
     }
 
     function draw() {
-        if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
-        
-        ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+    // Временный тест: если холст сжался, мы принудительно дадим ему размеры контейнера
+    if (canvas.width === 0 || canvas.height === 0) {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    
+    // Ваш текущий код очистки экрана...
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Добавьте тестовый квадрат в самый верх, чтобы понять, жива ли вообще отрисовка:
+    ctx.fillStyle = "red";
+    ctx.fillRect(10, 10, 50, 50);
         if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) return;
         
         ctx.save();
