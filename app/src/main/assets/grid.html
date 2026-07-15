@@ -187,6 +187,10 @@
             }
 
             matrix = payload.matrix;
+            // Временный тест: выведем структуру первой ячейки в Android-лог, чтобы увидеть ключи границ
+if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
+    AndroidBridge.onStatus("Структура ячейки: " + JSON.stringify(matrix[0][0]));
+}
             merges = payload.merges || [];
             let incomingWidths = payload.widths || [];
             let incomingHeights = payload.heights || [];
