@@ -5,48 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>MiniExcel Rigid Engine</title>
     <style>
-        <!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Rigid Engine</title>
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Rigid Engine</title>
-    <style>
         html, body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden; /* Запрещаем стандартный скролл страницы, скроллить будем внутри canvas */
-    background-color: #ffffff;
-}
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden; /* Запрещаем стандартный скролл страницы, скроллить будем внутри canvas */
+            background-color: #ffffff;
+        }
 
-#excelCanvas {
-    display: block;
-    width: 100vw;
-    height: 100vh;
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 1;
-}
+        #excelCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
 
-#cell-editor {
-    position: absolute;
-    display: none;
-    z-index: 10;
-    box-sizing: border-box;
-    border: 2px solid #0f62fe;
-    background: white;
-    outline: none;
-    padding: 0 2px;
-}
+        #cell-editor {
+            position: absolute;
+            display: none;
+            z-index: 10;
+            box-sizing: border-box;
+            border: 2px solid #0f62fe;
+            background: white;
+            outline: none;
+            padding: 0 2px;
+        }
     </style>
 </head>
 <body>
@@ -181,7 +168,6 @@
             if (!rawJson) return;
             const payload = JSON.parse(rawJson);
             if (payload && payload.matrix && payload.matrix[0]) {
-                // Ищем первую попавшуюся ячейку, в которой может быть информация
                 let sampleCell = payload.matrix[0][0] || {};
                 alert("TEST CELL DATA:\n" + JSON.stringify(sampleCell));
             }
@@ -191,10 +177,9 @@
             }
 
             matrix = payload.matrix;
-            // Временный тест: выведем структуру первой ячейки в Android-лог, чтобы увидеть ключи границ
-if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
-    AndroidBridge.onStatus("Структура ячейки: " + JSON.stringify(matrix[0][0]));
-}
+            if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
+                AndroidBridge.onStatus("Структура ячейки: " + JSON.stringify(matrix[0][0]));
+            }
             merges = payload.merges || [];
             let incomingWidths = payload.widths || [];
             let incomingHeights = payload.heights || [];
@@ -243,7 +228,6 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
     }
 
     function draw() {
-        // Защита от нулевого размера холста во время инициализации
         if (canvas.width === 0 || canvas.height === 0) {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -260,7 +244,7 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
         ctx.save();
         ctx.textBaseline = 'middle';
         
-        // 1. CELL BACKGROUNDS
+        // 1. ФОНЫ ЯЧЕЕК (CELL BACKGROUNDS)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -289,11 +273,10 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
             }
         }
 
-        // 2. ГРАНИЦЫ СЕТКИ (Четкая отрисовка без размытия)
+        // 2. ГРАНИЦЫ СЕТКИ (СТАНДАРТНЫЕ)
         ctx.save();
         ctx.strokeStyle = "#d4d4d4";
         
-        // Вычисляем оптимальную толщину линии в зависимости от масштаба, но не менее 1 физического пикселя
         const dpr = window.devicePixelRatio || 1;
         const lineThickness = Math.max(1, Math.round(1 * zoom * dpr)) / dpr;
         ctx.lineWidth = lineThickness; 
@@ -318,14 +301,12 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
-                // Смещение на половину толщины линии гарантирует попадание ровно в пиксельную сетку экрана
                 const halfThick = lineThickness / 2;
                 const startX = Math.round(cx) - halfThick;
                 const startY = Math.round(cy) - halfThick;
                 const endX = Math.round(cx + cw) - halfThick;
                 const endY = Math.round(cy + ch) - halfThick;
 
-                // Отрисовываем правую и нижнюю рамку ячейки
                 ctx.beginPath();
                 ctx.moveTo(startX, endY); 
                 ctx.lineTo(endX, endY);
@@ -336,70 +317,7 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
         }
         ctx.restore();
 
-        // 2.5. ПОЛЬЗОВАТЕЛЬСКИЕ ГРАНИЦЫ ИЗ ДОКУМЕНТА EXCEL
-        ctx.save();
-        for (let r = 0; r < maxRows; r++) {
-            for (let c = 0; c < maxCols; c++) {
-                let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue; 
-
-                let rect = getCellRect(r, c);
-                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
-                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
-                let cw = rect.w * zoom;
-                let ch = rect.h * zoom;
-
-                if (lookup && lookup.isMain) {
-                    let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
-                    cw = fullW * zoom; ch = fullH * zoom;
-                }
-
-                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
-
-                let cellData = matrix[r] ? matrix[r][c] : null;
-                if (!cellData) continue;
-
-                // --- Чтение данных о границах (подстройте под ваш JSON, если ключи отличаются) ---
-                // Предполагаем структуру: cellData.borderTop, cellData.borderBottom и т.д.
-                let bTop = cellData.borderTop || cellData.topBorder;
-                let bBottom = cellData.borderBottom || cellData.bottomBorder;
-                let bLeft = cellData.borderLeft || cellData.leftBorder;
-                let bRight = cellData.borderRight || cellData.rightBorder;
-
-                const dpr = window.devicePixelRatio || 1;
-
-                // Функция для определения толщины линии на холсте
-                function getThickness(borderStyle) {
-                    if (!borderStyle) return 0;
-                    if (borderStyle === 'medium' || borderStyle === 2) return Math.max(2, Math.round(2 * zoom));
-                    if (borderStyle === 'thick' || borderStyle === 3) return Math.max(3, Math.round(3 * zoom));
-                    return Math.max(1, Math.round(1 * zoom)); // thin / по умолчанию
-                }
-
-                // Вспомогательная функция отрисовки линии границы
-                function drawCustomLine(x1, y1, x2, y2, borderCfg) {
-                    if (!borderCfg) return;
-                    ctx.beginPath();
-                    // Если borderCfg — это объект (например, {style: 'thin', color: '#000'}), берем свойства оттуда
-                    ctx.strokeStyle = borderCfg.color || "#000000"; 
-                    ctx.lineWidth = getThickness(borderCfg.style || borderCfg);
-                    ctx.moveTo(Math.round(x1), Math.round(y1));
-                    ctx.lineTo(Math.round(x2), Math.round(y2));
-                    ctx.stroke();
-                }
-
-                // Рисуем каждую границу отдельно, если она задана в документе
-                if (bTop)    drawCustomLine(cx, cy, cx + cw, cy, bTop);
-                if (bBottom) drawCustomLine(cx, cy + ch, cx + cw, cy + ch, bBottom);
-                if (bLeft)   drawCustomLine(cx, cy, cx, cy + ch, bLeft);
-                if (bRight)  drawCustomLine(cx + cw, cy, cx + cw, cy + ch, bRight);
-            }
-        }
-        ctx.restore();
-
-        // 3. CELL TEXT
+        // 3. ТЕКСТ ЯЧЕЕК (CELL TEXT)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -458,7 +376,62 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
             }
         }
 
-        // 4. BLUE GRID SHEET EDGE BOUNDARY
+        // 4. ПОЛЬЗОВАТЕЛЬСКИЕ ГРАНИЦЫ EXCEL (Отрисовываем поверх текста)
+        ctx.save();
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let lookup = mergeLookup[`${r}_${c}`];
+                if (lookup && lookup.isChild) continue; 
+
+                let rect = getCellRect(r, c);
+                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
+
+                if (lookup && lookup.isMain) {
+                    let fullW = 0; let fullH = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
+                    cw = fullW * zoom; ch = fullH * zoom;
+                }
+
+                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
+
+                let cellData = matrix[r] ? matrix[r][c] : null;
+                if (!cellData) continue;
+
+                let bTop = cellData.borderTop || cellData.topBorder;
+                let bBottom = cellData.borderBottom || cellData.bottomBorder;
+                let bLeft = cellData.borderLeft || cellData.leftBorder;
+                let bRight = cellData.borderRight || cellData.rightBorder;
+
+                function getThickness(borderStyle) {
+                    if (!borderStyle) return 0;
+                    if (borderStyle === 'medium' || borderStyle === 2) return Math.max(2, Math.round(2 * zoom));
+                    if (borderStyle === 'thick' || borderStyle === 3) return Math.max(3, Math.round(3 * zoom));
+                    return Math.max(1, Math.round(1 * zoom));
+                }
+
+                function drawCustomLine(x1, y1, x2, y2, borderCfg) {
+                    if (!borderCfg) return;
+                    ctx.beginPath();
+                    ctx.strokeStyle = borderCfg.color || "#000000"; 
+                    ctx.lineWidth = getThickness(borderCfg.style || borderCfg);
+                    ctx.moveTo(Math.round(x1), Math.round(y1));
+                    ctx.lineTo(Math.round(x2), Math.round(y2));
+                    ctx.stroke();
+                }
+
+                if (bTop)    drawCustomLine(cx, cy, cx + cw, cy, bTop);
+                if (bBottom) drawCustomLine(cx, cy + ch, cx + cw, cy + ch, bBottom);
+                if (bLeft)   drawCustomLine(cx, cy, cx, cy + ch, bLeft);
+                if (bRight)  drawCustomLine(cx + cw, cy, cx + cw, cy + ch, bRight);
+            }
+        }
+        ctx.restore();
+
+        // 5. BLUE GRID SHEET EDGE BOUNDARY (Край листа)
         let sheetTotalW = 0; for (let i = 0; i < maxCols; i++) sheetTotalW += (widths[i] || 64);
         let sheetTotalH = 0; for (let i = 0; i < maxRows; i++) sheetTotalH += (heights[i] || 20);
         
@@ -481,7 +454,7 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
             ctx.stroke();
         }
 
-        // 5. COLUMN HEADERS
+        // 6. COLUMN HEADERS (Заголовки колонок)
         ctx.lineWidth = 0.5;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -498,7 +471,7 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
             ctx.fillText(getColName(c), rx + rw / 2, COL_NUM_HEIGHT / 2);
         }
 
-        // 6. ROW HEADERS
+        // 7. ROW HEADERS (Заголовки строк)
         for (let r = 0; r < maxRows; r++) {
             let rect = getCellRect(r, 0);
             let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
@@ -514,7 +487,7 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, ry + rh / 2);
         }
 
-        // Corner block 0:0
+        // Угловой блок 0:0 (A1)
         ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
@@ -524,7 +497,6 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
     const viewWatcher = new ResizeObserver(() => {
         if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
             updateCanvasDimensions();
-            // Инициализируем пустую сетку только если в матрице действительно пусто
             if (matrix.length === 0) {
                 initEmptyGrid();
             } else {
@@ -583,7 +555,7 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
         isDragging = false; 
         startTouchDist = 0; 
         if (!hasMoved && e.changedTouches.length > 0) {
-            touchHandled = true; // Блокируем последующий "click"
+            touchHandled = true; 
             const rect = canvas.getBoundingClientRect();
             const clickX = e.changedTouches[0].clientX - rect.left;
             const clickY = e.changedTouches[0].clientY - rect.top;
@@ -593,7 +565,7 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
 
     canvas.addEventListener('click', function(e) {
         if (touchHandled) {
-            touchHandled = false; // Сбрасываем флаг для следующего тапа
+            touchHandled = false; 
             return;
         }
         if (hasMoved) return;
