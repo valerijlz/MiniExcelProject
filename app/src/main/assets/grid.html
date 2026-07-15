@@ -281,10 +281,14 @@
             }
         }
 
-        // 2. ГРАНИЦЫ СЕТКИ (Толщина не менее 1px)
+        // 2. ГРАНИЦЫ СЕТКИ (Четкая отрисовка без размытия)
         ctx.save();
         ctx.strokeStyle = "#d4d4d4";
-        ctx.lineWidth = Math.max(1.0, Math.round(1.0 * zoom)); 
+        
+        // Вычисляем оптимальную толщину линии в зависимости от масштаба, но не менее 1 физического пикселя
+        const dpr = window.devicePixelRatio || 1;
+        const lineThickness = Math.max(1, Math.round(1 * zoom * dpr)) / dpr;
+        ctx.lineWidth = lineThickness; 
 
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
@@ -306,14 +310,19 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
-                let startX = Math.floor(cx) + 0.5;
-                let startY = Math.floor(cy) + 0.5;
-                let endX = Math.floor(cx + cw) + 0.5;
-                let endY = Math.floor(cy + ch) + 0.5;
+                // Смещение на половину толщины линии гарантирует попадание ровно в пиксельную сетку экрана
+                const halfThick = lineThickness / 2;
+                const startX = Math.round(cx) - halfThick;
+                const startY = Math.round(cy) - halfThick;
+                const endX = Math.round(cx + cw) - halfThick;
+                const endY = Math.round(cy + ch) - halfThick;
 
+                // Отрисовываем правую и нижнюю рамку ячейки
                 ctx.beginPath();
-                ctx.moveTo(startX, endY); ctx.lineTo(endX, endY);
-                ctx.moveTo(endX, startY); ctx.lineTo(endX, endY);
+                ctx.moveTo(startX, endY); 
+                ctx.lineTo(endX, endY);
+                ctx.moveTo(endX, startY); 
+                ctx.lineTo(endX, endY);
                 ctx.stroke();
             }
         }
