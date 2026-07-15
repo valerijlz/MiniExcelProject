@@ -110,6 +110,10 @@
     }
 
     function initEmptyGrid() {
+        // Гарантируем дефолтный размер сетки при инициализации пустой таблицы
+        if (!maxRows || maxRows <= 0) maxRows = 45;
+        if (!maxCols || maxCols <= 0) maxCols = 12;
+
         matrix = [];
         for (let r = 0; r < maxRows; r++) {
             matrix[r] = [];
@@ -156,47 +160,46 @@
         }
     }
 
-    // --- ДИАГНОСТИЧЕСКИЙ МЕТОД ЗАГРУЗКИ ---
+    // --- ОБНОВЛЕННЫЙ БЕЗОПАСНЫЙ МЕТОД ЗАГРУЗКИ ---
     function requestDataFromAndroid() {
         try {
-            // Диагностика 1: Проверка существования моста
+            // Проверка наличия моста
             if (!window.AndroidBridge) {
-                alert("ДИАГНОСТИКА: Объект AndroidBridge НЕ НАЙДЕН в WebView!");
+                console.warn("AndroidBridge не найден в WebView. Инициализируем пустую сетку.");
                 initEmptyGrid();
                 return;
             }
 
             if (typeof AndroidBridge.getExcelData !== 'function') {
-                alert("ДИАГНОСТИКА: Метод getExcelData() отсутствует у AndroidBridge!");
+                console.warn("Метод getExcelData() отсутствует у AndroidBridge!");
                 initEmptyGrid();
                 return;
             }
 
-            // Диагностика 2: Запрос сырых данных
             const rawJson = AndroidBridge.getExcelData();
             if (!rawJson) {
-                alert("ДИАГНОСТИКА: AndroidBridge.getExcelData() вернул пустое значение (null или пустую строку)!");
+                console.warn("AndroidBridge.getExcelData() вернул пустое значение. Создаем чистый лист.");
                 initEmptyGrid();
                 return;
             }
 
-            // Диагностика 3: Парсинг JSON
             let payload;
             try {
                 payload = JSON.parse(rawJson);
             } catch(eJson) {
-                alert("ДИАГНОСТИКА: Сбой парсинга JSON! Данные повреждены:\n" + eJson.message + "\n\nПолучено: " + rawJson.substring(0, 150));
+                console.error("Сбой парсинга JSON! Инициализируем пустую сетку.", eJson);
                 initEmptyGrid();
                 return;
             }
 
+            // ЕСЛИ МАТРИЦА ПУСТАЯ (например, первый запуск):
+            // Больше не ругаемся алертом, а просто спокойно рисуем пустую сетку.
             if (!payload.matrix || payload.matrix.length === 0) {
-                alert("ДИАГНОСТИКА: В JSON-объекте отсутствует массив 'matrix' или он пуст!");
                 initEmptyGrid();
                 return;
             }
 
-            // 4. Всеядный маппинг данных ячеек и границ
+            // Маппинг ячеек
             matrix = payload.matrix.map((row) => {
                 if (!row) return [];
                 return row.map((cell) => {
@@ -260,13 +263,13 @@
                 draw();
             }
 
-            // Сообщаем в Android, что рендеринг прошёл успешно
             if (typeof AndroidBridge.onStatus === 'function') {
                 AndroidBridge.onStatus("Таблица успешно отрисована на Canvas!");
             }
 
         } catch(e) {
-            alert("КРИТИЧЕСКИЙ СБОЙ В requestDataFromAndroid:\n" + e.message + "\n\n" + e.stack);
+            console.error("КРИТИЧЕСКИЙ СБОЙ В requestDataFromAndroid:\n", e);
+            initEmptyGrid();
         }
     }
 
@@ -659,7 +662,6 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
-    // --- НАДЕЖНОЕ СОХРАНЕНИЕ ДАННЫХ И ПЕРЕДАЧА В ANDROID ---
     function saveCurrentEditorValue() {
         if (selectedCell && matrix[selectedCell.r] && matrix[selectedCell.r][selectedCell.c]) {
             const newValue = editor.value.trim();
@@ -668,7 +670,6 @@
             if (oldValue !== newValue) {
                 matrix[selectedCell.r][selectedCell.c].v = newValue;
                 
-                // Передаем обновленную матрицу обратно в Android
                 if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
                     try {
                         const payload = {
@@ -679,7 +680,7 @@
                         };
                         AndroidBridge.saveExcelData(JSON.stringify(payload));
                     } catch (e) {
-                        alert("Ошибка отправки данных в Android:\n" + e.message);
+                        console.error("Ошибка отправки данных в Android: ", e);
                     }
                 }
             }
