@@ -10,7 +10,7 @@
             padding: 0;
             width: 100%;
             height: 100%;
-            overflow: hidden; /* Запрещаем стандартный скролл страницы, скроллить будем внутри canvas */
+            overflow: hidden;
             background-color: #ffffff;
         }
 
@@ -71,8 +71,6 @@
     let startTouchDist = 0;
     let startZoom = 1.0;
     let hasMoved = false;
-
-    // Флаг для предотвращения двойного срабатывания touchend + click
     let touchHandled = false;
 
     function getColName(colIndex) {
@@ -133,15 +131,12 @@
     function updateCanvasDimensions() {
         if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0) return false;
         const dpr = window.devicePixelRatio || 1;
-        
         const displayW = Math.floor(canvas.clientWidth);
         const displayH = Math.floor(canvas.clientHeight);
-        
         if (canvas.width !== displayW * dpr || canvas.height !== displayH * dpr) {
             canvas.width = displayW * dpr;
             canvas.height = displayH * dpr;
         }
-        
         ctx.resetTransform();
         ctx.scale(dpr, dpr);
         return true;
@@ -161,110 +156,119 @@
         }
     }
 
-function requestDataFromAndroid() {
-    try {
-        if (!window.AndroidBridge || typeof AndroidBridge.getExcelData !== 'function') {
-            console.log("AndroidBridge не найден, инициализируем пустую сетку.");
-            initEmptyGrid();
-            return;
-        }
-
-        const rawJson = AndroidBridge.getExcelData();
-        if (!rawJson) {
-            if (typeof AndroidBridge.onStatus === 'function') {
-                AndroidBridge.onStatus("Предупреждение: getExcelData() вернул пустую строку.");
+    // --- ДИАГНОСТИЧЕСКИЙ МЕТОД ЗАГРУЗКИ ---
+    function requestDataFromAndroid() {
+        try {
+            // Диагностика 1: Проверка существования моста
+            if (!window.AndroidBridge) {
+                alert("ДИАГНОСТИКА: Объект AndroidBridge НЕ НАЙДЕН в WebView!");
+                initEmptyGrid();
+                return;
             }
-            initEmptyGrid();
-            return;
-        }
 
-        const payload = JSON.parse(rawJson);
-        if (!payload.matrix || payload.matrix.length === 0) {
-            initEmptyGrid();
-            return;
-        }
+            if (typeof AndroidBridge.getExcelData !== 'function') {
+                alert("ДИАГНОСТИКА: Метод getExcelData() отсутствует у AndroidBridge!");
+                initEmptyGrid();
+                return;
+            }
 
-        // --- УНИВЕРСАЛЬНЫЙ АДАПТЕР ДАННЫХ (Парсим любые форматы JSON) ---
-        matrix = payload.matrix.map((row) => {
-            if (!row) return [];
-            return row.map((cell) => {
-                if (!cell) return { v: "" };
-                if (typeof cell !== 'object') return { v: String(cell) };
+            // Диагностика 2: Запрос сырых данных
+            const rawJson = AndroidBridge.getExcelData();
+            if (!rawJson) {
+                alert("ДИАГНОСТИКА: AndroidBridge.getExcelData() вернул пустое значение (null или пустую строку)!");
+                initEmptyGrid();
+                return;
+            }
 
-                // 1. Приведение значения ячейки
-                let val = (cell.v !== undefined) ? cell.v : ((cell.value !== undefined) ? cell.value : "");
+            // Диагностика 3: Парсинг JSON
+            let payload;
+            try {
+                payload = JSON.parse(rawJson);
+            } catch(eJson) {
+                alert("ДИАГНОСТИКА: Сбой парсинга JSON! Данные повреждены:\n" + eJson.message + "\n\nПолучено: " + rawJson.substring(0, 150));
+                initEmptyGrid();
+                return;
+            }
 
-                // 2. Приведение цвета фона
-                let cellBg = cell.bg || cell.backgroundColor || cell.backColor || null;
+            if (!payload.matrix || payload.matrix.length === 0) {
+                alert("ДИАГНОСТИКА: В JSON-объекте отсутствует массив 'matrix' или он пуст!");
+                initEmptyGrid();
+                return;
+            }
 
-                // 3. Приведение стилей шрифта
-                let isBold = cell.bold || cell.isBold || (cell.font && cell.font.bold) || false;
-                let isItalic = cell.italic || cell.isItalic || (cell.font && cell.font.italic) || false;
-                let textColor = cell.color || cell.textColor || (cell.font && cell.font.color) || "#000000";
+            // 4. Всеядный маппинг данных ячеек и границ
+            matrix = payload.matrix.map((row) => {
+                if (!row) return [];
+                return row.map((cell) => {
+                    if (!cell) return { v: "" };
+                    if (typeof cell !== 'object') return { v: String(cell) };
 
-                // 4. "Всеядный" маппинг кастомных границ (поддержка любых форматов)
-                let bTop = cell.borderTop || cell.topBorder || cell.border_top || (cell.borders && (cell.borders.top || cell.borders.borderTop));
-                let bBottom = cell.borderBottom || cell.bottomBorder || cell.border_bottom || (cell.borders && (cell.borders.bottom || cell.borders.borderBottom));
-                let bLeft = cell.borderLeft || cell.leftBorder || cell.border_left || (cell.borders && (cell.borders.left || cell.borders.borderLeft));
-                let bRight = cell.borderRight || cell.rightBorder || cell.border_right || (cell.borders && (cell.borders.right || cell.borders.borderRight));
+                    let val = (cell.v !== undefined) ? cell.v : ((cell.value !== undefined) ? cell.value : "");
+                    let cellBg = cell.bg || cell.backgroundColor || cell.backColor || null;
+                    let isBold = cell.bold || cell.isBold || (cell.font && cell.font.bold) || false;
+                    let isItalic = cell.italic || cell.isItalic || (cell.font && cell.font.italic) || false;
+                    let textColor = cell.color || cell.textColor || (cell.font && cell.font.color) || "#000000";
 
-                return {
-                    v: val,
-                    bg: cellBg,
-                    bold: isBold,
-                    italic: isItalic,
-                    color: textColor,
-                    borderTop: bTop,
-                    borderBottom: bBottom,
-                    borderLeft: bLeft,
-                    borderRight: bRight
-                };
+                    let bTop = cell.borderTop || cell.topBorder || cell.border_top || (cell.borders && (cell.borders.top || cell.borders.borderTop));
+                    let bBottom = cell.borderBottom || cell.bottomBorder || cell.border_bottom || (cell.borders && (cell.borders.bottom || cell.borders.borderBottom));
+                    let bLeft = cell.borderLeft || cell.leftBorder || cell.border_left || (cell.borders && (cell.borders.left || cell.borders.borderLeft));
+                    let bRight = cell.borderRight || cell.rightBorder || cell.border_right || (cell.borders && (cell.borders.right || cell.borders.borderRight));
+
+                    return {
+                        v: val,
+                        bg: cellBg,
+                        bold: isBold,
+                        italic: isItalic,
+                        color: textColor,
+                        borderTop: bTop,
+                        borderBottom: bBottom,
+                        borderLeft: bLeft,
+                        borderRight: bRight
+                    };
+                });
             });
-        });
 
-        merges = payload.merges || [];
-        let incomingWidths = payload.widths || [];
-        let incomingHeights = payload.heights || [];
-        
-        maxRows = matrix.length;
-        maxCols = matrix[0] ? matrix[0].length : 12;
+            merges = payload.merges || [];
+            let incomingWidths = payload.widths || [];
+            let incomingHeights = payload.heights || [];
+            
+            maxRows = matrix.length;
+            maxCols = matrix[0] ? matrix[0].length : 12;
 
-        widths = [];
-        for (let c = 0; c < maxCols; c++) {
-            let w = incomingWidths[c];
-            widths[c] = (w && w > 0) ? Math.round(w) : 64;
-        }
+            widths = [];
+            for (let c = 0; c < maxCols; c++) {
+                let w = incomingWidths[c];
+                widths[c] = (w && w > 0) ? Math.round(w) : 64;
+            }
 
-        heights = [];
-        for (let r = 0; r < maxRows; r++) {
-            let h = incomingHeights[r];
-            heights[r] = (h && h > 0) ? Math.round(h) : 20;
-        }
+            heights = [];
+            for (let r = 0; r < maxRows; r++) {
+                let h = incomingHeights[r];
+                heights[r] = (h && h > 0) ? Math.round(h) : 20;
+            }
 
-        buildMergeLookup();
+            buildMergeLookup();
 
-        scrollX = 0;
-        scrollY = 0;
-        editor.style.display = 'none';
-        selectedCell = null;
-        
-        if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
-            updateCanvasDimensions();
-            autoFitZoom();
-            draw();
-        }
+            scrollX = 0;
+            scrollY = 0;
+            editor.style.display = 'none';
+            selectedCell = null;
+            
+            if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+                updateCanvasDimensions();
+                autoFitZoom();
+                draw();
+            }
 
-        if (typeof AndroidBridge.onStatus === 'function') {
-            AndroidBridge.onStatus("Данные успешно адаптированы. Строк: " + maxRows);
-        }
-    } catch(e) {
-        // Выводим ошибку прямо на экран WebView, чтобы сразу локализовать сбой
-        alert("КРИТИЧЕСКАЯ ОШИБКА ДЕКОДИРОВАНИЯ:\n" + e.message + "\n\nСтек:\n" + e.stack);
-        if (window.AndroidBridge && typeof AndroidBridge.onStatus === 'function') {
-            AndroidBridge.onStatus("Ошибка парсинга Canvas: " + e.message);
+            // Сообщаем в Android, что рендеринг прошёл успешно
+            if (typeof AndroidBridge.onStatus === 'function') {
+                AndroidBridge.onStatus("Таблица успешно отрисована на Canvas!");
+            }
+
+        } catch(e) {
+            alert("КРИТИЧЕСКИЙ СБОЙ В requestDataFromAndroid:\n" + e.message + "\n\n" + e.stack);
         }
     }
-}
 
     function getCellRect(row, col) {
         let x = 0;
@@ -281,17 +285,13 @@ function requestDataFromAndroid() {
         }
         
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Тестовый красный квадрат для проверки рендеринга
-        ctx.fillStyle = "red";
-        ctx.fillRect(10, 10, 50, 50);
 
         if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) return;
         
         ctx.save();
         ctx.textBaseline = 'middle';
         
-        // 1. ФОНЫ ЯЧЕЕК (CELL BACKGROUNDS)
+        // 1. ФОНЫ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -320,10 +320,9 @@ function requestDataFromAndroid() {
             }
         }
 
-        // 2. ГРАНИЦЫ СЕТКИ (СТАНДАРТНЫЕ)
+        // 2. СТАНДАРТНАЯ СЕТКА
         ctx.save();
         ctx.strokeStyle = "#d4d4d4";
-        
         const dpr = window.devicePixelRatio || 1;
         const lineThickness = Math.max(1, Math.round(1 * zoom * dpr)) / dpr;
         ctx.lineWidth = lineThickness; 
@@ -364,7 +363,7 @@ function requestDataFromAndroid() {
         }
         ctx.restore();
 
-        // 3. ТЕКСТ ЯЧЕЕК (CELL TEXT)
+        // 3. ТЕКСТ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -388,17 +387,13 @@ function requestDataFromAndroid() {
                 
                 if (text !== "") {
                     let availableW = cw;
-                    
                     if (!(lookup && lookup.isMain)) {
                         let nextCol = c + 1;
                         while (nextCol < maxCols) {
                             let nextLookup = mergeLookup[`${r}_${nextCol}`];
                             let nextCellData = matrix[r] ? matrix[r][nextCol] : null;
                             let nextCellText = (nextCellData && nextCellData.v !== undefined) ? String(nextCellData.v) : "";
-                            
-                            if (nextCellText !== "" || (nextCellData && nextCellData.bg) || nextLookup) {
-                                break;
-                            }
+                            if (nextCellText !== "" || (nextCellData && nextCellData.bg) || nextLookup) break;
                             availableW += (widths[nextCol] || 64) * zoom;
                             nextCol++;
                         }
@@ -417,13 +412,12 @@ function requestDataFromAndroid() {
                     ctx.rect(cx + 2, cy, availableW - 4, ch);
                     ctx.clip(); 
                     ctx.fillText(text, cx + 5, cy + ch / 2);
-                    
                     ctx.restore();
                 }
             }
         }
 
-        // 4. ПОЛЬЗОВАТЕЛЬСКИЕ ГРАНИЦЫ EXCEL (Отрисовываем поверх текста)
+        // 4. ОТРЫСОВКА ПОЛЬЗОВАТЕЛЬСКИХ ГРАНИЦ EXCEL (Поверх контента)
         ctx.save();
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
@@ -448,10 +442,10 @@ function requestDataFromAndroid() {
                 let cellData = matrix[r] ? matrix[r][c] : null;
                 if (!cellData) continue;
 
-                let bTop = cellData.borderTop || cellData.topBorder;
-                let bBottom = cellData.borderBottom || cellData.bottomBorder;
-                let bLeft = cellData.borderLeft || cellData.leftBorder;
-                let bRight = cellData.borderRight || cellData.rightBorder;
+                let bTop = cellData.borderTop;
+                let bBottom = cellData.borderBottom;
+                let bLeft = cellData.borderLeft;
+                let bRight = cellData.borderRight;
 
                 function getThickness(borderStyle) {
                     if (!borderStyle) return 0;
@@ -478,63 +472,51 @@ function requestDataFromAndroid() {
         }
         ctx.restore();
 
-        // 5. BLUE GRID SHEET EDGE BOUNDARY (Край листа)
+        // 5. КРАЙ ЛИСТА
         let sheetTotalW = 0; for (let i = 0; i < maxCols; i++) sheetTotalW += (widths[i] || 64);
         let sheetTotalH = 0; for (let i = 0; i < maxRows; i++) sheetTotalH += (heights[i] || 20);
-        
         let boundaryX = Math.round(ROW_NUM_WIDTH + (sheetTotalW - scrollX) * zoom);
         let boundaryY = Math.round(COL_NUM_HEIGHT + (sheetTotalH - scrollY) * zoom);
 
         ctx.strokeStyle = "#0f62fe";
         ctx.lineWidth = 2.0;
-        
         if (boundaryX >= ROW_NUM_WIDTH) {
-            ctx.beginPath();
-            ctx.moveTo(boundaryX, COL_NUM_HEIGHT);
-            ctx.lineTo(boundaryX, Math.max(COL_NUM_HEIGHT, boundaryY));
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(boundaryX, COL_NUM_HEIGHT); ctx.lineTo(boundaryX, Math.max(COL_NUM_HEIGHT, boundaryY)); ctx.stroke();
         }
         if (boundaryY >= COL_NUM_HEIGHT) {
-            ctx.beginPath();
-            ctx.moveTo(ROW_NUM_WIDTH, boundaryY);
-            ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), boundaryY);
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(ROW_NUM_WIDTH, boundaryY); ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), boundaryY); ctx.stroke();
         }
 
-        // 6. COLUMN HEADERS (Заголовки колонок)
+        // 6. СТОЛБЦЫ (ЗАГОЛОВКИ)
         ctx.lineWidth = 0.5;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
             let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
             let cw = rect.w * zoom;
             if (cx + cw < ROW_NUM_WIDTH || cx > canvas.clientWidth) continue;
-
             let rx = Math.round(cx);
             let rw = Math.round(cx + cw) - rx;
-
             ctx.fillStyle = "#f1f1f1"; ctx.fillRect(rx, 0, rw, COL_NUM_HEIGHT);
             ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(rx, 0, rw, COL_NUM_HEIGHT);
             ctx.fillStyle = "#444444"; ctx.font = `bold 10px Arial`; ctx.textAlign = 'center';
             ctx.fillText(getColName(c), rx + rw / 2, COL_NUM_HEIGHT / 2);
         }
 
-        // 7. ROW HEADERS (Заголовки строк)
+        // 7. СТРОКИ (ЗАГОЛОВКИ)
         for (let r = 0; r < maxRows; r++) {
             let rect = getCellRect(r, 0);
             let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
             let ch = rect.h * zoom;
             if (cy + ch < COL_NUM_HEIGHT || cy > canvas.clientHeight) continue;
-
             let ry = Math.round(cy);
             let rh = Math.round(cy + ch) - ry;
-
             ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, ry, ROW_NUM_WIDTH, rh);
             ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, ry, ROW_NUM_WIDTH, rh);
             ctx.fillStyle = "#666666"; ctx.font = `bold 9px Arial`; ctx.textAlign = 'center';
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, ry + rh / 2);
         }
 
-        // Угловой блок 0:0 (A1)
+        // Угловой квадрат
         ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
@@ -573,13 +555,10 @@ function requestDataFromAndroid() {
             let dx = e.touches[0].pageX - lastTouchX;
             let dy = e.touches[0].pageY - lastTouchY;
             if (Math.abs(dx) > 2 || Math.abs(dy) > 2) hasMoved = true;
-
             scrollX -= dx / zoom; scrollY -= dy / zoom;
-
             let limits = getScrollLimits();
             scrollX = Math.max(0, Math.min(scrollX, limits.x));
             scrollY = Math.max(0, Math.min(scrollY, limits.y));
-
             lastTouchX = e.touches[0].pageX; lastTouchY = e.touches[0].pageY;
             if(editor.style.display === 'block') positionEditor();
             draw();
@@ -680,9 +659,30 @@ function requestDataFromAndroid() {
         editor.style.height = (ch * zoom) + 'px';
     }
 
+    // --- НАДЕЖНОЕ СОХРАНЕНИЕ ДАННЫХ И ПЕРЕДАЧА В ANDROID ---
     function saveCurrentEditorValue() {
         if (selectedCell && matrix[selectedCell.r] && matrix[selectedCell.r][selectedCell.c]) {
-            matrix[selectedCell.r][selectedCell.c].v = editor.value.trim();
+            const newValue = editor.value.trim();
+            const oldValue = String(matrix[selectedCell.r][selectedCell.c].v || "");
+            
+            if (oldValue !== newValue) {
+                matrix[selectedCell.r][selectedCell.c].v = newValue;
+                
+                // Передаем обновленную матрицу обратно в Android
+                if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
+                    try {
+                        const payload = {
+                            matrix: matrix,
+                            merges: merges,
+                            widths: widths,
+                            heights: heights
+                        };
+                        AndroidBridge.saveExcelData(JSON.stringify(payload));
+                    } catch (e) {
+                        alert("Ошибка отправки данных в Android:\n" + e.message);
+                    }
+                }
+            }
         }
     }
 
@@ -697,12 +697,8 @@ function requestDataFromAndroid() {
         function tryInit() {
             if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
                 updateCanvasDimensions();
-                if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
-                    requestDataFromAndroid();
-                } else {
-                    initEmptyGrid();
-                }
-            } else if (attempts < 10) {
+                requestDataFromAndroid();
+            } else if (attempts < 15) {
                 attempts++;
                 setTimeout(tryInit, 100);
             }
