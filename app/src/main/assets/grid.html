@@ -332,6 +332,69 @@ if (matrix && matrix[0] && matrix[0][0] && window.AndroidBridge) {
         }
         ctx.restore();
 
+        // 2.5. ПОЛЬЗОВАТЕЛЬСКИЕ ГРАНИЦЫ ИЗ ДОКУМЕНТА EXCEL
+        ctx.save();
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let lookup = mergeLookup[`${r}_${c}`];
+                if (lookup && lookup.isChild) continue; 
+
+                let rect = getCellRect(r, c);
+                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
+
+                if (lookup && lookup.isMain) {
+                    let fullW = 0; let fullH = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
+                    cw = fullW * zoom; ch = fullH * zoom;
+                }
+
+                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
+
+                let cellData = matrix[r] ? matrix[r][c] : null;
+                if (!cellData) continue;
+
+                // --- Чтение данных о границах (подстройте под ваш JSON, если ключи отличаются) ---
+                // Предполагаем структуру: cellData.borderTop, cellData.borderBottom и т.д.
+                let bTop = cellData.borderTop || cellData.topBorder;
+                let bBottom = cellData.borderBottom || cellData.bottomBorder;
+                let bLeft = cellData.borderLeft || cellData.leftBorder;
+                let bRight = cellData.borderRight || cellData.rightBorder;
+
+                const dpr = window.devicePixelRatio || 1;
+
+                // Функция для определения толщины линии на холсте
+                function getThickness(borderStyle) {
+                    if (!borderStyle) return 0;
+                    if (borderStyle === 'medium' || borderStyle === 2) return Math.max(2, Math.round(2 * zoom));
+                    if (borderStyle === 'thick' || borderStyle === 3) return Math.max(3, Math.round(3 * zoom));
+                    return Math.max(1, Math.round(1 * zoom)); // thin / по умолчанию
+                }
+
+                // Вспомогательная функция отрисовки линии границы
+                function drawCustomLine(x1, y1, x2, y2, borderCfg) {
+                    if (!borderCfg) return;
+                    ctx.beginPath();
+                    // Если borderCfg — это объект (например, {style: 'thin', color: '#000'}), берем свойства оттуда
+                    ctx.strokeStyle = borderCfg.color || "#000000"; 
+                    ctx.lineWidth = getThickness(borderCfg.style || borderCfg);
+                    ctx.moveTo(Math.round(x1), Math.round(y1));
+                    ctx.lineTo(Math.round(x2), Math.round(y2));
+                    ctx.stroke();
+                }
+
+                // Рисуем каждую границу отдельно, если она задана в документе
+                if (bTop)    drawCustomLine(cx, cy, cx + cw, cy, bTop);
+                if (bBottom) drawCustomLine(cx, cy + ch, cx + cw, cy + ch, bBottom);
+                if (bLeft)   drawCustomLine(cx, cy, cx, cy + ch, bLeft);
+                if (bRight)  drawCustomLine(cx + cw, cy, cx + cw, cy + ch, bRight);
+            }
+        }
+        ctx.restore();
+
         // 3. CELL TEXT
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
