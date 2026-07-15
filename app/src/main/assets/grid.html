@@ -57,6 +57,9 @@
     let startZoom = 1.0;
     let hasMoved = false;
 
+    // Флаг для предотвращения двойного срабатывания touchend + click
+    let touchHandled = false;
+
     function getColName(colIndex) {
         let name = "";
         while (colIndex >= 0) {
@@ -204,18 +207,18 @@
     }
 
     function draw() {
-    // Временный тест: если холст сжался, мы принудительно дадим ему размеры контейнера
-    if (canvas.width === 0 || canvas.height === 0) {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-    }
-    
-    // Ваш текущий код очистки экрана...
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Добавьте тестовый квадрат в самый верх, чтобы понять, жива ли вообще отрисовка:
-    ctx.fillStyle = "red";
-    ctx.fillRect(10, 10, 50, 50);
+        // Защита от нулевого размера холста во время инициализации
+        if (canvas.width === 0 || canvas.height === 0) {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Тестовый красный квадрат для проверки рендеринга
+        ctx.fillStyle = "red";
+        ctx.fillRect(10, 10, 50, 50);
+
         if (!matrix || matrix.length === 0 || widths.length === 0 || heights.length === 0) return;
         
         ctx.save();
@@ -250,10 +253,9 @@
             }
         }
 
-        // 2. ГРАНИЦЫ (ИСПРАВЛЕНО: Принудительная пошаговая отрисовка сетки толщиной не менее 1px)
+        // 2. ГРАНИЦЫ СЕТКИ (Толщина не менее 1px)
         ctx.save();
         ctx.strokeStyle = "#d4d4d4";
-        // Гарантируем, что линия никогда не станет тоньше 1 реального пикселя и не исчезнет
         ctx.lineWidth = Math.max(1.0, Math.round(1.0 * zoom)); 
 
         for (let r = 0; r < maxRows; r++) {
@@ -276,13 +278,11 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
-                // Смещаем координаты на 0.5 для идеальной четкости линий в Canvas без размытия
                 let startX = Math.floor(cx) + 0.5;
                 let startY = Math.floor(cy) + 0.5;
                 let endX = Math.floor(cx + cw) + 0.5;
                 let endY = Math.floor(cy + ch) + 0.5;
 
-                // Рисуем каждую ячейку изолированным путем, чтобы WebView гарантированно применил stroke()
                 ctx.beginPath();
                 ctx.moveTo(startX, endY); ctx.lineTo(endX, endY);
                 ctx.moveTo(endX, startY); ctx.lineTo(endX, endY);
@@ -416,9 +416,13 @@
     const viewWatcher = new ResizeObserver(() => {
         if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
             updateCanvasDimensions();
-            if (matrix.length === 0) initEmptyGrid();
-            autoFitZoom();
-            draw();
+            // Инициализируем пустую сетку только если в матрице действительно пусто
+            if (matrix.length === 0) {
+                initEmptyGrid();
+            } else {
+                autoFitZoom();
+                draw();
+            }
         }
     });
     viewWatcher.observe(canvas);
@@ -471,6 +475,7 @@
         isDragging = false; 
         startTouchDist = 0; 
         if (!hasMoved && e.changedTouches.length > 0) {
+            touchHandled = true; // Блокируем последующий "click"
             const rect = canvas.getBoundingClientRect();
             const clickX = e.changedTouches[0].clientX - rect.left;
             const clickY = e.changedTouches[0].clientY - rect.top;
@@ -479,6 +484,10 @@
     });
 
     canvas.addEventListener('click', function(e) {
+        if (touchHandled) {
+            touchHandled = false; // Сбрасываем флаг для следующего тапа
+            return;
+        }
         if (hasMoved) return;
         const rect = canvas.getBoundingClientRect();
         const clickX = e.clientX - rect.left; 
@@ -557,7 +566,6 @@
     });
 
     window.onload = function() {
-        initEmptyGrid(); 
         let attempts = 0;
         function tryInit() {
             if (canvas.clientWidth > 0 && canvas.clientHeight > 0) {
@@ -565,7 +573,7 @@
                 if (window.AndroidBridge && typeof AndroidBridge.getExcelData === 'function') {
                     requestDataFromAndroid();
                 } else {
-                    draw();
+                    initEmptyGrid();
                 }
             } else if (attempts < 10) {
                 attempts++;
