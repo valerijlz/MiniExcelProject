@@ -39,9 +39,43 @@ class MainActivity : AppCompatActivity() {
     
     private var currentFileUri: Uri? = null
     
-    private val emptyPayload = "{\"matrix\":[],\"merges\":[],\"widths\":[],\"heights\":[]}"
-    @Volatile
-    private var cachedJsonPayload: String = emptyPayload
+private val emptyPayload: String
+    get() {
+        val rowsCount = 30
+        val colsCount = 15
+        
+        val matrix = JSONArray()
+        for (r in 0 until rowsCount) {
+            val rowArray = JSONArray()
+            for (c in 0 until colsCount) {
+                val cellObj = JSONObject()
+                cellObj.put("v", "")
+                rowArray.put(cellObj)
+            }
+            matrix.put(rowArray)
+        }
+        
+        val widths = JSONArray()
+        for (c in 0 until colsCount) {
+            widths.put(80) // Дефолтная ширина колонки в пикселях
+        }
+        
+        val heights = JSONArray()
+        for (r in 0 until rowsCount) {
+            heights.put(25) // Дефолтная высота строки в пикселях
+        }
+
+        val root = JSONObject().apply {
+            put("matrix", matrix)
+            put("widths", widths)
+            put("heights", heights)
+            put("merges", JSONArray())
+        }
+        return root.toString()
+    }
+
+@Volatile
+private var cachedJsonPayload: String = emptyPayload
 
     private lateinit var openFileLauncher: ActivityResultLauncher<Intent>
     private lateinit var saveFileLauncher: ActivityResultLauncher<Intent>
