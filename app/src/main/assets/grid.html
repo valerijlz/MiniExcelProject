@@ -180,7 +180,11 @@
             const rawJson = AndroidBridge.getExcelData();
             if (!rawJson) return;
             const payload = JSON.parse(rawJson);
-            
+            if (payload && payload.matrix && payload.matrix[0]) {
+                // Ищем первую попавшуюся ячейку, в которой может быть информация
+                let sampleCell = payload.matrix[0][0] || {};
+                alert("TEST CELL DATA:\n" + JSON.stringify(sampleCell));
+            }
             if (!payload.matrix || payload.matrix.length === 0) {
                 initEmptyGrid();
                 return;
