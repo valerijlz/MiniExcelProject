@@ -25,6 +25,7 @@ import org.apache.poi.openxml4j.util.ZipSecureFile
 import org.apache.poi.ss.usermodel.DateUtil
 import org.apache.poi.ss.usermodel.Sheet
 import org.apache.poi.ss.usermodel.WorkbookFactory
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -49,7 +50,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Защита Apache POI от перегрузки памяти
         ZipSecureFile.setMinInflateRatio(0.005)
 
         openButton = findViewById(R.id.openButton)
@@ -72,21 +72,34 @@ class MainActivity : AppCompatActivity() {
         }
 
         saveButton.setOnClickListener {
-            tableWebView.post { 
-                tableWebView.evaluateJavascript("exportExcelToAndroid();", null) 
+            if (currentFileUri == null) {
+                // Если файла еще нет, сначала просим пользователя выбрать, куда его сохранить
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    putExtra(Intent.EXTRA_TITLE, "edited_sheet.xlsx")
+                }
+                saveFileLauncher.launch(intent)
+            } else {
+                // Если файл уже открыт, запрашиваем экспорт данных из WebView
+                triggerJSExport()
             }
         }
-if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-    WebView.setWebContentsDebuggingEnabled(true)
-}
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
+    }
+
+    private fun triggerJSExport() {
+        tableWebView.post { 
+            tableWebView.evaluateJavascript("exportExcelToAndroid();", null) 
+        }
     }
 
     private fun setupWebView() {
         tableWebView.apply {
-            // ИСПРАВЛЕНИЕ: Отключаем аппаратные сбои Canvas в новом SDK Android
-            // Переключаем WebView в режим программного рендеринга (Software Layer)
             setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
-
             clearCache(true)
             clearHistory()
             clearFormData()
@@ -129,35 +142,29 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
                     currentFileUri = uri
-                    tableWebView.post { 
-                        tableWebView.evaluateJavascript("exportExcelToAndroid();", null) 
-                    }
+                    // Теперь, когда URI создан, запрашиваем экспорт у JS
+                    triggerJSExport()
                 }
             }
         }
     }
 
     private fun pipeExcelToWebView(fileUri: Uri) {
-        // Мгновенный сброс старой среды
         cachedJsonPayload = emptyPayload
         tableWebView.loadUrl("file:///android_asset/grid.html")
 
-        // Запускаем современную безопасную корутину в контексте Жизненного Цикла Activity
         lifecycleScope.launch {
             var tempFile: File? = null
             try {
-                // Переключаемся на фоновый IO-поток для работы с диском и POI
                 withContext(Dispatchers.IO) {
                     tempFile = File(cacheDir, "current_scanned_sheet.tmp")
                     
-                    // Быстрое потоковое копирование во временный файл
                     contentResolver.openInputStream(fileUri)?.use { input ->
                         FileOutputStream(tempFile).use { output ->
                             input.copyTo(output, 16384)
                         }
                     }
 
-                    // Открытие книги из файла в режиме Read-Only
                     WorkbookFactory.create(tempFile, null, true).use { workbook ->
                         if (workbook.numberOfSheets > 0) {
                             parseSheetToJson(workbook.getSheetAt(0))
@@ -172,7 +179,6 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                 Log.e("MiniExcelDebug", "Ошибка обработки: ${e.message}")
                 Toast.makeText(this@MainActivity, "Ошибка чтения тяжелого файла", Toast.LENGTH_SHORT).show()
             } finally {
-                // Чистим кэш-память накопителя и вызываем сборщик мусора
                 tempFile?.let { if (it.exists()) it.delete() }
                 System.gc()
             }
@@ -188,7 +194,6 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
         var lastRowIdx = sheet.lastRowNum
         var maxColsCount = 0
 
-        // Определяем реальные границы
         for (r in 0..lastRowIdx) {
             val row = sheet.getRow(r)
             if (row != null && row.lastCellNum > maxColsCount) {
@@ -197,18 +202,15 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
         }
         if (maxColsCount == 0) maxColsCount = 12
 
-        // Безопасные лимиты
         if (lastRowIdx > 1500) lastRowIdx = 1500
         if (maxColsCount > 60) maxColsCount = 60
 
         try {
-            // Заполняем ширину колонок
             for (c in 0 until maxColsCount) {
                 val w = sheet.getColumnWidth(c) / 35
                 jsonWidths.put(if (w > 0) w else 64)
             }
 
-            // РЕШЕНИЕ ПРОБЛЕМЫ С РАМКАМИ: гарантируем генерацию ячеек, даже если они null (пустые в POI)
             for (r in 0..lastRowIdx) {
                 val row = sheet.getRow(r)
                 val h = if (row != null) (row.heightInPoints * 1.33).toInt() else 20
@@ -217,7 +219,7 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                 val rowArray = JSONArray()
                 for (c in 0 until maxColsCount) {
                     val cellObj = JSONObject()
-                    cellObj.put("v", "") // Каждая ячейка теперь ОБЯЗАТЕЛЬНО получает базовое значение и структуру
+                    cellObj.put("v", "")
 
                     if (row != null) {
                         val cell = row.getCell(c)
@@ -250,7 +252,6 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                 jsonTable.put(rowArray)
             }
 
-            // Обработка объединенных регионов
             val numRegions = sheet.numMergedRegions
             for (i in 0 until numRegions) {
                 val region = sheet.getMergedRegion(i)
@@ -275,13 +276,67 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
 
             cachedJsonPayload = rootPayload.toString()
 
-            // Передаем данные в WebView, гарантируя выполнение на главном потоке
             tableWebView.post {
                 tableWebView.evaluateJavascript("setTimeout(function() { requestDataFromAndroid(); }, 150);", null)
             }
 
         } catch (e: Exception) {
             Log.e("MiniExcelDebug", "Ошибка сборки JSON: ${e.message}")
+        }
+    }
+
+    // Сохранение переданных данных из JS обратно в физический XLSX файл на устройстве
+    private fun saveJsonToExcelFile(jsonData: String, fileUri: Uri) {
+        lifecycleScope.launch {
+            var tempFile: File? = null
+            try {
+                withContext(Dispatchers.IO) {
+                    val root = JSONObject(jsonData)
+                    val matrix = root.optJSONArray("matrix") ?: JSONArray()
+                    
+                    val workbook = XSSFWorkbook()
+                    val sheet = workbook.createSheet("Sheet1")
+
+                    // Запись структуры матрицы обратно в Excel-ячейки
+                    for (r in 0 until matrix.length()) {
+                        val rowArray = matrix.optJSONArray(r) ?: continue
+                        val row = sheet.createRow(r)
+                        for (c in 0 until rowArray.length()) {
+                            val cellObj = rowArray.optJSONObject(c) ?: continue
+                            val cellValue = cellObj.opt("v") ?: ""
+                            val cell = row.createCell(c)
+                            
+                            // Автоопределение базовых типов для записи
+                            when (cellValue) {
+                                is Number -> cell.setCellValue(cellValue.toDouble())
+                                is Boolean -> cell.setCellValue(cellValue)
+                                else -> cell.setCellValue(cellValue.toString())
+                            }
+                        }
+                    }
+
+                    // Сохраняем сначала во временный файл во избежание повреждения данных при сбоях записи
+                    tempFile = File(cacheDir, "temp_saving_sheet.xlsx")
+                    FileOutputStream(tempFile).use { out ->
+                        workbook.write(out)
+                    }
+                    workbook.close()
+
+                    // Копируем временный файл в целевой Uri через ContentResolver
+                    contentResolver.openOutputStream(fileUri, "rwt")?.use { outStream ->
+                        tempFile?.inputStream()?.use { inStream ->
+                            inStream.copyTo(outStream)
+                        }
+                    }
+                }
+                Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Log.e("MiniExcelDebug", "Ошибка записи: ${e.message}")
+                Toast.makeText(this@MainActivity, "Не удалось сохранить файл", Toast.LENGTH_SHORT).show()
+            } finally {
+                tempFile?.let { if (it.exists()) it.delete() }
+                System.gc()
+            }
         }
     }
 
@@ -292,6 +347,17 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
         @JavascriptInterface
         fun onStatus(message: String) {
             Log.d("MiniExcelStatus", message)
+        }
+
+        // JS внутри grid.html должен вызвать этот метод в конце функции exportExcelToAndroid()
+        // Пример вызова из JS: window.AndroidBridge.saveExcelData(JSON.stringify(excelData));
+        @JavascriptInterface
+        fun saveExcelData(jsonData: String) {
+            currentFileUri?.let { uri ->
+                saveJsonToExcelFile(jsonData, uri)
+            } ?: run {
+                Log.e("MiniExcelDebug", "Попытка сохранить, но currentFileUri равен null")
+            }
         }
     }
 }
