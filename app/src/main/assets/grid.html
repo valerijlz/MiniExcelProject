@@ -163,23 +163,86 @@
 
 function requestDataFromAndroid() {
     try {
-        // Создаем пустую сетку для теста
-        initEmptyGrid();
+        if (!window.AndroidBridge || typeof AndroidBridge.getExcelData !== 'function') {
+            console.log("AndroidBridge не найден, инициализируем пустую сетку.");
+            initEmptyGrid();
+            return;
+        }
 
-        // Насильно записываем в ячейку A1 (строка 0, колонка 0) тестовые данные
-        matrix[0][0] = {
-            v: "ТЕСТ ГРАНИЦ",
-            bg: "#e2f0d9", // Нежно-зеленый фон
-            color: "#000000",
-            bold: true,
-            // Тестовые границы разной толщины:
-            borderTop: { style: "thick", color: "#ff0000" },     // Толстая красная сверху
-            borderBottom: { style: "medium", color: "#00ff00" }, // Средняя зеленая снизу
-            borderLeft: { style: "thin", color: "#0000ff" },    // Тонкая синяя слева
-            borderRight: { style: "thick", color: "#ff00ff" }    // Толстая фиолетовая справа
-        };
+        const rawJson = AndroidBridge.getExcelData();
+        if (!rawJson) {
+            if (typeof AndroidBridge.onStatus === 'function') {
+                AndroidBridge.onStatus("Предупреждение: getExcelData() вернул пустую строку.");
+            }
+            initEmptyGrid();
+            return;
+        }
+
+        const payload = JSON.parse(rawJson);
+        if (!payload.matrix || payload.matrix.length === 0) {
+            initEmptyGrid();
+            return;
+        }
+
+        // --- УНИВЕРСАЛЬНЫЙ АДАПТЕР ДАННЫХ (Парсим любые форматы JSON) ---
+        matrix = payload.matrix.map((row) => {
+            if (!row) return [];
+            return row.map((cell) => {
+                if (!cell) return { v: "" };
+                if (typeof cell !== 'object') return { v: String(cell) };
+
+                // 1. Приведение значения ячейки
+                let val = (cell.v !== undefined) ? cell.v : ((cell.value !== undefined) ? cell.value : "");
+
+                // 2. Приведение цвета фона
+                let cellBg = cell.bg || cell.backgroundColor || cell.backColor || null;
+
+                // 3. Приведение стилей шрифта
+                let isBold = cell.bold || cell.isBold || (cell.font && cell.font.bold) || false;
+                let isItalic = cell.italic || cell.isItalic || (cell.font && cell.font.italic) || false;
+                let textColor = cell.color || cell.textColor || (cell.font && cell.font.color) || "#000000";
+
+                // 4. "Всеядный" маппинг кастомных границ (поддержка любых форматов)
+                let bTop = cell.borderTop || cell.topBorder || cell.border_top || (cell.borders && (cell.borders.top || cell.borders.borderTop));
+                let bBottom = cell.borderBottom || cell.bottomBorder || cell.border_bottom || (cell.borders && (cell.borders.bottom || cell.borders.borderBottom));
+                let bLeft = cell.borderLeft || cell.leftBorder || cell.border_left || (cell.borders && (cell.borders.left || cell.borders.borderLeft));
+                let bRight = cell.borderRight || cell.rightBorder || cell.border_right || (cell.borders && (cell.borders.right || cell.borders.borderRight));
+
+                return {
+                    v: val,
+                    bg: cellBg,
+                    bold: isBold,
+                    italic: isItalic,
+                    color: textColor,
+                    borderTop: bTop,
+                    borderBottom: bBottom,
+                    borderLeft: bLeft,
+                    borderRight: bRight
+                };
+            });
+        });
+
+        merges = payload.merges || [];
+        let incomingWidths = payload.widths || [];
+        let incomingHeights = payload.heights || [];
+        
+        maxRows = matrix.length;
+        maxCols = matrix[0] ? matrix[0].length : 12;
+
+        widths = [];
+        for (let c = 0; c < maxCols; c++) {
+            let w = incomingWidths[c];
+            widths[c] = (w && w > 0) ? Math.round(w) : 64;
+        }
+
+        heights = [];
+        for (let r = 0; r < maxRows; r++) {
+            let h = incomingHeights[r];
+            heights[r] = (h && h > 0) ? Math.round(h) : 20;
+        }
 
         buildMergeLookup();
+
         scrollX = 0;
         scrollY = 0;
         editor.style.display = 'none';
@@ -190,8 +253,16 @@ function requestDataFromAndroid() {
             autoFitZoom();
             draw();
         }
+
+        if (typeof AndroidBridge.onStatus === 'function') {
+            AndroidBridge.onStatus("Данные успешно адаптированы. Строк: " + maxRows);
+        }
     } catch(e) {
-        alert("Ошибка теста: " + e.message);
+        // Выводим ошибку прямо на экран WebView, чтобы сразу локализовать сбой
+        alert("КРИТИЧЕСКАЯ ОШИБКА ДЕКОДИРОВАНИЯ:\n" + e.message + "\n\nСтек:\n" + e.stack);
+        if (window.AndroidBridge && typeof AndroidBridge.onStatus === 'function') {
+            AndroidBridge.onStatus("Ошибка парсинга Canvas: " + e.message);
+        }
     }
 }
 
