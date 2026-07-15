@@ -236,6 +236,14 @@ private var cachedJsonPayload: String = emptyPayload
         }
         if (maxColsCount == 0) maxColsCount = 12
 
+        // Если файл открылся, но в нем нет строк/колонок, задаем размер по умолчанию
+if (lastRowIdx <= 0) {
+    lastRowIdx = 29 // Итого 30 строк (индексы от 0 до 29)
+}
+if (maxColsCount <= 0) {
+    maxColsCount = 15 // Итого 15 колонок
+}
+
         if (lastRowIdx > 1500) lastRowIdx = 1500
         if (maxColsCount > 60) maxColsCount = 60
 
