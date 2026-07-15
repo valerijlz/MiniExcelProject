@@ -75,8 +75,8 @@ class MainActivity : AppCompatActivity() {
                 tableWebView.evaluateJavascript("exportExcelToAndroid();", null) 
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-    WebView.setWebContentsDebuggingEnabled(true);
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+    WebView.setWebContentsDebuggingEnabled(true)
 }
     }
 
