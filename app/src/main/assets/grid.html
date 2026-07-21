@@ -265,7 +265,7 @@
         return { x: x, y: y, w: (widths[col] || 64), h: (heights[row] || 20) };
     }
 
-    function draw() {
+function draw() {
         if (canvas.width === 0 || canvas.height === 0) {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -278,11 +278,51 @@
         ctx.save();
         ctx.textBaseline = 'middle';
         
-        // 1. ФОНЫ ЯЧЕЕК (включая учет объединенных ячеек)
+        // 1. БАЗОВАЯ СЕТКА (Гарантированно рисует внутренние границы для каждой ячейки)
+        ctx.save();
+        ctx.strokeStyle = "#d4d4d4";
+        const dpr = window.devicePixelRatio || 1;
+        const lineThickness = Math.max(1, Math.round(1 * zoom * dpr)) / dpr;
+        ctx.lineWidth = lineThickness;
+
+        let totalGridW = 0;
+        for (let c = 0; c < maxCols; c++) totalGridW += (widths[c] || 64);
+        let totalGridH = 0;
+        for (let r = 0; r < maxRows; r++) totalGridH += (heights[r] || 20);
+
+        ctx.beginPath();
+        // Горизонтальные линии
+        let currentY = 0;
+        for (let r = 0; r <= maxRows; r++) {
+            let cy = COL_NUM_HEIGHT + (currentY - scrollY) * zoom;
+            if (cy >= COL_NUM_HEIGHT && cy <= canvas.clientHeight + 50) {
+                let startX = ROW_NUM_WIDTH;
+                let endX = ROW_NUM_WIDTH + totalGridW * zoom;
+                ctx.moveTo(Math.round(startX), Math.round(cy));
+                ctx.lineTo(Math.round(endX), Math.round(cy));
+            }
+            if (r < maxRows) currentY += (heights[r] || 20);
+        }
+        // Вертикальные линии
+        let currentX = 0;
+        for (let c = 0; c <= maxCols; c++) {
+            let cx = ROW_NUM_WIDTH + (currentX - scrollX) * zoom;
+            if (cx >= ROW_NUM_WIDTH && cx <= canvas.clientWidth + 50) {
+                let startY = COL_NUM_HEIGHT;
+                let endY = COL_NUM_HEIGHT + totalGridH * zoom;
+                ctx.moveTo(Math.round(cx), Math.round(startY));
+                ctx.lineTo(Math.round(cx), Math.round(endY));
+            }
+            if (c < maxCols) currentX += (widths[c] || 64);
+        }
+        ctx.stroke();
+        ctx.restore();
+
+        // 2. ФОНЫ ЯЧЕЕК И ОБЪЕДИНЕНИЙ (Закрашивают лишние линии сетки внутри мержа)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue; 
+                if (lookup && lookup.isChild) continue; // Пропускаем дочерние ячейки мержа
 
                 let rect = getCellRect(r, c);
                 let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
@@ -300,57 +340,40 @@
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
 
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
+                
+                // Если у объединенной или обычной ячейки есть фон, заливаем его
                 if (cellData.bg) {
                     ctx.fillStyle = cellData.bg;
+                    ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
+                } else if (lookup && lookup.isMain) {
+                    // Если мерж без явного цвета, закрашиваем белым, чтобы перекрыть сетку под ним
+                    ctx.fillStyle = "#ffffff";
                     ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
                 }
             }
         }
 
-        // 2. СТАНДАРТНАЯ СЕТКА (надежная отрисовка линий для каждой ячейки)
+        // 3. ОБВОДКА ОБЪЕДИНЕННЫХ БЛОКОВ (Восстанавливает внешнюю рамку мержа)
         ctx.save();
         ctx.strokeStyle = "#d4d4d4";
-        const dpr = window.devicePixelRatio || 1;
-        const lineThickness = Math.max(1, Math.round(1 * zoom * dpr)) / dpr;
-        ctx.lineWidth = lineThickness; 
+        ctx.lineWidth = lineThickness;
+        merges.forEach(m => {
+            let startRect = getCellRect(m.sr, m.sc);
+            let cx = ROW_NUM_WIDTH + (startRect.x - scrollX) * zoom;
+            let cy = COL_NUM_HEIGHT + (startRect.y - scrollY) * zoom;
+            let fullW = 0; let fullH = 0;
+            for (let i = m.sc; i <= m.ec; i++) fullW += (widths[i] || 64);
+            for (let i = m.sr; i <= m.er; i++) fullH += (heights[i] || 20);
+            let cw = fullW * zoom;
+            let ch = fullH * zoom;
 
-        for (let r = 0; r < maxRows; r++) {
-            for (let c = 0; c < maxCols; c++) {
-                let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue; // Пропускаем внутренности мержа
-
-                let rect = getCellRect(r, c);
-                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
-                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
-                let cw = rect.w * zoom;
-                let ch = rect.h * zoom;
-
-                if (lookup && lookup.isMain) {
-                    let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
-                    cw = fullW * zoom; ch = fullH * zoom;
-                }
-
-                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
-
-                const halfThick = lineThickness / 2;
-                const startX = Math.round(cx) - halfThick;
-                const startY = Math.round(cy) - halfThick;
-                const endX = Math.round(cx + cw) - halfThick;
-                const endY = Math.round(cy + ch) - halfThick;
-
-                ctx.beginPath();
-                ctx.moveTo(startX, endY); 
-                ctx.lineTo(endX, endY); // Нижняя граница ячейки
-                ctx.moveTo(endX, startY); 
-                ctx.lineTo(endX, endY); // Правая граница ячейки
-                ctx.stroke();
+            if (cx + cw >= ROW_NUM_WIDTH && cy + ch >= COL_NUM_HEIGHT && cx <= canvas.clientWidth && cy <= canvas.clientHeight) {
+                ctx.strokeRect(Math.round(cx), Math.round(cy), Math.round(cw), Math.round(ch));
             }
-        }
+        });
         ctx.restore();
 
-        // 3. ТЕКСТ ЯЧЕЕК
+        // 4. ТЕКСТ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -404,7 +427,7 @@
             }
         }
 
-        // 4. ПОЛЬЗОВАТЕЛЬСКИЕ ГРАНИЦЫ EXCEL
+        // 5. ПОЛЬЗОВАТЕЛЬСКИЕ ГРАНИЦЫ EXCEL
         ctx.save();
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
@@ -459,7 +482,7 @@
         }
         ctx.restore();
 
-        // 5. КРАЙ ЛИСТА
+        // 6. КРАЙ ЛИСТА
         let sheetTotalW = 0; for (let i = 0; i < maxCols; i++) sheetTotalW += (widths[i] || 64);
         let sheetTotalH = 0; for (let i = 0; i < maxRows; i++) sheetTotalH += (heights[i] || 20);
         let boundaryX = Math.round(ROW_NUM_WIDTH + (sheetTotalW - scrollX) * zoom);
@@ -474,7 +497,7 @@
             ctx.beginPath(); ctx.moveTo(ROW_NUM_WIDTH, boundaryY); ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), boundaryY); ctx.stroke();
         }
 
-        // 6. СТОЛБЦЫ (ЗАГОЛОВКИ)
+        // 7. СТОЛБЦЫ И СТРОКИ (ЗАГОЛОВКИ)
         ctx.lineWidth = 0.5;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -489,7 +512,6 @@
             ctx.fillText(getColName(c), rx + rw / 2, COL_NUM_HEIGHT / 2);
         }
 
-        // 7. СТРОКИ (ЗАГОЛОВКИ)
         for (let r = 0; r < maxRows; r++) {
             let rect = getCellRect(r, 0);
             let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
