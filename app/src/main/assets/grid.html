@@ -84,10 +84,24 @@
 
     function buildMergeLookup() {
         mergeLookup = {};
+        if (!Array.isArray(merges)) {
+            merges = [];
+            return;
+        }
+
         merges.forEach(m => {
-            for (let r = m.sr; r <= m.er; r++) {
-                for (let c = m.sc; c <= m.ec; c++) {
-                    mergeLookup[`${r}_${c}`] = (r === m.sr && c === m.sc) 
+            // Нормализуем ключи мержа независимо от того, как их прислал Android
+            let sr = Number(m.sr !== undefined ? m.sr : (m.startRow !== undefined ? m.startRow : (m.row1 !== undefined ? m.row1 : 0)));
+            let sc = Number(m.sc !== undefined ? m.sc : (m.startCol !== undefined ? m.startCol : (m.col1 !== undefined ? m.col1 : 0)));
+            let er = Number(m.er !== undefined ? m.er : (m.endRow !== undefined ? m.endRow : (m.row2 !== undefined ? m.row2 : sr)));
+            let ec = Number(m.ec !== undefined ? m.ec : (m.endCol !== undefined ? m.endCol : (m.col2 !== undefined ? m.col2 : sc)));
+
+            // Сохраняем нормализованные данные обратно в объект мержа
+            m.sr = sr; m.sc = sc; m.er = er; m.ec = ec;
+
+            for (let r = sr; r <= er; r++) {
+                for (let c = sc; c <= ec; c++) {
+                    mergeLookup[`${r}_${c}`] = (r === sr && c === sc) 
                         ? { isMain: true, isChild: false, m: m } 
                         : { isMain: false, isChild: true, m: m };
                 }
@@ -265,7 +279,7 @@
         return { x: x, y: y, w: (widths[col] || 64), h: (heights[row] || 20) };
     }
 
-function draw() {
+    function draw() {
         if (canvas.width === 0 || canvas.height === 0) {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -278,51 +292,42 @@ function draw() {
         ctx.save();
         ctx.textBaseline = 'middle';
         
-        // 1. БАЗОВАЯ СЕТКА (Гарантированно рисует внутренние границы для каждой ячейки)
+        // 1. БАЗОВАЯ СЕТКА (Используем четкие смещения на 0.5px для гарантии видимости линий на любых экранах)
         ctx.save();
-        ctx.strokeStyle = "#d4d4d4";
-        const dpr = window.devicePixelRatio || 1;
-        const lineThickness = Math.max(1, Math.round(1 * zoom * dpr)) / dpr;
-        ctx.lineWidth = lineThickness;
-
-        let totalGridW = 0;
-        for (let c = 0; c < maxCols; c++) totalGridW += (widths[c] || 64);
-        let totalGridH = 0;
-        for (let r = 0; r < maxRows; r++) totalGridH += (heights[r] || 20);
+        ctx.strokeStyle = "#c0c0c0"; // Сделали чуть темнее для надежности видимости (#d4d4d4 заменено на #c0c0c0)
+        ctx.lineWidth = 1;
 
         ctx.beginPath();
-        // Горизонтальные линии
+        
         let currentY = 0;
         for (let r = 0; r <= maxRows; r++) {
-            let cy = COL_NUM_HEIGHT + (currentY - scrollY) * zoom;
+            let cy = COL_NUM_HEIGHT + Math.round((currentY - scrollY) * zoom) + 0.5;
             if (cy >= COL_NUM_HEIGHT && cy <= canvas.clientHeight + 50) {
-                let startX = ROW_NUM_WIDTH;
-                let endX = ROW_NUM_WIDTH + totalGridW * zoom;
-                ctx.moveTo(Math.round(startX), Math.round(cy));
-                ctx.lineTo(Math.round(endX), Math.round(cy));
+                ctx.moveTo(ROW_NUM_WIDTH, cy);
+                let totalGridW = 0; for(let i=0; i<maxCols; i++) totalGridW += (widths[i] || 64);
+                ctx.lineTo(ROW_NUM_WIDTH + Math.round(totalGridW * zoom), cy);
             }
             if (r < maxRows) currentY += (heights[r] || 20);
         }
-        // Вертикальные линии
+
         let currentX = 0;
         for (let c = 0; c <= maxCols; c++) {
-            let cx = ROW_NUM_WIDTH + (currentX - scrollX) * zoom;
+            let cx = ROW_NUM_WIDTH + Math.round((currentX - scrollX) * zoom) + 0.5;
             if (cx >= ROW_NUM_WIDTH && cx <= canvas.clientWidth + 50) {
-                let startY = COL_NUM_HEIGHT;
-                let endY = COL_NUM_HEIGHT + totalGridH * zoom;
-                ctx.moveTo(Math.round(cx), Math.round(startY));
-                ctx.lineTo(Math.round(cx), Math.round(endY));
+                let totalGridH = 0; for(let i=0; i<maxRows; i++) totalGridH += (heights[i] || 20);
+                ctx.moveTo(cx, COL_NUM_HEIGHT);
+                ctx.lineTo(cx, COL_NUM_HEIGHT + Math.round(totalGridH * zoom));
             }
             if (c < maxCols) currentX += (widths[c] || 64);
         }
         ctx.stroke();
         ctx.restore();
 
-        // 2. ФОНЫ ЯЧЕЕК И ОБЪЕДИНЕНИЙ (Закрашивают лишние линии сетки внутри мержа)
+        // 2. ФОНЫ ЯЧЕЕК И ОБЪЕДИНЕНИЙ (Перекрывают сетку внутри мержа)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue; // Пропускаем дочерние ячейки мержа
+                if (lookup && lookup.isChild) continue; 
 
                 let rect = getCellRect(r, c);
                 let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
@@ -341,22 +346,20 @@ function draw() {
 
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 
-                // Если у объединенной или обычной ячейки есть фон, заливаем его
                 if (cellData.bg) {
                     ctx.fillStyle = cellData.bg;
                     ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
                 } else if (lookup && lookup.isMain) {
-                    // Если мерж без явного цвета, закрашиваем белым, чтобы перекрыть сетку под ним
                     ctx.fillStyle = "#ffffff";
                     ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
                 }
             }
         }
 
-        // 3. ОБВОДКА ОБЪЕДИНЕННЫХ БЛОКОВ (Восстанавливает внешнюю рамку мержа)
+        // 3. КОНТУРЫ ОБЪЕДИНЕННЫХ БЛОКОВ
         ctx.save();
-        ctx.strokeStyle = "#d4d4d4";
-        ctx.lineWidth = lineThickness;
+        ctx.strokeStyle = "#c0c0c0";
+        ctx.lineWidth = 1;
         merges.forEach(m => {
             let startRect = getCellRect(m.sr, m.sc);
             let cx = ROW_NUM_WIDTH + (startRect.x - scrollX) * zoom;
@@ -368,7 +371,7 @@ function draw() {
             let ch = fullH * zoom;
 
             if (cx + cw >= ROW_NUM_WIDTH && cy + ch >= COL_NUM_HEIGHT && cx <= canvas.clientWidth && cy <= canvas.clientHeight) {
-                ctx.strokeRect(Math.round(cx), Math.round(cy), Math.round(cw), Math.round(ch));
+                ctx.strokeRect(Math.round(cx) + 0.5, Math.round(cy) + 0.5, Math.round(cw), Math.round(ch));
             }
         });
         ctx.restore();
@@ -416,7 +419,7 @@ function draw() {
                     let fontStyle = "";
                     if (cellData && cellData.bold) fontStyle += "bold ";
                     if (cellData && cellData.italic) fontStyle += "italic ";
-                    ctx.font = `${fontStyle}${11 * zoom}px Arial`;
+                    ctx.font = `${fontStyle}${Math.round(11 * zoom)}px Arial`;
 
                     ctx.beginPath();
                     ctx.rect(cx + 2, cy, availableW - 4, ch);
@@ -507,7 +510,7 @@ function draw() {
             let rx = Math.round(cx);
             let rw = Math.round(cx + cw) - rx;
             ctx.fillStyle = "#f1f1f1"; ctx.fillRect(rx, 0, rw, COL_NUM_HEIGHT);
-            ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(rx, 0, rw, COL_NUM_HEIGHT);
+            ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(rx + 0.5, 0.5, rw, COL_NUM_HEIGHT);
             ctx.fillStyle = "#444444"; ctx.font = `bold 10px Arial`; ctx.textAlign = 'center';
             ctx.fillText(getColName(c), rx + rw / 2, COL_NUM_HEIGHT / 2);
         }
@@ -520,14 +523,14 @@ function draw() {
             let ry = Math.round(cy);
             let rh = Math.round(cy + ch) - ry;
             ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, ry, ROW_NUM_WIDTH, rh);
-            ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, ry, ROW_NUM_WIDTH, rh);
+            ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(0.5, ry + 0.5, ROW_NUM_WIDTH, rh);
             ctx.fillStyle = "#666666"; ctx.font = `bold 9px Arial`; ctx.textAlign = 'center';
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, ry + rh / 2);
         }
 
         // Угловой квадрат
         ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
-        ctx.strokeStyle = "#d4d4d4"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(0.5, 0.5, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
         ctx.restore();
     }
@@ -645,7 +648,7 @@ function draw() {
         let fontStyle = "";
         if (cellData && cellData.bold) fontStyle += "bold ";
         if (cellData && cellData.italic) fontStyle += "italic ";
-        editor.style.font = `${fontStyle}${11 * zoom}px Arial`;
+        editor.style.font = `${fontStyle}${Math.round(11 * zoom)}px Arial`;
         editor.style.color = (cellData && cellData.color) ? cellData.color : "#000000";
 
         positionEditor();
