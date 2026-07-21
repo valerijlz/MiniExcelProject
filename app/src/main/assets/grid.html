@@ -110,7 +110,6 @@
     }
 
     function initEmptyGrid() {
-        // Гарантируем дефолтный размер сетки при инициализации пустой таблицы
         if (!maxRows || maxRows <= 0) maxRows = 45;
         if (!maxCols || maxCols <= 0) maxCols = 12;
 
@@ -160,25 +159,15 @@
         }
     }
 
-    // --- ОБНОВЛЕННЫЙ БЕЗОПАСНЫЙ МЕТОД ЗАГРУЗКИ ---
     function requestDataFromAndroid() {
         try {
-            // Проверка наличия моста
-            if (!window.AndroidBridge) {
-                console.warn("AndroidBridge не найден в WebView. Инициализируем пустую сетку.");
-                initEmptyGrid();
-                return;
-            }
-
-            if (typeof AndroidBridge.getExcelData !== 'function') {
-                console.warn("Метод getExcelData() отсутствует у AndroidBridge!");
+            if (!window.AndroidBridge || typeof AndroidBridge.getExcelData !== 'function') {
                 initEmptyGrid();
                 return;
             }
 
             const rawJson = AndroidBridge.getExcelData();
             if (!rawJson) {
-                console.warn("AndroidBridge.getExcelData() вернул пустое значение. Создаем чистый лист.");
                 initEmptyGrid();
                 return;
             }
@@ -187,19 +176,15 @@
             try {
                 payload = JSON.parse(rawJson);
             } catch(eJson) {
-                console.error("Сбой парсинга JSON! Инициализируем пустую сетку.", eJson);
                 initEmptyGrid();
                 return;
             }
 
-            // ЕСЛИ МАТРИЦА ПУСТАЯ (например, первый запуск):
-            // Больше не ругаемся алертом, а просто спокойно рисуем пустую сетку.
             if (!payload.matrix || payload.matrix.length === 0) {
                 initEmptyGrid();
                 return;
             }
 
-            // Маппинг ячеек
             matrix = payload.matrix.map((row) => {
                 if (!row) return [];
                 return row.map((cell) => {
@@ -268,7 +253,6 @@
             }
 
         } catch(e) {
-            console.error("КРИТИЧЕСКИЙ СБОЙ В requestDataFromAndroid:\n", e);
             initEmptyGrid();
         }
     }
@@ -294,7 +278,7 @@
         ctx.save();
         ctx.textBaseline = 'middle';
         
-        // 1. ФОНЫ ЯЧЕЕК
+        // 1. ФОНЫ ЯЧЕЕК (включая учет объединенных ячеек)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -323,48 +307,47 @@
             }
         }
 
-        // 2. СТАНДАРТНАЯ СЕТКА (Сплошные линии сетки для всех ячеек)
+        // 2. СТАНДАРТНАЯ СЕТКА (надежная отрисовка линий для каждой ячейки)
         ctx.save();
         ctx.strokeStyle = "#d4d4d4";
         const dpr = window.devicePixelRatio || 1;
         const lineThickness = Math.max(1, Math.round(1 * zoom * dpr)) / dpr;
-        ctx.lineWidth = lineThickness;
+        ctx.lineWidth = lineThickness; 
 
-        let totalGridW = 0;
-        for (let c = 0; c < maxCols; c++) totalGridW += (widths[c] || 64);
-        
-        let totalGridH = 0;
-        for (let r = 0; r < maxRows; r++) totalGridH += (heights[r] || 20);
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let lookup = mergeLookup[`${r}_${c}`];
+                if (lookup && lookup.isChild) continue; // Пропускаем внутренности мержа
 
-        ctx.beginPath();
+                let rect = getCellRect(r, c);
+                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
 
-        // Рисуем все горизонтальные линии сетки
-        let currentY = 0;
-        for (let r = 0; r <= maxRows; r++) {
-            let cy = COL_NUM_HEIGHT + (currentY - scrollY) * zoom;
-            if (cy >= COL_NUM_HEIGHT && cy <= canvas.clientHeight) {
-                let startX = ROW_NUM_WIDTH;
-                let endX = ROW_NUM_WIDTH + totalGridW * zoom;
-                ctx.moveTo(Math.round(startX), Math.round(cy));
-                ctx.lineTo(Math.round(endX), Math.round(cy));
+                if (lookup && lookup.isMain) {
+                    let fullW = 0; let fullH = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 64);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 20);
+                    cw = fullW * zoom; ch = fullH * zoom;
+                }
+
+                if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > canvas.clientWidth || cy > canvas.clientHeight) continue;
+
+                const halfThick = lineThickness / 2;
+                const startX = Math.round(cx) - halfThick;
+                const startY = Math.round(cy) - halfThick;
+                const endX = Math.round(cx + cw) - halfThick;
+                const endY = Math.round(cy + ch) - halfThick;
+
+                ctx.beginPath();
+                ctx.moveTo(startX, endY); 
+                ctx.lineTo(endX, endY); // Нижняя граница ячейки
+                ctx.moveTo(endX, startY); 
+                ctx.lineTo(endX, endY); // Правая граница ячейки
+                ctx.stroke();
             }
-            if (r < maxRows) currentY += (heights[r] || 20);
         }
-
-        // Рисуем все вертикальные линии сетки
-        let currentX = 0;
-        for (let c = 0; c <= maxCols; c++) {
-            let cx = ROW_NUM_WIDTH + (currentX - scrollX) * zoom;
-            if (cx >= ROW_NUM_WIDTH && cx <= canvas.clientWidth) {
-                let startY = COL_NUM_HEIGHT;
-                let endY = COL_NUM_HEIGHT + totalGridH * zoom;
-                ctx.moveTo(Math.round(cx), Math.round(startY));
-                ctx.lineTo(Math.round(cx), Math.round(endY));
-            }
-            if (c < maxCols) currentX += (widths[c] || 64);
-        }
-
-        ctx.stroke();
         ctx.restore();
 
         // 3. ТЕКСТ ЯЧЕЕК
@@ -421,7 +404,7 @@
             }
         }
 
-        // 4. ОТРЫСОВКА ПОЛЬЗОВАТЕЛЬСКИХ ГРАНИЦ EXCEL (Поверх контента)
+        // 4. ПОЛЬЗОВАТЕЛЬСКИЕ ГРАНИЦЫ EXCEL
         ctx.save();
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
