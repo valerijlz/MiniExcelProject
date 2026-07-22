@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Final Engine</title>
+    <title>MiniExcel Perfect Engine</title>
     <style>
         html, body {
             margin: 0;
@@ -49,12 +49,13 @@
             background: white;
             outline: none;
             padding: 0 2px;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
 
-<div id="debug-panel">Загрузка данных...</div>
+<div id="debug-panel">Инициализация...</div>
 <canvas id="excelCanvas"></canvas>
 <input type="text" id="cell-editor" />
 
@@ -103,8 +104,7 @@
 
     function buildMergeLookup() {
         mergeLookup = {};
-        if (!Array.isArray(merges)) {
-            merges = [];
+        if (!Array.isArray(merges) || merges.length === 0) {
             return 0;
         }
 
@@ -166,13 +166,18 @@
     }
 
     function updateCanvasDimensions() {
-        if (!canvas || canvas.clientWidth === 0 || canvas.clientHeight === 0) return false;
+        if (!canvas) return false;
+        const displayW = canvas.clientWidth || window.innerWidth;
+        const displayH = canvas.clientHeight || window.innerHeight;
+        if (displayW === 0 || displayH === 0) return false;
+
         const dpr = window.devicePixelRatio || 1;
-        const displayW = Math.floor(canvas.clientWidth);
-        const displayH = Math.floor(canvas.clientHeight);
-        if (canvas.width !== displayW * dpr || canvas.height !== displayH * dpr) {
-            canvas.width = displayW * dpr;
-            canvas.height = displayH * dpr;
+        const targetW = Math.floor(displayW * dpr);
+        const targetH = Math.floor(displayH * dpr);
+
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+            canvas.width = targetW;
+            canvas.height = targetH;
         }
         ctx.resetTransform();
         ctx.scale(dpr, dpr);
@@ -224,8 +229,13 @@
             editor.style.display = 'none';
             selectedCell = null;
             
+            // Двойной вызов с задержкой гарантирует корректную отрисовку при холодном старте WebView
             updateCanvasDimensions();
             draw();
+            setTimeout(() => {
+                updateCanvasDimensions();
+                draw();
+            }, 100);
 
         } catch(e) {
             logDebug("Ошибка JSON: " + e.message);
@@ -248,7 +258,7 @@
         ctx.save();
         ctx.textBaseline = 'middle';
 
-        // 1. ЗАЛИВКА ФОНОВ ЯЧЕЕК (Первым делом рисуем фоны, чтобы перекрыть области под ними)
+        // 1. ЗАЛИВКА ФОНОВ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -277,9 +287,9 @@
             }
         }
 
-        // 2. ЖЕСТКАЯ ОТРИСОВКА СЕТКИ ДЛЯ ВСЕХ ФАЙЛОВ (Поверх фона, с четким смещением на 0.5px для стабильной видимости)
+        // 2. ОТРИСОВКА СЕТКИ ДЛЯ ВСЕХ ЯЧЕЕК (Гарантированная видимость)
         ctx.save();
-        ctx.strokeStyle = "#c0c0c0"; 
+        ctx.strokeStyle = "#d0d0d0"; 
         ctx.lineWidth = 1;
 
         let totalGridW = 0; for (let i = 0; i < maxCols; i++) totalGridW += (widths[i] || 70);
@@ -312,7 +322,7 @@
         }
         ctx.restore();
 
-        // 3. КОНТУРЫ ОБЪЕДИНЕНИЙ (Рамки вокруг мержей)
+        // 3. КОНТУРЫ ОБЪЕДИНЕНИЙ (Рамки мержей поверх сетки)
         ctx.save();
         ctx.strokeStyle = "#808080";
         ctx.lineWidth = 1;
@@ -394,7 +404,7 @@
             ctx.beginPath(); ctx.moveTo(ROW_NUM_WIDTH, boundaryY); ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), boundaryY); ctx.stroke();
         }
 
-        // 6. ЗАГОЛОВКИ СТОЛБЦОВ И СТРОК (Фиксированные размеры, не влияющие на зум таблицы)
+        // 6. ЗАГОЛОВКИ СТОЛБЦОВ И СТРОК
         ctx.lineWidth = 1;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -486,7 +496,6 @@
     });
 
     function handleGridClick(clickX, clickY) {
-        // Клик по шапке строк/столбцов теперь строго игнорируется, предотвращая сбой масштаба
         if (clickX < ROW_NUM_WIDTH || clickY < COL_NUM_HEIGHT) return;
 
         let targetX = (clickX - ROW_NUM_WIDTH) / zoom + scrollX;
@@ -526,9 +535,14 @@
             for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += widths[i];
             for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += heights[i];
         }
-        // Четкое позиционирование редактора строго по границам ячейки без искажения ширины
-        editor.style.left = (ROW_NUM_WIDTH + (rect.x - scrollX) * zoom) + 'px';
-        editor.style.top = (COL_NUM_HEIGHT + (rect.y - scrollY) * zoom) + 'px';
+        
+        // Абсолютное позиционирование с учетом реального смещения холста на экране
+        const canvasRect = canvas.getBoundingClientRect();
+        let leftPos = canvasRect.left + ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+        let topPos = canvasRect.top + COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+
+        editor.style.left = leftPos + 'px';
+        editor.style.top = topPos + 'px';
         editor.style.width = (cw * zoom) + 'px';
         editor.style.height = (ch * zoom) + 'px';
     }
