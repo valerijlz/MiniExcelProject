@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Stable Engine</title>
+    <title>MiniExcel Final Engine</title>
     <style>
         html, body {
             margin: 0;
@@ -170,8 +170,10 @@
         const dpr = window.devicePixelRatio || 1;
         const displayW = Math.floor(canvas.clientWidth);
         const displayH = Math.floor(canvas.clientHeight);
-        canvas.width = displayW * dpr;
-        canvas.height = displayH * dpr;
+        if (canvas.width !== displayW * dpr || canvas.height !== displayH * dpr) {
+            canvas.width = displayW * dpr;
+            canvas.height = displayH * dpr;
+        }
         ctx.resetTransform();
         ctx.scale(dpr, dpr);
         return true;
@@ -246,42 +248,7 @@
         ctx.save();
         ctx.textBaseline = 'middle';
 
-        // 1. УНИВЕРСАЛЬНАЯ СЕТКА (Рисуем тонкие линии для КАЖДОЙ ячейки, чтобы они были всегда)
-        ctx.save();
-        ctx.strokeStyle = "#d4d4d4"; // Стандартный светло-серый цвет сетки Excel
-        ctx.lineWidth = 1;
-
-        let totalGridW = 0; for (let i = 0; i < maxCols; i++) totalGridW += (widths[i] || 70);
-        let totalGridH = 0; for (let i = 0; i < maxRows; i++) totalGridH += (heights[i] || 22);
-
-        // Горизонтальные линии
-        let currentY = 0;
-        for (let r = 0; r <= maxRows; r++) {
-            let cy = COL_NUM_HEIGHT + Math.round((currentY - scrollY) * zoom);
-            if (cy >= COL_NUM_HEIGHT && cy <= canvas.clientHeight + 20) {
-                ctx.beginPath();
-                ctx.moveTo(ROW_NUM_WIDTH, cy + 0.5);
-                ctx.lineTo(ROW_NUM_WIDTH + Math.round(totalGridW * zoom), cy + 0.5);
-                ctx.stroke();
-            }
-            if (r < maxRows) currentY += (heights[r] || 22);
-        }
-
-        // Вертикальные линии
-        let currentX = 0;
-        for (let c = 0; c <= maxCols; c++) {
-            let cx = ROW_NUM_WIDTH + Math.round((currentX - scrollX) * zoom);
-            if (cx >= ROW_NUM_WIDTH && cx <= canvas.clientWidth + 20) {
-                ctx.beginPath();
-                ctx.moveTo(cx + 0.5, COL_NUM_HEIGHT);
-                ctx.lineTo(cx + 0.5, COL_NUM_HEIGHT + Math.round(totalGridH * zoom));
-                ctx.stroke();
-            }
-            if (c < maxCols) currentX += (widths[c] || 70);
-        }
-        ctx.restore();
-
-        // 2. ЗАЛИВКА ФОНОВ (Белый фон для ячеек и мержей, чтобы сетка под ними скрывалась правильно)
+        // 1. ЗАЛИВКА ФОНОВ ЯЧЕЕК (Первым делом рисуем фоны, чтобы перекрыть области под ними)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -305,19 +272,49 @@
                 let cellData = matrix[r] ? (matrix[r][c] || {}) : {};
                 let bg = (typeof cellData === 'object') ? (cellData.bg || cellData.backgroundColor) : null;
 
-                if (bg) {
-                    ctx.fillStyle = bg;
-                    ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
-                } else if (lookup && lookup.isMain) {
-                    ctx.fillStyle = "#ffffff";
-                    ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
-                }
+                ctx.fillStyle = bg ? bg : "#ffffff";
+                ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
             }
         }
 
-        // 3. РИСУЕМ КОНТУРЫ ОБЪЕДИНЕНИЙ (Аккуратные рамки вокруг мержей)
+        // 2. ЖЕСТКАЯ ОТРИСОВКА СЕТКИ ДЛЯ ВСЕХ ФАЙЛОВ (Поверх фона, с четким смещением на 0.5px для стабильной видимости)
         ctx.save();
-        ctx.strokeStyle = "#b0b0b0";
+        ctx.strokeStyle = "#c0c0c0"; 
+        ctx.lineWidth = 1;
+
+        let totalGridW = 0; for (let i = 0; i < maxCols; i++) totalGridW += (widths[i] || 70);
+        let totalGridH = 0; for (let i = 0; i < maxRows; i++) totalGridH += (heights[i] || 22);
+
+        // Горизонтальные линии
+        let currentY = 0;
+        for (let r = 0; r <= maxRows; r++) {
+            let cy = COL_NUM_HEIGHT + Math.round((currentY - scrollY) * zoom) + 0.5;
+            if (cy >= COL_NUM_HEIGHT && cy <= canvas.clientHeight + 20) {
+                ctx.beginPath();
+                ctx.moveTo(ROW_NUM_WIDTH, cy);
+                ctx.lineTo(ROW_NUM_WIDTH + Math.round(totalGridW * zoom), cy);
+                ctx.stroke();
+            }
+            if (r < maxRows) currentY += (heights[r] || 22);
+        }
+
+        // Вертикальные линии
+        let currentX = 0;
+        for (let c = 0; c <= maxCols; c++) {
+            let cx = ROW_NUM_WIDTH + Math.round((currentX - scrollX) * zoom) + 0.5;
+            if (cx >= ROW_NUM_WIDTH && cx <= canvas.clientWidth + 20) {
+                ctx.beginPath();
+                ctx.moveTo(cx, COL_NUM_HEIGHT);
+                ctx.lineTo(cx, COL_NUM_HEIGHT + Math.round(totalGridH * zoom));
+                ctx.stroke();
+            }
+            if (c < maxCols) currentX += (widths[c] || 70);
+        }
+        ctx.restore();
+
+        // 3. КОНТУРЫ ОБЪЕДИНЕНИЙ (Рамки вокруг мержей)
+        ctx.save();
+        ctx.strokeStyle = "#808080";
         ctx.lineWidth = 1;
         merges.forEach(m => {
             let startRect = getCellRect(m.sr, m.sc);
@@ -397,7 +394,7 @@
             ctx.beginPath(); ctx.moveTo(ROW_NUM_WIDTH, boundaryY); ctx.lineTo(Math.max(ROW_NUM_WIDTH, boundaryX), boundaryY); ctx.stroke();
         }
 
-        // 6. ЗАГОЛОВКИ СТОЛБЦОВ И СТРОК
+        // 6. ЗАГОЛОВКИ СТОЛБЦОВ И СТРОК (Фиксированные размеры, не влияющие на зум таблицы)
         ctx.lineWidth = 1;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -407,7 +404,7 @@
             let rx = Math.round(cx);
             let rw = Math.round(cx + cw) - rx;
             ctx.fillStyle = "#f1f1f1"; ctx.fillRect(rx, 0, rw, COL_NUM_HEIGHT);
-            ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(rx, 0, rw, COL_NUM_HEIGHT);
+            ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(rx + 0.5, 0.5, rw, COL_NUM_HEIGHT);
             ctx.fillStyle = "#444444"; ctx.font = `bold 10px Arial`; ctx.textAlign = 'center';
             ctx.fillText(getColName(c), rx + rw / 2, COL_NUM_HEIGHT / 2);
         }
@@ -420,14 +417,14 @@
             let ry = Math.round(cy);
             let rh = Math.round(cy + ch) - ry;
             ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, ry, ROW_NUM_WIDTH, rh);
-            ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(0, ry, ROW_NUM_WIDTH, rh);
+            ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(0.5, ry + 0.5, ROW_NUM_WIDTH, rh);
             ctx.fillStyle = "#666666"; ctx.font = `bold 9px Arial`; ctx.textAlign = 'center';
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, ry + rh / 2);
         }
 
         // Угловой квадрат
         ctx.fillStyle = "#f1f1f1"; ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
-        ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
+        ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(0.5, 0.5, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
         ctx.restore();
     }
@@ -455,15 +452,17 @@
             scrollX = Math.max(0, Math.min(scrollX, limits.x));
             scrollY = Math.max(0, Math.min(scrollY, limits.y));
             lastTouchX = e.touches[0].pageX; lastTouchY = e.touches[0].pageY;
+            if(editor.style.display === 'block') positionEditor();
             draw();
         } else if (e.touches.length === 2) {
             hasMoved = true;
             const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
             if (startTouchDist > 0) {
-                zoom = Math.max(0.3, Math.min(2.0, startZoom * (dist / startTouchDist)));
+                zoom = Math.max(0.3, Math.min(2.5, startZoom * (dist / startTouchDist)));
                 let limits = getScrollLimits();
                 scrollX = Math.max(0, Math.min(scrollX, limits.x));
                 scrollY = Math.max(0, Math.min(scrollY, limits.y));
+                if(editor.style.display === 'block') positionEditor();
                 draw();
             }
         }
@@ -487,7 +486,9 @@
     });
 
     function handleGridClick(clickX, clickY) {
+        // Клик по шапке строк/столбцов теперь строго игнорируется, предотвращая сбой масштаба
         if (clickX < ROW_NUM_WIDTH || clickY < COL_NUM_HEIGHT) return;
+
         let targetX = (clickX - ROW_NUM_WIDTH) / zoom + scrollX;
         let targetY = (clickY - COL_NUM_HEIGHT) / zoom + scrollY;
 
@@ -525,14 +526,13 @@
             for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += widths[i];
             for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += heights[i];
         }
+        // Четкое позиционирование редактора строго по границам ячейки без искажения ширины
         editor.style.left = (ROW_NUM_WIDTH + (rect.x - scrollX) * zoom) + 'px';
         editor.style.top = (COL_NUM_HEIGHT + (rect.y - scrollY) * zoom) + 'px';
         editor.style.width = (cw * zoom) + 'px';
         editor.style.height = (ch * zoom) + 'px';
     }
 
-    // БЕЗОПАСНЫЙ РЕЖИМ: При редактировании текст меняется локально на экране,
-    // но файл в Android НЕ перезаписывается автоматически, чтобы не портить структуру исходников.
     editor.addEventListener('blur', () => {
         if (selectedCell && matrix[selectedCell.r]) {
             let newVal = editor.value;
