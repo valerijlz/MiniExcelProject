@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V8</title>
+    <title>MiniExcel Ultimate Engine V9</title>
     <style>
         * {
             box-sizing: border-box;
@@ -60,7 +60,7 @@
 </head>
 <body>
 
-<div id="debug-panel">Инициализация...</div>
+<div id="debug-panel">Инициализация V9...</div>
 <canvas id="excelCanvas"></canvas>
 <input type="text" id="cell-editor" />
 
@@ -91,7 +91,6 @@
     let lastTouchX = 0, lastTouchY = 0;
     let startTouchDist = 0, startZoom = 1.0;
     let hasMoved = false, touchHandled = false;
-    let isSavingActive = false;
 
     function logDebug(text) {
         console.log(text);
@@ -225,7 +224,7 @@
             }
 
             let activeMergesCount = buildMergeLookup();
-            logDebug(`Загружено. Строк: ${maxRows} | Колонки: ${maxCols}`);
+            logDebug(`Файл загружен. Строк: ${maxRows}, Мержей: ${activeMergesCount}`);
 
             scrollX = 0;
             scrollY = 0;
@@ -290,7 +289,7 @@
             }
         }
 
-        // 2. СЕТКА (Гарантированная: рисует ячейки сетки для всех файлов одинаково)
+        // 2. УНИВЕРСАЛЬНАЯ СЕТКА (Гарантированно рисует линии для любых файлов)
         ctx.save();
         ctx.strokeStyle = "#d0d0d0"; 
         ctx.lineWidth = 1;
@@ -298,7 +297,7 @@
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue;
+                if (lookup && lookup.isChild) continue; 
 
                 let rect = getCellRect(r, c);
                 let cw = rect.w;
@@ -344,7 +343,7 @@
             ctx.restore();
         }
 
-        // 4. ТЕКСТ ЯЧЕЕК
+        // 4. ТЕКСТ (С переливом на соседние пустые ячейки)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -377,9 +376,29 @@
                 ctx.fillStyle = textColor;
                 ctx.font = `${Math.round(11 * zoom)}px Arial`;
 
-                ctx.beginPath();
-                ctx.rect(cx + 3, cy, cw - 6, ch);
-                ctx.clip();
+                // Если не объединено — считаем доступную ширину по пустым соседним ячейкам справа
+                if (!lookup) {
+                    let availableWidth = cw;
+                    let nextCol = c + 1;
+                    while (nextCol < maxCols) {
+                        let nextData = matrix[r] ? matrix[r][nextCol] : null;
+                        let nextText = "";
+                        if (nextData !== null && nextData !== undefined) {
+                            nextText = (typeof nextData === 'object') ? String(nextData.v ?? nextData.value ?? "") : String(nextData);
+                        }
+                        let nextLookup = mergeLookup[`${r}_${nextCol}`];
+                        if (nextText !== "" || nextLookup) break;
+                        availableWidth += (widths[nextCol] || 70) * zoom;
+                        nextCol++;
+                    }
+                    ctx.beginPath();
+                    ctx.rect(cx + 3, cy, availableWidth - 6, ch);
+                    ctx.clip();
+                } else {
+                    ctx.beginPath();
+                    ctx.rect(cx + 3, cy, cw - 6, ch);
+                    ctx.clip();
+                }
 
                 ctx.fillText(text, cx + 5, cy + ch / 2);
                 ctx.restore();
@@ -526,11 +545,10 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
-    // Супернадежный метод сохранения, вызываемый при любом изменении фокуса или нажатии Enter
-    function commitAndSave() {
-        if (!selectedCell || isSavingActive) return;
-        isSavingActive = true;
-
+    // Жесткое синхронное сохранение данных при потере фокуса
+    editor.addEventListener('blur', () => {
+        if (!selectedCell) return;
+        
         let r = selectedCell.r;
         let c = selectedCell.c;
         let newVal = editor.value;
@@ -546,48 +564,32 @@
         editor.style.display = 'none';
         draw();
 
-        setTimeout(() => {
-            let saved = false;
-            try {
-                if (window.AndroidBridge) {
-                    if (typeof AndroidBridge.updateCellData === 'function') {
-                        AndroidBridge.updateCellData(r, c, newVal);
-                        saved = true;
-                    } 
-                    if (!saved && typeof AndroidBridge.saveExcelData === 'function') {
-                        AndroidBridge.saveExcelData(JSON.stringify(matrix));
-                        saved = true;
-                    } 
-                    if (!saved && typeof AndroidBridge.onCellChanged === 'function') {
-                        AndroidBridge.onCellChanged(r, c, newVal);
-                        saved = true;
-                    }
-                    if (!saved && typeof AndroidBridge.saveData === 'function') {
-                        AndroidBridge.saveData(JSON.stringify(matrix));
-                        saved = true;
-                    }
+        // Немедленная отправка в Java/Kotlin через AndroidBridge
+        try {
+            if (window.AndroidBridge) {
+                if (typeof AndroidBridge.updateCellData === 'function') {
+                    AndroidBridge.updateCellData(r, c, newVal);
+                } else if (typeof AndroidBridge.saveExcelData === 'function') {
+                    AndroidBridge.saveExcelData(JSON.stringify(matrix));
+                } else if (typeof AndroidBridge.onCellChanged === 'function') {
+                    AndroidBridge.onCellChanged(r, c, newVal);
+                } else if (typeof AndroidBridge.saveData === 'function') {
+                    AndroidBridge.saveData(JSON.stringify(matrix));
                 }
-            } catch (err) {
-                logDebug("Ошибка моста: " + err.message);
-            }
-
-            if (saved) {
-                logDebug(`Сохранено [${r},${c}] = "${newVal}"`);
+                logDebug(`Сохранено: [${r}, ${c}] = "${newVal}"`);
             } else {
-                logDebug(`Локально изменено [${r},${c}]`);
+                logDebug("AndroidBridge не найден");
             }
-            isSavingActive = false;
-            selectedCell = null;
-        }, 20);
-    }
-
-    editor.addEventListener('blur', () => {
-        commitAndSave();
+        } catch (err) {
+            logDebug("Ошибка сохранения: " + err.message);
+        }
+        
+        selectedCell = null;
     });
 
     editor.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
-            editor.blur(); // Принудительно вызовет сохранение через blur
+            editor.blur(); // Сразу триггерит сохранение
         }
     });
 
