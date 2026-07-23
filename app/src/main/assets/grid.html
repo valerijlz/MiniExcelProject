@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V5</title>
+    <title>MiniExcel Ultimate Engine V6</title>
     <style>
         * {
             box-sizing: border-box;
@@ -260,7 +260,7 @@
         let totalGridW = 0; for (let i = 0; i < maxCols; i++) totalGridW += (widths[i] || 70);
         let totalGridH = 0; for (let i = 0; i < maxRows; i++) totalGridH += (heights[i] || 22);
 
-        // 1. ЗАЛИВКА ФОНОВ ЯЧЕЕК (включая правильные размеры для объединенных)
+        // 1. ЗАЛИВКА ФОНОВ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -289,7 +289,7 @@
             }
         }
 
-        // 2. ОТРИСОВКА СЕТКИ И ГРАНИЦ (Корректно обрабатывает и файлы без мержей, и мержи без внутренних границ)
+        // 2. СЕТКА (Универсальная: гарантированно рисуется в любых файлах, с пропуском внутренних линий мержей)
         ctx.save();
         ctx.strokeStyle = "#d0d0d0"; 
         ctx.lineWidth = 1;
@@ -297,8 +297,7 @@
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
-                // Дочерние ячейки внутри мержей не прорисовывают внутренние сеточные линии
-                if (lookup && lookup.isChild) continue;
+                if (lookup && lookup.isChild) continue; // Пропускаем внутренности мержей
 
                 let rect = getCellRect(r, c);
                 let cw = rect.w;
@@ -322,7 +321,7 @@
         }
         ctx.restore();
 
-        // 3. УСИЛЕННЫЕ ВНЕШНИЕ КОНТУРЫ ОБЪЕДИНЕНИЙ (Рамка вокруг мержа)
+        // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ (Мержей)
         ctx.save();
         ctx.strokeStyle = "#808080";
         ctx.lineWidth = 1;
@@ -342,7 +341,7 @@
         });
         ctx.restore();
 
-        // 4. ТЕКСТ (С поддержкой перелива текста на пустые соседние ячейки)
+        // 4. ТЕКСТ (С переливом вправо на пустые соседние ячейки)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -375,7 +374,6 @@
                 ctx.fillStyle = textColor;
                 ctx.font = `${Math.round(11 * zoom)}px Arial`;
 
-                // Если ячейка не объединена, даем тексту переливаться вправо, пока следующие ячейки пусты
                 if (!lookup) {
                     let availableWidth = cw;
                     let nextCol = c + 1;
@@ -386,7 +384,6 @@
                             nextText = (typeof nextData === 'object') ? String(nextData.v ?? nextData.value ?? "") : String(nextData);
                         }
                         let nextLookup = mergeLookup[`${r}_${nextCol}`];
-                        // Прерываем перелив, если в следующей ячейке есть текст или она задействована в мeрже
                         if (nextText !== "" || nextLookup) break;
                         availableWidth += (widths[nextCol] || 70) * zoom;
                         nextCol++;
@@ -558,7 +555,7 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
-    // Сохранение данных в приложение при потере фокуса редактора
+    // Универсальное сохранение изменений в Android с автоопределением доступного метода
     editor.addEventListener('blur', () => {
         if (selectedCell && matrix[selectedCell.r]) {
             let newVal = editor.value;
@@ -568,15 +565,31 @@
                 matrix[selectedCell.r][selectedCell.c] = newVal;
             }
 
-            // Отправка данных обратно в Android-код через мост
+            let saved = false;
             try {
-                if (window.AndroidBridge && typeof AndroidBridge.updateCellData === 'function') {
-                    AndroidBridge.updateCellData(selectedCell.r, selectedCell.c, newVal);
-                } else if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
-                    AndroidBridge.saveExcelData(JSON.stringify(matrix));
+                if (window.AndroidBridge) {
+                    if (typeof AndroidBridge.updateCellData === 'function') {
+                        AndroidBridge.updateCellData(selectedCell.r, selectedCell.c, newVal);
+                        saved = true;
+                    } else if (typeof AndroidBridge.saveExcelData === 'function') {
+                        AndroidBridge.saveExcelData(JSON.stringify(matrix));
+                        saved = true;
+                    } else if (typeof AndroidBridge.onCellChanged === 'function') {
+                        AndroidBridge.onCellChanged(selectedCell.r, selectedCell.c, newVal);
+                        saved = true;
+                    } else if (typeof AndroidBridge.saveData === 'function') {
+                        AndroidBridge.saveData(JSON.stringify(matrix));
+                        saved = true;
+                    }
                 }
             } catch (err) {
-                console.log("Ошибка сохранения в AndroidBridge: " + err.message);
+                logDebug("Ошибка моста: " + err.message);
+            }
+
+            if (saved) {
+                logDebug(`Сохранено: [${selectedCell.r}, ${selectedCell.c}] = "${newVal}"`);
+            } else {
+                logDebug("Предупреждение: AndroidBridge не найден");
             }
         }
         editor.style.display = 'none';
