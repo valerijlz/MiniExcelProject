@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V6</title>
+    <title>MiniExcel Ultimate Engine V7</title>
     <style>
         * {
             box-sizing: border-box;
@@ -289,7 +289,7 @@
             }
         }
 
-        // 2. СЕТКА (Универсальная: гарантированно рисуется в любых файлах, с пропуском внутренних линий мержей)
+        // 2. СЕТКА (Надежная: рисуется по всем ячейкам; если попадаем внутрь мержей — пропускаем линии вложенных ячеек)
         ctx.save();
         ctx.strokeStyle = "#d0d0d0"; 
         ctx.lineWidth = 1;
@@ -297,7 +297,7 @@
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue; // Пропускаем внутренности мержей
+                if (lookup && lookup.isChild) continue; 
 
                 let rect = getCellRect(r, c);
                 let cw = rect.w;
@@ -555,27 +555,38 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
-    // Универсальное сохранение изменений в Android с автоопределением доступного метода
+    // Надежное сохранение данных через асинхронный отложенный вызов при потере фокуса
     editor.addEventListener('blur', () => {
-        if (selectedCell && matrix[selectedCell.r]) {
-            let newVal = editor.value;
-            if (typeof matrix[selectedCell.r][selectedCell.c] === 'object' && matrix[selectedCell.r][selectedCell.c] !== null) {
-                matrix[selectedCell.r][selectedCell.c].v = newVal;
-            } else {
-                matrix[selectedCell.r][selectedCell.c] = newVal;
-            }
+        if (!selectedCell) return;
+        
+        let r = selectedCell.r;
+        let c = selectedCell.c;
+        let newVal = editor.value;
 
+        if (matrix[r]) {
+            if (typeof matrix[r][c] === 'object' && matrix[r][c] !== null) {
+                matrix[r][c].v = newVal;
+            } else {
+                matrix[r][c] = newVal;
+            }
+        }
+
+        // Прячем редактор немедленно, но отправку в Android делаем через безопасную микрозадержку
+        editor.style.display = 'none';
+        draw();
+
+        setTimeout(() => {
             let saved = false;
             try {
                 if (window.AndroidBridge) {
                     if (typeof AndroidBridge.updateCellData === 'function') {
-                        AndroidBridge.updateCellData(selectedCell.r, selectedCell.c, newVal);
+                        AndroidBridge.updateCellData(r, c, newVal);
                         saved = true;
                     } else if (typeof AndroidBridge.saveExcelData === 'function') {
                         AndroidBridge.saveExcelData(JSON.stringify(matrix));
                         saved = true;
                     } else if (typeof AndroidBridge.onCellChanged === 'function') {
-                        AndroidBridge.onCellChanged(selectedCell.r, selectedCell.c, newVal);
+                        AndroidBridge.onCellChanged(r, c, newVal);
                         saved = true;
                     } else if (typeof AndroidBridge.saveData === 'function') {
                         AndroidBridge.saveData(JSON.stringify(matrix));
@@ -583,17 +594,15 @@
                     }
                 }
             } catch (err) {
-                logDebug("Ошибка моста: " + err.message);
+                logDebug("Ошибка отправки: " + err.message);
             }
 
             if (saved) {
-                logDebug(`Сохранено: [${selectedCell.r}, ${selectedCell.c}] = "${newVal}"`);
+                logDebug(`Успешно сохранено: [${r}, ${c}] = "${newVal}"`);
             } else {
-                logDebug("Предупреждение: AndroidBridge не найден");
+                logDebug(`Обновлено локально (мост недоступен): [${r}, ${c}]`);
             }
-        }
-        editor.style.display = 'none';
-        draw();
+        }, 10);
     });
 
     const resizeObserver = new ResizeObserver(() => {
