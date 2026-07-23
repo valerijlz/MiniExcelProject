@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Native Engine</title>
+    <title>MiniExcel Ultimate Engine V5</title>
     <style>
         * {
             box-sizing: border-box;
@@ -257,7 +257,10 @@
         ctx.save();
         ctx.textBaseline = 'middle';
 
-        // 1. ФОНЫ ЯЧЕЕК
+        let totalGridW = 0; for (let i = 0; i < maxCols; i++) totalGridW += (widths[i] || 70);
+        let totalGridH = 0; for (let i = 0; i < maxRows; i++) totalGridH += (heights[i] || 22);
+
+        // 1. ЗАЛИВКА ФОНОВ ЯЧЕЕК (включая правильные размеры для объединенных)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -286,40 +289,40 @@
             }
         }
 
-        // 2. СЕТКА (Отображается всегда для любых файлов)
+        // 2. ОТРИСОВКА СЕТКИ И ГРАНИЦ (Корректно обрабатывает и файлы без мержей, и мержи без внутренних границ)
         ctx.save();
         ctx.strokeStyle = "#d0d0d0"; 
         ctx.lineWidth = 1;
 
-        let totalGridW = 0; for (let i = 0; i < maxCols; i++) totalGridW += (widths[i] || 70);
-        let totalGridH = 0; for (let i = 0; i < maxRows; i++) totalGridH += (heights[i] || 22);
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let lookup = mergeLookup[`${r}_${c}`];
+                // Дочерние ячейки внутри мержей не прорисовывают внутренние сеточные линии
+                if (lookup && lookup.isChild) continue;
 
-        let currentY = 0;
-        for (let r = 0; r <= maxRows; r++) {
-            let cy = COL_NUM_HEIGHT + Math.round((currentY - scrollY) * zoom) + 0.5;
-            if (cy >= COL_NUM_HEIGHT && cy <= clientH + 20) {
-                ctx.beginPath();
-                ctx.moveTo(ROW_NUM_WIDTH, cy);
-                ctx.lineTo(ROW_NUM_WIDTH + Math.round(totalGridW * zoom), cy);
-                ctx.stroke();
-            }
-            if (r < maxRows) currentY += (heights[r] || 22);
-        }
+                let rect = getCellRect(r, c);
+                let cw = rect.w;
+                let ch = rect.h;
 
-        let currentX = 0;
-        for (let c = 0; c <= maxCols; c++) {
-            let cx = ROW_NUM_WIDTH + Math.round((currentX - scrollX) * zoom) + 0.5;
-            if (cx >= ROW_NUM_WIDTH && cx <= clientW + 20) {
-                ctx.beginPath();
-                ctx.moveTo(cx, COL_NUM_HEIGHT);
-                ctx.lineTo(cx, COL_NUM_HEIGHT + Math.round(totalGridH * zoom));
-                ctx.stroke();
+                if (lookup && lookup.isMain) {
+                    cw = 0; ch = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || 70);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += (heights[i] || 22);
+                }
+
+                let cx = ROW_NUM_WIDTH + Math.round((rect.x - scrollX) * zoom) + 0.5;
+                let cy = COL_NUM_HEIGHT + Math.round((rect.y - scrollY) * zoom) + 0.5;
+                let ccw = Math.round(cw * zoom);
+                let cch = Math.round(ch * zoom);
+
+                if (cx + ccw >= ROW_NUM_WIDTH && cy + cch >= COL_NUM_HEIGHT && cx <= clientW && cy <= clientH) {
+                    ctx.strokeRect(cx, cy, ccw, cch);
+                }
             }
-            if (c < maxCols) currentX += (widths[c] || 70);
         }
         ctx.restore();
 
-        // 3. КОНТУРЫ ОБЪЕДИНЕНИЙ
+        // 3. УСИЛЕННЫЕ ВНЕШНИЕ КОНТУРЫ ОБЪЕДИНЕНИЙ (Рамка вокруг мержа)
         ctx.save();
         ctx.strokeStyle = "#808080";
         ctx.lineWidth = 1;
@@ -339,11 +342,18 @@
         });
         ctx.restore();
 
-        // 4. ТЕКСТ
+        // 4. ТЕКСТ (С поддержкой перелива текста на пустые соседние ячейки)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
                 if (lookup && lookup.isChild) continue; 
+
+                let cellData = matrix[r] ? matrix[r][c] : null;
+                let text = "";
+                if (cellData !== null && cellData !== undefined) {
+                    text = (typeof cellData === 'object') ? String(cellData.v ?? cellData.value ?? "") : String(cellData);
+                }
+                if (text === "") continue;
 
                 let rect = getCellRect(r, c);
                 let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
@@ -360,28 +370,42 @@
 
                 if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > clientW || cy > clientH) continue;
 
-                let cellData = matrix[r] ? matrix[r][c] : null;
-                let text = "";
-                if (cellData !== null && cellData !== undefined) {
-                    text = (typeof cellData === 'object') ? String(cellData.v ?? cellData.value ?? "") : String(cellData);
-                }
-                
-                if (text !== "") {
-                    ctx.save();
-                    let textColor = (typeof cellData === 'object' && cellData !== null) ? (cellData.color || cellData.textColor || "#000000") : "#000000";
-                    ctx.fillStyle = textColor;
-                    ctx.font = `${Math.round(11 * zoom)}px Arial`;
+                ctx.save();
+                let textColor = (typeof cellData === 'object' && cellData !== null) ? (cellData.color || cellData.textColor || "#000000") : "#000000";
+                ctx.fillStyle = textColor;
+                ctx.font = `${Math.round(11 * zoom)}px Arial`;
 
+                // Если ячейка не объединена, даем тексту переливаться вправо, пока следующие ячейки пусты
+                if (!lookup) {
+                    let availableWidth = cw;
+                    let nextCol = c + 1;
+                    while (nextCol < maxCols) {
+                        let nextData = matrix[r] ? matrix[r][nextCol] : null;
+                        let nextText = "";
+                        if (nextData !== null && nextData !== undefined) {
+                            nextText = (typeof nextData === 'object') ? String(nextData.v ?? nextData.value ?? "") : String(nextData);
+                        }
+                        let nextLookup = mergeLookup[`${r}_${nextCol}`];
+                        // Прерываем перелив, если в следующей ячейке есть текст или она задействована в мeрже
+                        if (nextText !== "" || nextLookup) break;
+                        availableWidth += (widths[nextCol] || 70) * zoom;
+                        nextCol++;
+                    }
+                    ctx.beginPath();
+                    ctx.rect(cx + 3, cy, availableWidth - 6, ch);
+                    ctx.clip();
+                } else {
                     ctx.beginPath();
                     ctx.rect(cx + 3, cy, cw - 6, ch);
-                    ctx.clip(); 
-                    ctx.fillText(text, cx + 5, cy + ch / 2);
-                    ctx.restore();
+                    ctx.clip();
                 }
+
+                ctx.fillText(text, cx + 5, cy + ch / 2);
+                ctx.restore();
             }
         }
 
-        // 5. РАМКА ЛИСТА
+        // 5. СИНЯЯ РАМКА ЛИСТА
         let boundaryX = Math.round(ROW_NUM_WIDTH + (totalGridW - scrollX) * zoom);
         let boundaryY = Math.round(COL_NUM_HEIGHT + (totalGridH - scrollY) * zoom);
 
@@ -485,7 +509,6 @@
     });
 
     function handleGridClick(clickX, clickY) {
-        // Жесткая отсечка кликов по панели индексов строк и колонок
         if (clickX < ROW_NUM_WIDTH || clickY < COL_NUM_HEIGHT) return;
 
         let targetX = (clickX - ROW_NUM_WIDTH) / zoom + scrollX;
@@ -535,6 +558,7 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
+    // Сохранение данных в приложение при потере фокуса редактора
     editor.addEventListener('blur', () => {
         if (selectedCell && matrix[selectedCell.r]) {
             let newVal = editor.value;
@@ -543,12 +567,22 @@
             } else {
                 matrix[selectedCell.r][selectedCell.c] = newVal;
             }
+
+            // Отправка данных обратно в Android-код через мост
+            try {
+                if (window.AndroidBridge && typeof AndroidBridge.updateCellData === 'function') {
+                    AndroidBridge.updateCellData(selectedCell.r, selectedCell.c, newVal);
+                } else if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
+                    AndroidBridge.saveExcelData(JSON.stringify(matrix));
+                }
+            } catch (err) {
+                console.log("Ошибка сохранения в AndroidBridge: " + err.message);
+            }
         }
         editor.style.display = 'none';
         draw();
     });
 
-    // Автоматическое обновление размеров холста при изменении интерфейса (поворот экрана, появление клавиатуры)
     const resizeObserver = new ResizeObserver(() => {
         updateCanvasDimensions();
         draw();
