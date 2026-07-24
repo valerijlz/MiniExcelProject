@@ -327,14 +327,16 @@ if (maxColsCount <= 0) {
         }
     }
 
-    // Сохранение переданных данных из JS обратно в физический XLSX файл на устройстве
+// Сохранение переданных данных из JS обратно в физический XLSX файл на устройстве
     private fun saveJsonToExcelFile(jsonData: String, fileUri: Uri) {
+        Log.d("MiniExcelDebug", "Начало сохранения. Длина JSON: ${jsonData.length}")
         lifecycleScope.launch {
             var tempFile: File? = null
             try {
                 withContext(Dispatchers.IO) {
                     val root = JSONObject(jsonData)
                     val matrix = root.optJSONArray("matrix") ?: JSONArray()
+                    Log.d("MiniExcelDebug", "Строк в матрице для сохранения: ${matrix.length()}")
                     
                     val workbook = XSSFWorkbook()
                     val sheet = workbook.createSheet("Sheet1")
@@ -357,24 +359,31 @@ if (maxColsCount <= 0) {
                         }
                     }
 
-                    // Сохраняем сначала во временный файл во избежание повреждения данных при сбоях записи
+                    // Сохраняем сначала во временный файл во избежание повреждения данных
                     tempFile = File(cacheDir, "temp_saving_sheet.xlsx")
                     FileOutputStream(tempFile).use { out ->
                         workbook.write(out)
                     }
                     workbook.close()
 
-                    // Копируем временный файл в целевой Uri через ContentResolver
-                    contentResolver.openOutputStream(fileUri, "rwt")?.use { outStream ->
+                    // Копируем временный файл в целевой Uri через ContentResolver (используем стандартный режим записи)
+                    contentResolver.openOutputStream(fileUri, "w")?.use { outStream ->
                         tempFile?.inputStream()?.use { inStream ->
                             inStream.copyTo(outStream)
                         }
-                    }
+                    } ?: throw Exception("Не удалось открыть OutputStream для Uri: $fileUri")
+                    
+                    Log.d("MiniExcelDebug", "Файл успешно записан на диск.")
                 }
-                Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
+                
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
-                Log.e("MiniExcelDebug", "Ошибка записи: ${e.message}")
-                Toast.makeText(this@MainActivity, "Не удалось сохранить файл", Toast.LENGTH_SHORT).show()
+                Log.e("MiniExcelDebug", "КРИТИЧЕСКАЯ ОШИБКА записи: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
             } finally {
                 tempFile?.let { if (it.exists()) it.delete() }
                 System.gc()
