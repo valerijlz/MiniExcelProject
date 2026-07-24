@@ -546,6 +546,7 @@
     }
 
     // Фиксация ввода без немедленного сохранения на диск (сохранение только по кнопке)
+// Фиксация ввода и немедленная отправка измененного состояния в Android
     function commitCellInput() {
         if (!selectedCell) return;
         let r = selectedCell.r;
@@ -553,15 +554,51 @@
         let newVal = editor.value;
 
         if (!matrix[r]) matrix[r] = [];
-        if (typeof matrix[r][c] !== 'object' || matrix[r][c] === null) {
-            matrix[r][c] = { v: newVal };
-        } else {
-            matrix[r][c].v = newVal;
+        let oldValue = (typeof matrix[r][c] === 'object' && matrix[r][c] !== null) ? matrix[r][c].v : matrix[r][c];
+
+        // Обновляем значение только если оно реально изменилось
+        if (oldValue !== newVal) {
+            if (typeof matrix[r][c] !== 'object' || matrix[r][c] === null) {
+                matrix[r][c] = { v: newVal };
+            } else {
+                matrix[r][c].v = newVal;
+            }
+
+            // АВТОСОХРАНЕНИЕ: Сразу передаем обновленный массив в Android при смене ячейки
+            sendCurrentDataToAndroid(false);
         }
 
         editor.style.display = 'none';
         draw();
         selectedCell = null;
+    }
+
+    // Общая функция отправки данных (параметр isFinal нужен, чтобы понимать, показывать ли тост об успешном сохранении)
+    function sendCurrentDataToAndroid(isFinal) {
+        try {
+            if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
+                const fullPayload = {
+                    matrix: matrix,
+                    merges: merges,
+                    widths: widths,
+                    heights: heights,
+                    isFinalSave: isFinal
+                };
+                AndroidBridge.saveExcelData(JSON.stringify(fullPayload));
+                logDebug(isFinal ? "Файл полностью сохранен" : "Изменения зафиксированы (автосохранение)");
+            }
+        } catch (err) {
+            logDebug("Ошибка отправки: " + err.message);
+        }
+    }
+
+    // Изменяем функцию exportExcelToAndroid, чтобы она вызывала финальное сохранение
+    function exportExcelToAndroid() {
+        if (editor.style.display === 'block') {
+            commitCellInput();
+        } else {
+            sendCurrentDataToAndroid(true);
+        }
     }
 
     // Эта функция вызывается из Android по нажатию физической кнопки «Сохранить»
