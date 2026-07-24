@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V9</title>
+    <title>MiniExcel Ultimate Engine V10</title>
     <style>
         * {
             box-sizing: border-box;
@@ -60,7 +60,7 @@
 </head>
 <body>
 
-<div id="debug-panel">Инициализация V9...</div>
+<div id="debug-panel">Инициализация V10...</div>
 <canvas id="excelCanvas"></canvas>
 <input type="text" id="cell-editor" />
 
@@ -91,6 +91,7 @@
     let lastTouchX = 0, lastTouchY = 0;
     let startTouchDist = 0, startZoom = 1.0;
     let hasMoved = false, touchHandled = false;
+    let isSavingActive = false;
 
     function logDebug(text) {
         console.log(text);
@@ -289,7 +290,7 @@
             }
         }
 
-        // 2. УНИВЕРСАЛЬНАЯ СЕТКА (Гарантированно рисует линии для любых файлов)
+        // 2. СЕТКА (Без паутины внутри мержей, работает для любых файлов)
         ctx.save();
         ctx.strokeStyle = "#d0d0d0"; 
         ctx.lineWidth = 1;
@@ -343,7 +344,45 @@
             ctx.restore();
         }
 
-        // 4. ТЕКСТ (С переливом на соседние пустые ячейки)
+        // 4. ПОЛЬЗОВАТЕЛЬСКИЕ РАМКИ ЯЧЕЕК (Кастомные бордеры из Excel)
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let cellData = matrix[r] ? matrix[r][c] : null;
+                if (!cellData || typeof cellData !== 'object' || !cellData.border) continue;
+
+                let rect = getCellRect(r, c);
+                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
+
+                ctx.save();
+                let b = cellData.border;
+                if (b.top) {
+                    ctx.strokeStyle = b.top.color || "#000000";
+                    ctx.lineWidth = b.top.width || 1;
+                    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + cw, cy); ctx.stroke();
+                }
+                if (b.bottom) {
+                    ctx.strokeStyle = b.bottom.color || "#000000";
+                    ctx.lineWidth = b.bottom.width || 1;
+                    ctx.beginPath(); ctx.moveTo(cx, cy + ch); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                }
+                if (b.left) {
+                    ctx.strokeStyle = b.left.color || "#000000";
+                    ctx.lineWidth = b.left.width || 1;
+                    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + ch); ctx.stroke();
+                }
+                if (b.right) {
+                    ctx.strokeStyle = b.right.color || "#000000";
+                    ctx.lineWidth = b.right.width || 1;
+                    ctx.beginPath(); ctx.moveTo(cx + cw, cy); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
+                }
+                ctx.restore();
+            }
+        }
+
+        // 5. ТЕКСТ (С переливом на соседние пустые ячейки)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -376,7 +415,6 @@
                 ctx.fillStyle = textColor;
                 ctx.font = `${Math.round(11 * zoom)}px Arial`;
 
-                // Если не объединено — считаем доступную ширину по пустым соседним ячейкам справа
                 if (!lookup) {
                     let availableWidth = cw;
                     let nextCol = c + 1;
@@ -405,7 +443,7 @@
             }
         }
 
-        // 5. ШАПКА И НОМЕРА СТРОК
+        // 6. ШАПКА И НОМЕРА СТРОК
         ctx.lineWidth = 1;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -545,10 +583,11 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
-    // Жесткое синхронное сохранение данных при потере фокуса
-    editor.addEventListener('blur', () => {
-        if (!selectedCell) return;
-        
+    // Защищенный метод сохранения данных с флагом активности
+    function commitAndSave() {
+        if (!selectedCell || isSavingActive) return;
+        isSavingActive = true;
+
         let r = selectedCell.r;
         let c = selectedCell.c;
         let newVal = editor.value;
@@ -564,7 +603,6 @@
         editor.style.display = 'none';
         draw();
 
-        // Немедленная отправка в Java/Kotlin через AndroidBridge
         try {
             if (window.AndroidBridge) {
                 if (typeof AndroidBridge.updateCellData === 'function') {
@@ -577,19 +615,24 @@
                     AndroidBridge.saveData(JSON.stringify(matrix));
                 }
                 logDebug(`Сохранено: [${r}, ${c}] = "${newVal}"`);
-            } else {
-                logDebug("AndroidBridge не найден");
             }
         } catch (err) {
             logDebug("Ошибка сохранения: " + err.message);
         }
-        
-        selectedCell = null;
+
+        setTimeout(() => {
+            selectedCell = null;
+            isSavingActive = false;
+        }, 50);
+    }
+
+    editor.addEventListener('blur', () => {
+        commitAndSave();
     });
 
     editor.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
-            editor.blur(); // Сразу триггерит сохранение
+            editor.blur();
         }
     });
 
