@@ -590,7 +590,7 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
-    // Надежное сохранение без дублирования событий
+// Надежное сохранение с сохранением структуры метаданных и стилей
     function commitAndSave() {
         if (!selectedCell || isSavingActive) return;
         isSavingActive = true;
@@ -599,12 +599,12 @@
         let c = selectedCell.c;
         let newVal = editor.value;
 
-        if (matrix[r]) {
-            if (typeof matrix[r][c] === 'object' && matrix[r][c] !== null) {
-                matrix[r][c].v = newVal;
-            } else {
-                matrix[r][c] = newVal;
-            }
+        // Гарантируем, что структура ячейки остается объектом (сохраняем bg, border, color)
+        if (!matrix[r]) matrix[r] = [];
+        if (typeof matrix[r][c] !== 'object' || matrix[r][c] === null) {
+            matrix[r][c] = { v: newVal };
+        } else {
+            matrix[r][c].v = newVal;
         }
 
         editor.style.display = 'none';
@@ -612,14 +612,23 @@
 
         try {
             if (window.AndroidBridge) {
+                // Формируем полный объект данных, идентичный тому, что приходит из Android при загрузке
+                const fullPayload = {
+                    matrix: matrix,
+                    merges: merges,
+                    widths: widths,
+                    heights: heights
+                };
+                const jsonString = JSON.stringify(fullPayload);
+
                 if (typeof AndroidBridge.updateCellData === 'function') {
                     AndroidBridge.updateCellData(r, c, newVal);
                 } else if (typeof AndroidBridge.saveExcelData === 'function') {
-                    AndroidBridge.saveExcelData(JSON.stringify(matrix));
+                    AndroidBridge.saveExcelData(jsonString); // Отправляем полный JSON со всеми метаданными
                 } else if (typeof AndroidBridge.onCellChanged === 'function') {
                     AndroidBridge.onCellChanged(r, c, newVal);
                 } else if (typeof AndroidBridge.saveData === 'function') {
-                    AndroidBridge.saveData(JSON.stringify(matrix));
+                    AndroidBridge.saveData(jsonString);
                 }
                 logDebug(`Сохранено: [${r}, ${c}] = "${newVal}"`);
             }
