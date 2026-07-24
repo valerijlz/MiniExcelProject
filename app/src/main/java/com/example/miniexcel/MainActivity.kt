@@ -38,44 +38,46 @@ class MainActivity : AppCompatActivity() {
     private lateinit var saveButton: Button
     
     private var currentFileUri: Uri? = null
+    // Временный файл для работы со всеми изменениями в сессии
+    private var workingFile: File? = null
     
-private val emptyPayload: String
-    get() {
-        val rowsCount = 30
-        val colsCount = 15
-        
-        val matrix = JSONArray()
-        for (r in 0 until rowsCount) {
-            val rowArray = JSONArray()
-            for (c in 0 until colsCount) {
-                val cellObj = JSONObject()
-                cellObj.put("v", "")
-                rowArray.put(cellObj)
+    private val emptyPayload: String
+        get() {
+            val rowsCount = 30
+            val colsCount = 15
+            
+            val matrix = JSONArray()
+            for (r in 0 until rowsCount) {
+                val rowArray = JSONArray()
+                for (c in 0 until colsCount) {
+                    val cellObj = JSONObject()
+                    cellObj.put("v", "")
+                    rowArray.put(cellObj)
+                }
+                matrix.put(rowArray)
             }
-            matrix.put(rowArray)
-        }
-        
-        val widths = JSONArray()
-        for (c in 0 until colsCount) {
-            widths.put(80) // Дефолтная ширина колонки в пикселях
-        }
-        
-        val heights = JSONArray()
-        for (r in 0 until rowsCount) {
-            heights.put(25) // Дефолтная высота строки в пикселях
+            
+            val widths = JSONArray()
+            for (c in 0 until colsCount) {
+                widths.put(80)
+            }
+            
+            val heights = JSONArray()
+            for (r in 0 until rowsCount) {
+                heights.put(25)
+            }
+
+            val root = JSONObject().apply {
+                put("matrix", matrix)
+                put("widths", widths)
+                put("heights", heights)
+                put("merges", JSONArray())
+            }
+            return root.toString()
         }
 
-        val root = JSONObject().apply {
-            put("matrix", matrix)
-            put("widths", widths)
-            put("heights", heights)
-            put("merges", JSONArray())
-        }
-        return root.toString()
-    }
-
-@Volatile
-private var cachedJsonPayload: String = emptyPayload
+    @Volatile
+    private var cachedJsonPayload: String = emptyPayload
 
     private lateinit var openFileLauncher: ActivityResultLauncher<Intent>
     private lateinit var saveFileLauncher: ActivityResultLauncher<Intent>
@@ -107,7 +109,6 @@ private var cachedJsonPayload: String = emptyPayload
 
         saveButton.setOnClickListener {
             if (currentFileUri == null) {
-                // Если файла еще нет, сначала просим пользователя выбрать, куда его сохранить
                 val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -115,8 +116,8 @@ private var cachedJsonPayload: String = emptyPayload
                 }
                 saveFileLauncher.launch(intent)
             } else {
-                // Если файл уже открыт, запрашиваем экспорт данных из WebView
-                triggerJSExport()
+                // Запрашиваем актуальный JSON из WebView и сохраняем в исходный файл
+                triggerJSExportAndSave()
             }
         }
 
@@ -125,7 +126,7 @@ private var cachedJsonPayload: String = emptyPayload
         }
     }
 
-    private fun triggerJSExport() {
+    private fun triggerJSExportAndSave() {
         tableWebView.post { 
             tableWebView.evaluateJavascript("exportExcelToAndroid();", null) 
         }
@@ -167,7 +168,7 @@ private var cachedJsonPayload: String = emptyPayload
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
                     currentFileUri = uri
-                    pipeExcelToWebView(uri)
+                    createWorkingCopyAndPipe(uri)
                 }
             }
         }
@@ -176,30 +177,34 @@ private var cachedJsonPayload: String = emptyPayload
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
                     currentFileUri = uri
-                    // Теперь, когда URI создан, запрашиваем экспорт у JS
-                    triggerJSExport()
+                    // После создания нового файла сохраняем в него рабочую копию
+                    triggerJSExportAndSave()
                 }
             }
         }
     }
 
-    private fun pipeExcelToWebView(fileUri: Uri) {
+    // Шаг 1: Создаем изолированную временную копию открытого документа для сессии
+    private fun createWorkingCopyAndPipe(fileUri: Uri) {
         cachedJsonPayload = emptyPayload
         tableWebView.loadUrl("file:///android_asset/grid.html")
 
         lifecycleScope.launch {
-            var tempFile: File? = null
             try {
                 withContext(Dispatchers.IO) {
-                    tempFile = File(cacheDir, "current_scanned_sheet.tmp")
+                    // Удаляем старый временный файл, если он остался от прошлых открытий
+                    workingFile?.let { if (it.exists()) it.delete() }
                     
+                    workingFile = File(cacheDir, "working_session_${System.currentTimeMillis()}.tmp")
+
                     contentResolver.openInputStream(fileUri)?.use { input ->
-                        FileOutputStream(tempFile).use { output ->
+                        FileOutputStream(workingFile).use { output ->
                             input.copyTo(output, 16384)
                         }
                     }
 
-                    WorkbookFactory.create(tempFile, null, true).use { workbook ->
+                    // Читаем данные для WebView из нашей рабочей копии
+                    WorkbookFactory.create(workingFile, null, true).use { workbook ->
                         if (workbook.numberOfSheets > 0) {
                             parseSheetToJson(workbook.getSheetAt(0))
                         } else {
@@ -210,10 +215,9 @@ private var cachedJsonPayload: String = emptyPayload
                     }
                 }
             } catch (e: Exception) {
-                Log.e("MiniExcelDebug", "Ошибка обработки: ${e.message}")
-                Toast.makeText(this@MainActivity, "Ошибка чтения тяжелого файла", Toast.LENGTH_SHORT).show()
+                Log.e("MiniExcelDebug", "Ошибка создания рабочей копии: ${e.message}")
+                Toast.makeText(this@MainActivity, "Ошибка чтения файла", Toast.LENGTH_SHORT).show()
             } finally {
-                tempFile?.let { if (it.exists()) it.delete() }
                 System.gc()
             }
         }
@@ -236,13 +240,8 @@ private var cachedJsonPayload: String = emptyPayload
         }
         if (maxColsCount == 0) maxColsCount = 12
 
-        // Если файл открылся, но в нем нет строк/колонок, задаем размер по умолчанию
-if (lastRowIdx <= 0) {
-    lastRowIdx = 29 // Итого 30 строк (индексы от 0 до 29)
-}
-if (maxColsCount <= 0) {
-    maxColsCount = 15 // Итого 15 колонок
-}
+        if (lastRowIdx <= 0) lastRowIdx = 29 
+        if (maxColsCount <= 0) maxColsCount = 15 
 
         if (lastRowIdx > 1500) lastRowIdx = 1500
         if (maxColsCount > 60) maxColsCount = 60
@@ -327,21 +326,19 @@ if (maxColsCount <= 0) {
         }
     }
 
-// Сохранение переданных данных из JS обратно в физический XLSX файл на устройстве
-    private fun saveJsonToExcelFile(jsonData: String, fileUri: Uri) {
-        Log.d("MiniExcelDebug", "Начало сохранения. Длина JSON: ${jsonData.length}")
+    // Сохранение из JS: сначала обновляем временную рабочую копию, а затем по кнопке «Сохранить» выгружаем в оригинал
+    private fun commitChangesAndExportToOriginal(jsonData: String) {
+        val targetUri = currentFileUri ?: return
         lifecycleScope.launch {
-            var tempFile: File? = null
             try {
                 withContext(Dispatchers.IO) {
                     val root = JSONObject(jsonData)
                     val matrix = root.optJSONArray("matrix") ?: JSONArray()
-                    Log.d("MiniExcelDebug", "Строк в матрице для сохранения: ${matrix.length()}")
                     
+                    // 1. Записываем изменения в рабочую копию (или создаем её, если работали без открытия файла)
                     val workbook = XSSFWorkbook()
                     val sheet = workbook.createSheet("Sheet1")
 
-                    // Запись структуры матрицы обратно в Excel-ячейки
                     for (r in 0 until matrix.length()) {
                         val rowArray = matrix.optJSONArray(r) ?: continue
                         val row = sheet.createRow(r)
@@ -350,7 +347,6 @@ if (maxColsCount <= 0) {
                             val cellValue = cellObj.opt("v") ?: ""
                             val cell = row.createCell(c)
                             
-                            // Автоопределение базовых типов для записи
                             when (cellValue) {
                                 is Number -> cell.setCellValue(cellValue.toDouble())
                                 is Boolean -> cell.setCellValue(cellValue)
@@ -359,21 +355,23 @@ if (maxColsCount <= 0) {
                         }
                     }
 
-                    // Сохраняем сначала во временный файл во избежание повреждения данных
-                    tempFile = File(cacheDir, "temp_saving_sheet.xlsx")
-                    FileOutputStream(tempFile).use { out ->
+                    // Обновляем временный рабочий файл
+                    if (workingFile == null) {
+                        workingFile = File(cacheDir, "working_session_${System.currentTimeMillis()}.tmp")
+                    }
+                    FileOutputStream(workingFile).use { out ->
                         workbook.write(out)
                     }
                     workbook.close()
 
-                    // Копируем временный файл в целевой Uri через ContentResolver (используем стандартный режим записи)
-                    contentResolver.openOutputStream(fileUri, "w")?.use { outStream ->
-                        tempFile?.inputStream()?.use { inStream ->
+                    // 2. Переносим данные из временного файла в исходный Uri пользователя
+                    contentResolver.openOutputStream(targetUri, "w")?.use { outStream ->
+                        workingFile?.inputStream()?.use { inStream ->
                             inStream.copyTo(outStream)
                         }
-                    } ?: throw Exception("Не удалось открыть OutputStream для Uri: $fileUri")
+                    } ?: throw Exception("Не удалось открыть OutputStream для Uri: $targetUri")
                     
-                    Log.d("MiniExcelDebug", "Файл успешно записан на диск.")
+                    Log.d("MiniExcelDebug", "Файл успешно сохранен на диск.")
                 }
                 
                 withContext(Dispatchers.Main) {
@@ -384,10 +382,17 @@ if (maxColsCount <= 0) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
-            } finally {
-                tempFile?.let { if (it.exists()) it.delete() }
-                System.gc()
             }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Уничтожаем временный файл при закрытии приложения
+        try {
+            workingFile?.let { if (it.exists()) it.delete() }
+        } catch (e: Exception) {
+            Log.e("MiniExcelDebug", "Ошибка очистки временного файла: ${e.message}")
         }
     }
 
@@ -400,15 +405,9 @@ if (maxColsCount <= 0) {
             Log.d("MiniExcelStatus", message)
         }
 
-        // JS внутри grid.html должен вызвать этот метод в конце функции exportExcelToAndroid()
-        // Пример вызова из JS: window.AndroidBridge.saveExcelData(JSON.stringify(excelData));
         @JavascriptInterface
         fun saveExcelData(jsonData: String) {
-            currentFileUri?.let { uri ->
-                saveJsonToExcelFile(jsonData, uri)
-            } ?: run {
-                Log.e("MiniExcelDebug", "Попытка сохранить, но currentFileUri равен null")
-            }
+            commitChangesAndExportToOriginal(jsonData)
         }
     }
 }
