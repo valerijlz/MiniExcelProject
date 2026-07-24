@@ -315,8 +315,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // Сохранение с сохранением исходного стиля (Apache POI стили не затираются)
-    private fun commitChangesAndExportToOriginal(jsonData: String) {
-        val targetUri = currentFileUri ?: return
+private fun commitChangesAndExportToOriginal(jsonData: String) {
         val currentWorkingFile = workingFile ?: return
 
         lifecycleScope.launch {
@@ -324,8 +323,9 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.IO) {
                     val root = JSONObject(jsonData)
                     val matrix = root.optJSONArray("matrix") ?: JSONArray()
+                    val isFinalSave = root.optBoolean("isFinalSave", false)
 
-                    // Открываем рабочую копию через POI для сохранения форматирования
+                    // 1. Открываем рабочую копию через POI для сохранения форматирования
                     val fileInputStream = FileInputStream(currentWorkingFile)
                     val workbook = WorkbookFactory.create(fileInputStream)
                     fileInputStream.close()
@@ -356,29 +356,36 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Перезаписываем временный файл
+                    // 2. Перезаписываем временный рабочий файл
                     FileOutputStream(currentWorkingFile).use { out ->
                         workbook.write(out)
                     }
                     workbook.close()
 
-                    // Выгружаем в итоговый файл пользователя (Uri)
-                    contentResolver.openOutputStream(targetUri, "w")?.use { outStream ->
-                        currentWorkingFile.inputStream().use { inStream ->
-                            inStream.copyTo(outStream)
+                    // 3. Если это финальное сохранение (нажата кнопка) — выгружаем в итоговый Uri пользователя
+                    if (isFinalSave && currentFileUri != null) {
+                        contentResolver.openOutputStream(currentFileUri!!, "w")?.use { outStream ->
+                            currentWorkingFile.inputStream().use { inStream ->
+                                inStream.copyTo(outStream)
+                            }
                         }
-                    } ?: throw Exception("Не удалось открыть OutputStream для Uri: $targetUri")
-                    
-                    Log.d("MiniExcelDebug", "Файл успешно сохранен с сохранением стилей.")
+                    }
                 }
                 
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
+                // Тост показываем только при реальном клике на кнопку «Сохранить»
+                val rootCheck = JSONObject(jsonData)
+                if (rootCheck.optBoolean("isFinalSave", false)) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("MiniExcelDebug", "КРИТИЧЕСКАЯ ОШИБКА записи: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                Log.e("MiniExcelDebug", "Ошибка записи: ${e.message}", e)
+                val rootCheck = JSONObject(jsonData)
+                if (rootCheck.optBoolean("isFinalSave", false)) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }
