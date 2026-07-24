@@ -290,7 +290,7 @@
             }
         }
 
-        // 2. БАЗОВАЯ СЕТКА (Идеально работает как для файлов без мержей, так и с ними)
+        // 2. БАЗОВАЯ СЕТКА
         ctx.save();
         ctx.strokeStyle = "#d0d0d0"; 
         ctx.lineWidth = 1;
@@ -344,52 +344,7 @@
             ctx.restore();
         }
 
-        // 4. ПОЛЬЗОВАТЕЛЬСКИЕ РАМКИ ЯЧЕЕК (Кастомные бордеры)
-        for (let r = 0; r < maxRows; r++) {
-            for (let c = 0; c < maxCols; c++) {
-                let cellData = matrix[r] ? matrix[r][c] : null;
-                if (!cellData || typeof cellData !== 'object' || !cellData.border) continue;
-
-                let rect = getCellRect(r, c);
-                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
-                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
-                let cw = rect.w * zoom;
-                let ch = rect.h * zoom;
-
-                ctx.save();
-                let b = cellData.border;
-                if (b.top) {
-                    ctx.strokeStyle = b.top.color || "#000000"; ctx.lineWidth = b.top.width || 1;
-                    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + cw, cy); ctx.stroke();
-                }
-                if (b.bottom) {
-                    ctx.strokeStyle = b.bottom.color || "#000000"; ctx.lineWidth = b.bottom.width || 1;
-                    ctx.beginPath(); ctx.moveTo(cx, cy + ch); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
-                }
-                if (b.left) {
-                    ctx.strokeStyle = b.left.color || "#000000"; ctx.lineWidth = b.left.width || 1;
-                    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + ch); ctx.stroke();
-                }
-                if (b.right) {
-                    ctx.strokeStyle = b.right.color || "#000000"; ctx.lineWidth = b.right.width || 1;
-                    ctx.beginPath(); ctx.moveTo(cx + cw, cy); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
-                }
-                ctx.restore();
-            }
-        }
-
-        // 5. ВНЕШНЯЯ СИНЯЯ РАМКА ЛИСТА (Ограничительный контур таблицы)
-        ctx.save();
-        let sheetStartX = ROW_NUM_WIDTH - scrollX * zoom;
-        let sheetStartY = COL_NUM_HEIGHT - scrollY * zoom;
-        let sheetW = totalGridW * zoom;
-        let sheetH = totalGridH * zoom;
-        ctx.strokeStyle = "#0f62fe";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(sheetStartX, sheetStartY, sheetW, sheetH);
-        ctx.restore();
-
-        // 6. ТЕКСТ (С переливом на соседние пустые ячейки)
+        // 4. ТЕКСТ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -450,7 +405,7 @@
             }
         }
 
-        // 7. ШАПКА И НОМЕРА СТРОК
+        // 5. ШАПКА И НОМЕРА СТРОК
         ctx.lineWidth = 1;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -575,7 +530,7 @@
         let rect = getCellRect(selectedCell.r, selectedCell.c);
         let cw = rect.w, ch = rect.h;
         let mergeInfo = getMergedCellInfo(selectedCell.r, selectedCell.c);
-        if (mergeInfo && mergeInfo.sr === selectedCell.r && mergeInfo.sc === selectedCell.c) {
+        if (mergeInfo && mergeInfo.sr === selectedCell.r && mergeInfo.sc === selectedCell.sc) {
             cw = 0; ch = 0;
             for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += widths[i];
             for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += heights[i];
@@ -590,16 +545,13 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
-// Надежное сохранение с сохранением структуры метаданных и стилей
-    function commitAndSave() {
-        if (!selectedCell || isSavingActive) return;
-        isSavingActive = true;
-
+    // Фиксация ввода без немедленного сохранения на диск (сохранение только по кнопке)
+    function commitCellInput() {
+        if (!selectedCell) return;
         let r = selectedCell.r;
         let c = selectedCell.c;
         let newVal = editor.value;
 
-        // Гарантируем, что структура ячейки остается объектом (сохраняем bg, border, color)
         if (!matrix[r]) matrix[r] = [];
         if (typeof matrix[r][c] !== 'object' || matrix[r][c] === null) {
             matrix[r][c] = { v: newVal };
@@ -609,41 +561,33 @@
 
         editor.style.display = 'none';
         draw();
+        selectedCell = null;
+    }
+
+    // Эта функция вызывается из Android по нажатию физической кнопки «Сохранить»
+    function exportExcelToAndroid() {
+        if (editor.style.display === 'block') {
+            commitCellInput();
+        }
 
         try {
-            if (window.AndroidBridge) {
-                // Формируем полный объект данных, идентичный тому, что приходит из Android при загрузке
+            if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
                 const fullPayload = {
                     matrix: matrix,
                     merges: merges,
                     widths: widths,
                     heights: heights
                 };
-                const jsonString = JSON.stringify(fullPayload);
-
-                if (typeof AndroidBridge.updateCellData === 'function') {
-                    AndroidBridge.updateCellData(r, c, newVal);
-                } else if (typeof AndroidBridge.saveExcelData === 'function') {
-                    AndroidBridge.saveExcelData(jsonString); // Отправляем полный JSON со всеми метаданными
-                } else if (typeof AndroidBridge.onCellChanged === 'function') {
-                    AndroidBridge.onCellChanged(r, c, newVal);
-                } else if (typeof AndroidBridge.saveData === 'function') {
-                    AndroidBridge.saveData(jsonString);
-                }
-                logDebug(`Сохранено: [${r}, ${c}] = "${newVal}"`);
+                AndroidBridge.saveExcelData(JSON.stringify(fullPayload));
+                logDebug("Отправлено на сохранение");
             }
         } catch (err) {
-            logDebug("Ошибка сохранения: " + err.message);
+            logDebug("Ошибка экспорта: " + err.message);
         }
-
-        setTimeout(() => {
-            selectedCell = null;
-            isSavingActive = false;
-        }, 100);
     }
 
     editor.addEventListener('blur', () => {
-        commitAndSave();
+        commitCellInput();
     });
 
     editor.addEventListener('keydown', (e) => {
