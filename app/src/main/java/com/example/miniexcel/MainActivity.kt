@@ -25,10 +25,10 @@ import org.apache.poi.openxml4j.util.ZipSecureFile
 import org.apache.poi.ss.usermodel.DateUtil
 import org.apache.poi.ss.usermodel.Sheet
 import org.apache.poi.ss.usermodel.WorkbookFactory
-import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
@@ -38,7 +38,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var saveButton: Button
     
     private var currentFileUri: Uri? = null
-    // Временный файл для работы со всеми изменениями в сессии
     private var workingFile: File? = null
     
     private val emptyPayload: String
@@ -58,14 +57,10 @@ class MainActivity : AppCompatActivity() {
             }
             
             val widths = JSONArray()
-            for (c in 0 until colsCount) {
-                widths.put(80)
-            }
+            for (c in 0 until colsCount) widths.put(80)
             
             val heights = JSONArray()
-            for (r in 0 until rowsCount) {
-                heights.put(25)
-            }
+            for (r in 0 until rowsCount) heights.put(25)
 
             val root = JSONObject().apply {
                 put("matrix", matrix)
@@ -116,7 +111,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 saveFileLauncher.launch(intent)
             } else {
-                // Запрашиваем актуальный JSON из WebView и сохраняем в исходный файл
                 triggerJSExportAndSave()
             }
         }
@@ -168,7 +162,7 @@ class MainActivity : AppCompatActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
                     currentFileUri = uri
-                    createWorkingCopyAndPipe(uri)
+                    createWorkingCopyAndParse(uri)
                 }
             }
         }
@@ -177,24 +171,20 @@ class MainActivity : AppCompatActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
                     currentFileUri = uri
-                    // После создания нового файла сохраняем в него рабочую копию
                     triggerJSExportAndSave()
                 }
             }
         }
     }
 
-    // Шаг 1: Создаем изолированную временную копию открытого документа для сессии
-    private fun createWorkingCopyAndPipe(fileUri: Uri) {
+    private fun createWorkingCopyAndParse(fileUri: Uri) {
         cachedJsonPayload = emptyPayload
         tableWebView.loadUrl("file:///android_asset/grid.html")
 
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    // Удаляем старый временный файл, если он остался от прошлых открытий
                     workingFile?.let { if (it.exists()) it.delete() }
-                    
                     workingFile = File(cacheDir, "working_session_${System.currentTimeMillis()}.tmp")
 
                     contentResolver.openInputStream(fileUri)?.use { input ->
@@ -203,7 +193,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Читаем данные для WebView из нашей рабочей копии
                     WorkbookFactory.create(workingFile, null, true).use { workbook ->
                         if (workbook.numberOfSheets > 0) {
                             parseSheetToJson(workbook.getSheetAt(0))
@@ -239,7 +228,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         if (maxColsCount == 0) maxColsCount = 12
-
         if (lastRowIdx <= 0) lastRowIdx = 29 
         if (maxColsCount <= 0) maxColsCount = 15 
 
@@ -326,52 +314,62 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Сохранение из JS: сначала обновляем временную рабочую копию, а затем по кнопке «Сохранить» выгружаем в оригинал
+    // Сохранение с сохранением исходного стиля (Apache POI стили не затираются)
     private fun commitChangesAndExportToOriginal(jsonData: String) {
         val targetUri = currentFileUri ?: return
+        val currentWorkingFile = workingFile ?: return
+
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
                     val root = JSONObject(jsonData)
                     val matrix = root.optJSONArray("matrix") ?: JSONArray()
-                    
-                    // 1. Записываем изменения в рабочую копию (или создаем её, если работали без открытия файла)
-                    val workbook = XSSFWorkbook()
-                    val sheet = workbook.createSheet("Sheet1")
+
+                    // Открываем рабочую копию через POI для сохранения форматирования
+                    val fileInputStream = FileInputStream(currentWorkingFile)
+                    val workbook = WorkbookFactory.create(fileInputStream)
+                    fileInputStream.close()
+
+                    val sheet = workbook.getSheetAt(0)
 
                     for (r in 0 until matrix.length()) {
                         val rowArray = matrix.optJSONArray(r) ?: continue
-                        val row = sheet.createRow(r)
+                        var poiRow = sheet.getRow(r)
+                        if (poiRow == null) {
+                            poiRow = sheet.createRow(r)
+                        }
+
                         for (c in 0 until rowArray.length()) {
                             val cellObj = rowArray.optJSONObject(c) ?: continue
                             val cellValue = cellObj.opt("v") ?: ""
-                            val cell = row.createCell(c)
-                            
+
+                            var poiCell = poiRow.getCell(c)
+                            if (poiCell == null) {
+                                poiCell = poiRow.createCell(c)
+                            }
+
                             when (cellValue) {
-                                is Number -> cell.setCellValue(cellValue.toDouble())
-                                is Boolean -> cell.setCellValue(cellValue)
-                                else -> cell.setCellValue(cellValue.toString())
+                                is Number -> poiCell.setCellValue(cellValue.toDouble())
+                                is Boolean -> poiCell.setCellValue(cellValue)
+                                else -> poiCell.setCellValue(cellValue.toString())
                             }
                         }
                     }
 
-                    // Обновляем временный рабочий файл
-                    if (workingFile == null) {
-                        workingFile = File(cacheDir, "working_session_${System.currentTimeMillis()}.tmp")
-                    }
-                    FileOutputStream(workingFile).use { out ->
+                    // Перезаписываем временный файл
+                    FileOutputStream(currentWorkingFile).use { out ->
                         workbook.write(out)
                     }
                     workbook.close()
 
-                    // 2. Переносим данные из временного файла в исходный Uri пользователя
+                    // Выгружаем в итоговый файл пользователя (Uri)
                     contentResolver.openOutputStream(targetUri, "w")?.use { outStream ->
-                        workingFile?.inputStream()?.use { inStream ->
+                        currentWorkingFile.inputStream().use { inStream ->
                             inStream.copyTo(outStream)
                         }
                     } ?: throw Exception("Не удалось открыть OutputStream для Uri: $targetUri")
                     
-                    Log.d("MiniExcelDebug", "Файл успешно сохранен на диск.")
+                    Log.d("MiniExcelDebug", "Файл успешно сохранен с сохранением стилей.")
                 }
                 
                 withContext(Dispatchers.Main) {
@@ -388,7 +386,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Уничтожаем временный файл при закрытии приложения
         try {
             workingFile?.let { if (it.exists()) it.delete() }
         } catch (e: Exception) {
