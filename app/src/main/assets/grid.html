@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V10</title>
+    <title>MiniExcel Ultimate Engine V11</title>
     <style>
         * {
             box-sizing: border-box;
@@ -60,7 +60,7 @@
 </head>
 <body>
 
-<div id="debug-panel">Инициализация V10...</div>
+<div id="debug-panel">Запуск V11...</div>
 <canvas id="excelCanvas"></canvas>
 <input type="text" id="cell-editor" />
 
@@ -290,7 +290,7 @@
             }
         }
 
-        // 2. СЕТКА (Без паутины внутри мержей, работает для любых файлов)
+        // 2. БАЗОВАЯ СЕТКА (Идеально работает как для файлов без мержей, так и с ними)
         ctx.save();
         ctx.strokeStyle = "#d0d0d0"; 
         ctx.lineWidth = 1;
@@ -344,7 +344,7 @@
             ctx.restore();
         }
 
-        // 4. ПОЛЬЗОВАТЕЛЬСКИЕ РАМКИ ЯЧЕЕК (Кастомные бордеры из Excel)
+        // 4. ПОЛЬЗОВАТЕЛЬСКИЕ РАМКИ ЯЧЕЕК (Кастомные бордеры)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let cellData = matrix[r] ? matrix[r][c] : null;
@@ -359,30 +359,37 @@
                 ctx.save();
                 let b = cellData.border;
                 if (b.top) {
-                    ctx.strokeStyle = b.top.color || "#000000";
-                    ctx.lineWidth = b.top.width || 1;
+                    ctx.strokeStyle = b.top.color || "#000000"; ctx.lineWidth = b.top.width || 1;
                     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + cw, cy); ctx.stroke();
                 }
                 if (b.bottom) {
-                    ctx.strokeStyle = b.bottom.color || "#000000";
-                    ctx.lineWidth = b.bottom.width || 1;
+                    ctx.strokeStyle = b.bottom.color || "#000000"; ctx.lineWidth = b.bottom.width || 1;
                     ctx.beginPath(); ctx.moveTo(cx, cy + ch); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
                 }
                 if (b.left) {
-                    ctx.strokeStyle = b.left.color || "#000000";
-                    ctx.lineWidth = b.left.width || 1;
+                    ctx.strokeStyle = b.left.color || "#000000"; ctx.lineWidth = b.left.width || 1;
                     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + ch); ctx.stroke();
                 }
                 if (b.right) {
-                    ctx.strokeStyle = b.right.color || "#000000";
-                    ctx.lineWidth = b.right.width || 1;
+                    ctx.strokeStyle = b.right.color || "#000000"; ctx.lineWidth = b.right.width || 1;
                     ctx.beginPath(); ctx.moveTo(cx + cw, cy); ctx.lineTo(cx + cw, cy + ch); ctx.stroke();
                 }
                 ctx.restore();
             }
         }
 
-        // 5. ТЕКСТ (С переливом на соседние пустые ячейки)
+        // 5. ВНЕШНЯЯ СИНЯЯ РАМКА ЛИСТА (Ограничительный контур таблицы)
+        ctx.save();
+        let sheetStartX = ROW_NUM_WIDTH - scrollX * zoom;
+        let sheetStartY = COL_NUM_HEIGHT - scrollY * zoom;
+        let sheetW = totalGridW * zoom;
+        let sheetH = totalGridH * zoom;
+        ctx.strokeStyle = "#0f62fe";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sheetStartX, sheetStartY, sheetW, sheetH);
+        ctx.restore();
+
+        // 6. ТЕКСТ (С переливом на соседние пустые ячейки)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -443,7 +450,7 @@
             }
         }
 
-        // 6. ШАПКА И НОМЕРА СТРОК
+        // 7. ШАПКА И НОМЕРА СТРОК
         ctx.lineWidth = 1;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -477,7 +484,7 @@
         ctx.restore();
     }
 
-    // Обработка касаний
+    // Обработка касаний и скролла
     canvas.addEventListener('touchstart', (e) => {
         hasMoved = false;
         if (e.touches.length === 1) {
@@ -583,7 +590,7 @@
         editor.style.height = (ch * zoom) + 'px';
     }
 
-    // Защищенный метод сохранения данных с флагом активности
+    // Надежное сохранение без дублирования событий
     function commitAndSave() {
         if (!selectedCell || isSavingActive) return;
         isSavingActive = true;
@@ -623,7 +630,7 @@
         setTimeout(() => {
             selectedCell = null;
             isSavingActive = false;
-        }, 50);
+        }, 100);
     }
 
     editor.addEventListener('blur', () => {
