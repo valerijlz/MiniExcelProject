@@ -182,7 +182,7 @@ class MainActivity : AppCompatActivity() {
             return cachedJsonPayload
         }
 
-@JavascriptInterface
+        @JavascriptInterface
         fun saveExcelData(jsonPayload: String) {
             cachedJsonPayload = jsonPayload
             val targetUri = currentFileUri ?: return
@@ -245,6 +245,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
 
     private fun createWorkingCopyAndParse(fileUri: Uri) {
         cachedJsonPayload = emptyPayload
