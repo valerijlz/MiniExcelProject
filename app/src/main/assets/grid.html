@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V11</title>
+    <title>MiniExcel Ultimate Engine V12</title>
     <style>
         * {
             box-sizing: border-box;
@@ -52,15 +52,16 @@
             border: 2px solid #0f62fe;
             background: white;
             outline: none;
-            padding: 0 4px;
+            padding: 2px 6px;
             font-size: 14px;
             margin: 0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
     </style>
 </head>
 <body>
 
-<div id="debug-panel">Запуск V11...</div>
+<div id="debug-panel">Запуск V12...</div>
 <canvas id="excelCanvas"></canvas>
 <input type="text" id="cell-editor" />
 
@@ -91,7 +92,6 @@
     let lastTouchX = 0, lastTouchY = 0;
     let startTouchDist = 0, startZoom = 1.0;
     let hasMoved = false, touchHandled = false;
-    let isSavingActive = false;
 
     function logDebug(text) {
         console.log(text);
@@ -163,7 +163,6 @@
         heights = Array(maxRows).fill(22);
         merges = [];
         mergeLookup = {};
-        logDebug("Режим заглушки");
         updateCanvasDimensions();
         draw();
     }
@@ -224,9 +223,7 @@
                 heights[r] = (incomingHeights[r] && incomingHeights[r] > 0) ? Math.round(incomingHeights[r]) : 22;
             }
 
-            let activeMergesCount = buildMergeLookup();
-            logDebug(`Файл загружен. Строк: ${maxRows}, Мержей: ${activeMergesCount}`);
-
+            buildMergeLookup();
             scrollX = 0;
             scrollY = 0;
             editor.style.display = 'none';
@@ -234,7 +231,6 @@
             
             updateCanvasDimensions();
             draw();
-
         } catch(e) {
             logDebug("Ошибка JSON: " + e.message);
             initEmptyGrid();
@@ -257,9 +253,6 @@
 
         ctx.save();
         ctx.textBaseline = 'middle';
-
-        let totalGridW = 0; for (let i = 0; i < maxCols; i++) totalGridW += (widths[i] || 70);
-        let totalGridH = 0; for (let i = 0; i < maxRows; i++) totalGridH += (heights[i] || 22);
 
         // 1. ЗАЛИВКА ФОНОВ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
@@ -290,30 +283,20 @@
             }
         }
 
-        // 2. БАЗОВАЯ СЕТКА
+        // 2. СЕТКА (Рисуем тонкую сетку только там, где ячейки НЕ объединены)
         ctx.save();
-        ctx.strokeStyle = "#d0d0d0"; 
+        ctx.strokeStyle = "#e0e0e0"; 
         ctx.lineWidth = 1;
 
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
-                let lookup = mergeLookup[`${r}_${c}`];
-                if (lookup && lookup.isChild) continue; 
+                if (mergeLookup[`${r}_${c}`]) continue; // Пропускаем зоны мержей для стандартной сетки
 
                 let rect = getCellRect(r, c);
-                let cw = rect.w;
-                let ch = rect.h;
-
-                if (lookup && lookup.isMain) {
-                    cw = 0; ch = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || 70);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += (heights[i] || 22);
-                }
-
                 let cx = ROW_NUM_WIDTH + Math.round((rect.x - scrollX) * zoom) + 0.5;
                 let cy = COL_NUM_HEIGHT + Math.round((rect.y - scrollY) * zoom) + 0.5;
-                let ccw = Math.round(cw * zoom);
-                let cch = Math.round(ch * zoom);
+                let ccw = Math.round(rect.w * zoom);
+                let cch = Math.round(rect.h * zoom);
 
                 if (cx + ccw >= ROW_NUM_WIDTH && cy + cch >= COL_NUM_HEIGHT && cx <= clientW && cy <= clientH) {
                     ctx.strokeRect(cx, cy, ccw, cch);
@@ -325,7 +308,7 @@
         // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ (Мержей)
         if (merges && merges.length > 0) {
             ctx.save();
-            ctx.strokeStyle = "#808080";
+            ctx.strokeStyle = "#b0b0b0";
             ctx.lineWidth = 1;
             merges.forEach(m => {
                 let startRect = getCellRect(m.sr, m.sc);
@@ -377,28 +360,9 @@
                 ctx.fillStyle = textColor;
                 ctx.font = `${Math.round(11 * zoom)}px Arial`;
 
-                if (!lookup) {
-                    let availableWidth = cw;
-                    let nextCol = c + 1;
-                    while (nextCol < maxCols) {
-                        let nextData = matrix[r] ? matrix[r][nextCol] : null;
-                        let nextText = "";
-                        if (nextData !== null && nextData !== undefined) {
-                            nextText = (typeof nextData === 'object') ? String(nextData.v ?? nextData.value ?? "") : String(nextData);
-                        }
-                        let nextLookup = mergeLookup[`${r}_${nextCol}`];
-                        if (nextText !== "" || nextLookup) break;
-                        availableWidth += (widths[nextCol] || 70) * zoom;
-                        nextCol++;
-                    }
-                    ctx.beginPath();
-                    ctx.rect(cx + 3, cy, availableWidth - 6, ch);
-                    ctx.clip();
-                } else {
-                    ctx.beginPath();
-                    ctx.rect(cx + 3, cy, cw - 6, ch);
-                    ctx.clip();
-                }
+                ctx.beginPath();
+                ctx.rect(cx + 3, cy, cw - 6, ch);
+                ctx.clip();
 
                 ctx.fillText(text, cx + 5, cy + ch / 2);
                 ctx.restore();
@@ -439,7 +403,7 @@
         ctx.restore();
     }
 
-    // Обработка касаний и скролла
+    // Обработка касаний и кликов с принудительной фиксацией открытого инпута
     canvas.addEventListener('touchstart', (e) => {
         hasMoved = false;
         if (e.touches.length === 1) {
@@ -498,6 +462,11 @@
     function handleGridClick(clickX, clickY) {
         if (clickX < ROW_NUM_WIDTH || clickY < COL_NUM_HEIGHT) return;
 
+        // Если редактор открыт, сначала фиксируем его данные
+        if (editor.style.display === 'block') {
+            commitCellInput();
+        }
+
         let targetX = (clickX - ROW_NUM_WIDTH) / zoom + scrollX;
         let targetY = (clickY - COL_NUM_HEIGHT) / zoom + scrollY;
 
@@ -527,13 +496,21 @@
 
     function positionEditor() {
         if (!selectedCell) return;
-        let rect = getCellRect(selectedCell.r, selectedCell.c);
-        let cw = rect.w, ch = rect.h;
-        let mergeInfo = getMergedCellInfo(selectedCell.r, selectedCell.c);
-        if (mergeInfo && mergeInfo.sr === selectedCell.r && mergeInfo.sc === selectedCell.sc) {
+        let r = selectedCell.r;
+        let c = selectedCell.c;
+        let rect = getCellRect(r, c);
+        
+        let cw = rect.w;
+        let ch = rect.h;
+        
+        let mergeInfo = getMergedCellInfo(r, c);
+        if (mergeInfo) {
             cw = 0; ch = 0;
-            for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += widths[i];
-            for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += heights[i];
+            for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += (widths[i] || 70);
+            for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += (heights[i] || 22);
+            r = mergeInfo.sr;
+            c = mergeInfo.sc;
+            rect = getCellRect(r, c);
         }
         
         let leftPos = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
@@ -541,12 +518,10 @@
 
         editor.style.left = leftPos + 'px';
         editor.style.top = topPos + 'px';
-        editor.style.width = (cw * zoom) + 'px';
-        editor.style.height = (ch * zoom) + 'px';
+        editor.style.width = Math.max(80, (cw * zoom)) + 'px';
+        editor.style.height = Math.max(26, (ch * zoom)) + 'px';
     }
 
-    // Фиксация ввода без немедленного сохранения на диск (сохранение только по кнопке)
-// Фиксация ввода и немедленная отправка измененного состояния в Android
     function commitCellInput() {
         if (!selectedCell) return;
         let r = selectedCell.r;
@@ -554,26 +529,19 @@
         let newVal = editor.value;
 
         if (!matrix[r]) matrix[r] = [];
-        let oldValue = (typeof matrix[r][c] === 'object' && matrix[r][c] !== null) ? matrix[r][c].v : matrix[r][c];
-
-        // Обновляем значение только если оно реально изменилось
-        if (oldValue !== newVal) {
-            if (typeof matrix[r][c] !== 'object' || matrix[r][c] === null) {
-                matrix[r][c] = { v: newVal };
-            } else {
-                matrix[r][c].v = newVal;
-            }
-
-            // АВТОСОХРАНЕНИЕ: Сразу передаем обновленный массив в Android при смене ячейки
-            sendCurrentDataToAndroid(false);
+        if (typeof matrix[r][c] !== 'object' || matrix[r][c] === null) {
+            matrix[r][c] = { v: newVal };
+        } else {
+            matrix[r][c].v = newVal;
         }
 
         editor.style.display = 'none';
         draw();
-        selectedCell = null;
+        
+        // Автоматически отправляем изменения в Android при потере фокуса / завершении ввода
+        sendCurrentDataToAndroid(false);
     }
 
-    // Общая функция отправки данных (параметр isFinal нужен, чтобы понимать, показывать ли тост об успешном сохранении)
     function sendCurrentDataToAndroid(isFinal) {
         try {
             if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
@@ -585,46 +553,23 @@
                     isFinalSave: isFinal
                 };
                 AndroidBridge.saveExcelData(JSON.stringify(fullPayload));
-                logDebug(isFinal ? "Файл полностью сохранен" : "Изменения зафиксированы (автосохранение)");
             }
         } catch (err) {
             logDebug("Ошибка отправки: " + err.message);
         }
     }
 
-    // Изменяем функцию exportExcelToAndroid, чтобы она вызывала финальное сохранение
-    function exportExcelToAndroid() {
-        if (editor.style.display === 'block') {
-            commitCellInput();
-        } else {
-            sendCurrentDataToAndroid(true);
-        }
-    }
-
-    // Эта функция вызывается из Android по нажатию физической кнопки «Сохранить»
     function exportExcelToAndroid() {
         if (editor.style.display === 'block') {
             commitCellInput();
         }
-
-        try {
-            if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
-                const fullPayload = {
-                    matrix: matrix,
-                    merges: merges,
-                    widths: widths,
-                    heights: heights
-                };
-                AndroidBridge.saveExcelData(JSON.stringify(fullPayload));
-                logDebug("Отправлено на сохранение");
-            }
-        } catch (err) {
-            logDebug("Ошибка экспорта: " + err.message);
-        }
+        sendCurrentDataToAndroid(true);
     }
 
     editor.addEventListener('blur', () => {
-        commitCellInput();
+        if (editor.style.display === 'block') {
+            commitCellInput();
+        }
     });
 
     editor.addEventListener('keydown', (e) => {
