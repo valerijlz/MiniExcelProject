@@ -182,64 +182,69 @@ class MainActivity : AppCompatActivity() {
             return cachedJsonPayload
         }
 
-        @JavascriptInterface
+@JavascriptInterface
         fun saveExcelData(jsonPayload: String) {
             cachedJsonPayload = jsonPayload
             val targetUri = currentFileUri ?: return
 
-            lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val fileToProcess = workingFile ?: return@launch
-                    if (!fileToProcess.exists()) return@launch
+            val fileToProcess = workingFile ?: return
+            try {
+                val root = JSONObject(jsonPayload)
+                val matrix = root.optJSONArray("matrix") ?: return
+                val isFinalSave = root.optBoolean("isFinalSave", false)
 
-                    val root = JSONObject(jsonPayload)
-                    val matrix = root.optJSONArray("matrix") ?: return@launch
-                    val isFinalSave = root.optBoolean("isFinalSave", false)
+                // 1. Записываем изменения в рабочую копию (.tmp)
+                WorkbookFactory.create(fileToProcess, null, false).use { workbook ->
+                    val sheet = workbook.getSheetAt(0) ?: workbook.createSheet("Sheet1")
 
-                    WorkbookFactory.create(fileToProcess, null, false).use { workbook ->
-                        val sheet = workbook.getSheetAt(0) ?: workbook.createSheet("Sheet1")
+                    for (r in 0 until matrix.length()) {
+                        val rowArray = matrix.optJSONArray(r) ?: continue
+                        var row = sheet.getRow(r)
+                        if (row == null) {
+                            row = sheet.createRow(r)
+                        }
 
-                        for (r in 0 until matrix.length()) {
-                            val rowArray = matrix.optJSONArray(r) ?: continue
-                            val row = sheet.getRow(r) ?: sheet.createRow(r)
+                        for (c in 0 until rowArray.length()) {
+                            val cellObj = rowArray.optJSONObject(c)
+                            val cellVal = cellObj?.optString("v", "") ?: ""
+                            var cell = row.getCell(c)
+                            if (cell == null) {
+                                cell = row.createCell(c)
+                            }
 
-                            for (c in 0 until rowArray.length()) {
-                                val cellObj = rowArray.optJSONObject(c)
-                                val cellVal = cellObj?.optString("v", "") ?: ""
-                                val cell = row.getCell(c) ?: row.createCell(c)
-
-                                if (cellVal.toDoubleOrNull() != null) {
-                                    cell.setCellValue(cellVal.toDouble())
-                                } else {
-                                    cell.setCellValue(cellVal)
-                                }
+                            if (cellVal.toDoubleOrNull() != null) {
+                                cell.setCellValue(cellVal.toDouble())
+                            } else {
+                                cell.setCellValue(cellVal)
                             }
                         }
-
-                        FileOutputStream(fileToProcess).use { fos ->
-                            workbook.write(fos)
-                        }
                     }
 
-                    if (isFinalSave) {
-                        contentResolver.openOutputStream(targetUri)?.use { outputStream ->
-                            fileToProcess.inputStream().use { inputStream ->
-                                inputStream.copyTo(outputStream)
-                            }
-                        }
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
+                    FileOutputStream(fileToProcess).use { fos ->
+                        workbook.write(fos)
+                        fos.flush()
+                    }
+                }
+
+                // 2. Если это финальное сохранение — копируем tmp-файл в целевой документ пользователя
+                if (isFinalSave) {
+                    contentResolver.openOutputStream(targetUri, "w")?.use { outputStream ->
+                        fileToProcess.inputStream().use { inputStream ->
+                            inputStream.copyTo(outputStream)
+                            outputStream.flush()
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e("MiniExcelDebug", "Ошибка сохранения: ${e.message}")
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Ошибка сохранения файла", Toast.LENGTH_SHORT).show()
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
                     }
+                }
+            } catch (e: Exception) {
+                Log.e("MiniExcelDebug", "Ошибка сохранения: ${e.message}", e)
+                lifecycleScope.launch(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Ошибка сохранения файла", Toast.LENGTH_SHORT).show()
                 }
             }
         }
-    }
 
     private fun createWorkingCopyAndParse(fileUri: Uri) {
         cachedJsonPayload = emptyPayload
