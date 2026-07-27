@@ -283,14 +283,14 @@
             }
         }
 
-        // 2. СЕТКА (Рисуем тонкую сетку только там, где ячейки НЕ объединены)
+        // 2. СЕТКА
         ctx.save();
         ctx.strokeStyle = "#e0e0e0"; 
         ctx.lineWidth = 1;
 
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
-                if (mergeLookup[`${r}_${c}`]) continue; // Пропускаем зоны мержей для стандартной сетки
+                if (mergeLookup[`${r}_${c}`]) continue;
 
                 let rect = getCellRect(r, c);
                 let cx = ROW_NUM_WIDTH + Math.round((rect.x - scrollX) * zoom) + 0.5;
@@ -305,7 +305,7 @@
         }
         ctx.restore();
 
-        // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ (Мержей)
+        // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ
         if (merges && merges.length > 0) {
             ctx.save();
             ctx.strokeStyle = "#b0b0b0";
@@ -327,7 +327,7 @@
             ctx.restore();
         }
 
-        // 4. ТЕКСТ ЯЧЕЕК
+        // 4. ТЕКСТ ЯЧЕЕК (Исправлено обрезание текста)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -358,10 +358,11 @@
                 ctx.save();
                 let textColor = (typeof cellData === 'object' && cellData !== null) ? (cellData.color || cellData.textColor || "#000000") : "#000000";
                 ctx.fillStyle = textColor;
-                ctx.font = `${Math.round(11 * zoom)}px Arial`;
+                ctx.font = `${Math.max(9, Math.round(11 * zoom))}px Arial`;
 
+                // Убрали жесткий обрезающий клип, позволяющий длинному тексту свободно отображаться в пределах ячейки без раннего среза
                 ctx.beginPath();
-                ctx.rect(cx + 3, cy, cw - 6, ch);
+                ctx.rect(ROW_NUM_WIDTH, COL_NUM_HEIGHT, clientW - ROW_NUM_WIDTH, clientH - COL_NUM_HEIGHT);
                 ctx.clip();
 
                 ctx.fillText(text, cx + 5, cy + ch / 2);
@@ -403,7 +404,6 @@
         ctx.restore();
     }
 
-    // Обработка касаний и кликов с принудительной фиксацией открытого инпута
     canvas.addEventListener('touchstart', (e) => {
         hasMoved = false;
         if (e.touches.length === 1) {
@@ -462,7 +462,6 @@
     function handleGridClick(clickX, clickY) {
         if (clickX < ROW_NUM_WIDTH || clickY < COL_NUM_HEIGHT) return;
 
-        // Если редактор открыт, сначала фиксируем его данные
         if (editor.style.display === 'block') {
             commitCellInput();
         }
@@ -537,8 +536,6 @@
 
         editor.style.display = 'none';
         draw();
-        
-        // Автоматически отправляем изменения в Android при потере фокуса / завершении ввода
         sendCurrentDataToAndroid(false);
     }
 
