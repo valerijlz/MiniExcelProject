@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V12</title>
+    <title>MiniExcel Ultimate Engine V13</title>
     <style>
         * {
             box-sizing: border-box;
@@ -61,7 +61,7 @@
 </head>
 <body>
 
-<div id="debug-panel">Запуск V12...</div>
+<div id="debug-panel">Запуск V13...</div>
 <canvas id="excelCanvas"></canvas>
 <input type="text" id="cell-editor" />
 
@@ -283,9 +283,9 @@
             }
         }
 
-        // 2. СЕТКА
+        // 2. СЕТКА (Аккуратные тонкие рамки)
         ctx.save();
-        ctx.strokeStyle = "#e0e0e0"; 
+        ctx.strokeStyle = "#dcdcdc"; 
         ctx.lineWidth = 1;
 
         for (let r = 0; r < maxRows; r++) {
@@ -308,7 +308,7 @@
         // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ
         if (merges && merges.length > 0) {
             ctx.save();
-            ctx.strokeStyle = "#b0b0b0";
+            ctx.strokeStyle = "#a0a0a0";
             ctx.lineWidth = 1;
             merges.forEach(m => {
                 let startRect = getCellRect(m.sr, m.sc);
@@ -327,7 +327,7 @@
             ctx.restore();
         }
 
-        // 4. ТЕКСТ ЯЧЕЕК (Исправлено обрезание текста)
+        // 4. ТЕКСТ ЯЧЕЕК (Строгое клипирование для предотвращения наложения)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -360,9 +360,9 @@
                 ctx.fillStyle = textColor;
                 ctx.font = `${Math.max(9, Math.round(11 * zoom))}px Arial`;
 
-                // Убрали жесткий обрезающий клип, позволяющий длинному тексту свободно отображаться в пределах ячейки без раннего среза
+                // Обрезаем текст границами конкретной ячейки / объединенной зоны, чтобы он не залезал на соседние ячейки
                 ctx.beginPath();
-                ctx.rect(ROW_NUM_WIDTH, COL_NUM_HEIGHT, clientW - ROW_NUM_WIDTH, clientH - COL_NUM_HEIGHT);
+                ctx.rect(Math.max(ROW_NUM_WIDTH, cx), Math.max(COL_NUM_HEIGHT, cy), cw, ch);
                 ctx.clip();
 
                 ctx.fillText(text, cx + 5, cy + ch / 2);
