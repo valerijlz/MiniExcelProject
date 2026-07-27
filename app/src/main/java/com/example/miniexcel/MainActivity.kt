@@ -28,7 +28,6 @@ import org.apache.poi.ss.usermodel.WorkbookFactory
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
@@ -177,6 +176,71 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    inner class AndroidBridge {
+        @JavascriptInterface
+        fun getExcelData(): String {
+            return cachedJsonPayload
+        }
+
+        @JavascriptInterface
+        fun saveExcelData(jsonPayload: String) {
+            cachedJsonPayload = jsonPayload
+            val targetUri = currentFileUri ?: return
+
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val fileToProcess = workingFile ?: return@launch
+                    if (!fileToProcess.exists()) return@launch
+
+                    val root = JSONObject(jsonPayload)
+                    val matrix = root.optJSONArray("matrix") ?: return@launch
+                    val isFinalSave = root.optBoolean("isFinalSave", false)
+
+                    WorkbookFactory.create(fileToProcess, null, false).use { workbook ->
+                        val sheet = workbook.getSheetAt(0) ?: workbook.createSheet("Sheet1")
+
+                        for (r in 0 until matrix.length()) {
+                            val rowArray = matrix.optJSONArray(r) ?: continue
+                            val row = sheet.getRow(r) ?: sheet.createRow(r)
+
+                            for (c in 0 until rowArray.length()) {
+                                val cellObj = rowArray.optJSONObject(c)
+                                val cellVal = cellObj?.optString("v", "") ?: ""
+                                val cell = row.getCell(c) ?: row.createCell(c)
+
+                                if (cellVal.toDoubleOrNull() != null) {
+                                    cell.setCellValue(cellVal.toDouble())
+                                } else {
+                                    cell.setCellValue(cellVal)
+                                }
+                            }
+                        }
+
+                        FileOutputStream(fileToProcess).use { fos ->
+                            workbook.write(fos)
+                        }
+                    }
+
+                    if (isFinalSave) {
+                        contentResolver.openOutputStream(targetUri)?.use { outputStream ->
+                            fileToProcess.inputStream().use { inputStream ->
+                                inputStream.copyTo(outputStream)
+                            }
+                        }
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("MiniExcelDebug", "Ошибка сохранения: ${e.message}")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Ошибка сохранения файла", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
     private fun createWorkingCopyAndParse(fileUri: Uri) {
         cachedJsonPayload = emptyPayload
         tableWebView.loadUrl("file:///android_asset/grid.html")
@@ -267,7 +331,7 @@ class MainActivity : AppCompatActivity() {
                                     try { cellObj.put("v", cell.stringCellValue) } 
                                     catch (e1: Exception) {
                                         try { cellObj.put("v", cell.numericCellValue) } 
-                                        catch (ignored: Exception) {}
+                                        catch (e2: Exception) { cellObj.put("v", "[formula]") }
                                     }
                                 }
                                 org.apache.poi.ss.usermodel.CellType.BOOLEAN -> 
@@ -281,138 +345,32 @@ class MainActivity : AppCompatActivity() {
                 jsonTable.put(rowArray)
             }
 
-            val numRegions = sheet.numMergedRegions
-            for (i in 0 until numRegions) {
+            for (i in 0 until sheet.numMergedRegions) {
                 val region = sheet.getMergedRegion(i)
-                if (region != null) {
-                    if (region.firstRow > lastRowIdx || region.firstColumn >= maxColsCount) continue
-                    val mergeObj = JSONObject().apply {
-                        put("sr", region.firstRow)
-                        put("er", region.lastRow)
-                        put("sc", region.firstColumn)
-                        put("ec", region.lastColumn)
-                    }
-                    jsonMerges.put(mergeObj)
+                val mObj = JSONObject().apply {
+                    put("sr", region.firstRow)
+                    put("sc", region.firstColumn)
+                    put("er", region.lastRow)
+                    put("ec", region.lastColumn)
                 }
+                jsonMerges.put(mObj)
             }
 
-            val rootPayload = JSONObject().apply {
+            val root = JSONObject().apply {
                 put("matrix", jsonTable)
                 put("widths", jsonWidths)
                 put("heights", jsonHeights)
                 put("merges", jsonMerges)
             }
 
-            cachedJsonPayload = rootPayload.toString()
+            cachedJsonPayload = root.toString()
 
-            tableWebView.post {
-                tableWebView.evaluateJavascript("setTimeout(function() { requestDataFromAndroid(); }, 150);", null)
+            runOnUiThread {
+                tableWebView.evaluateJavascript("requestDataFromAndroid();", null)
             }
 
         } catch (e: Exception) {
-            Log.e("MiniExcelDebug", "Ошибка сборки JSON: ${e.message}")
-        }
-    }
-
-// Надежное сохранение данных в рабочий файл и финальный выгруз в Uri пользователя
-    private fun commitChangesAndExportToOriginal(jsonData: String) {
-        val targetUri = currentFileUri
-        val currentWorkingFile = workingFile ?: return
-
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    val root = JSONObject(jsonData)
-                    val matrix = root.optJSONArray("matrix") ?: JSONArray()
-                    val isFinalSave = root.optBoolean("isFinalSave", false)
-
-                    // 1. Открываем рабочую копию через POI
-                    val fileInputStream = FileInputStream(currentWorkingFile)
-                    val workbook = WorkbookFactory.create(fileInputStream)
-                    fileInputStream.close()
-
-                    val sheet = workbook.getSheetAt(0)
-
-                    for (r in 0 until matrix.length()) {
-                        val rowArray = matrix.optJSONArray(r) ?: continue
-                        var poiRow = sheet.getRow(r)
-                        if (poiRow == null) {
-                            poiRow = sheet.createRow(r)
-                        }
-
-                        for (c in 0 until rowArray.length()) {
-                            val cellObj = rowArray.optJSONObject(c) ?: continue
-                            val cellValue = cellObj.opt("v") ?: ""
-
-                            var poiCell = poiRow.getCell(c)
-                            if (poiCell == null) {
-                                poiCell = poiRow.createCell(c)
-                            }
-
-                            when (cellValue) {
-                                is Number -> poiCell.setCellValue(cellValue.toDouble())
-                                is Boolean -> poiCell.setCellValue(cellValue)
-                                else -> poiCell.setCellValue(cellValue.toString())
-                            }
-                        }
-                    }
-
-                    // 2. Перезаписываем временный рабочий файл
-                    FileOutputStream(currentWorkingFile).use { out ->
-                        workbook.write(out)
-                    }
-                    workbook.close()
-
-                    // 3. Если это финальное сохранение (нажата кнопка) — выгружаем в исходный Uri
-                    if (isFinalSave && targetUri != null) {
-                        contentResolver.openOutputStream(targetUri, "w")?.use { outStream ->
-                            currentWorkingFile.inputStream().use { inStream ->
-                                inStream.copyTo(outStream)
-                            }
-                        }
-                    }
-                }
-                
-                // Выводим уведомление только при реальном нажатии на кнопку «Сохранить»
-                val rootCheck = JSONObject(jsonData)
-                if (rootCheck.optBoolean("isFinalSave", false)) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("MiniExcelDebug", "Ошибка записи: ${e.message}", e)
-                val rootCheck = JSONObject(jsonData)
-                if (rootCheck.optBoolean("isFinalSave", false)) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        try {
-            workingFile?.let { if (it.exists()) it.delete() }
-        } catch (e: Exception) {
-            Log.e("MiniExcelDebug", "Ошибка очистки временного файла: ${e.message}")
-        }
-    }
-
-    inner class AndroidBridge {
-        @JavascriptInterface
-        fun getExcelData(): String = cachedJsonPayload
-
-        @JavascriptInterface
-        fun onStatus(message: String) {
-            Log.d("MiniExcelStatus", message)
-        }
-
-        @JavascriptInterface
-        fun saveExcelData(jsonData: String) {
-            commitChangesAndExportToOriginal(jsonData)
+            Log.e("MiniExcelDebug", "Ошибка парсинга листа: ${e.message}")
         }
     }
 }
