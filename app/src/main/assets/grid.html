@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V13</title>
+    <title>MiniExcel Ultimate Engine V14</title>
     <style>
         * {
             box-sizing: border-box;
@@ -61,7 +61,7 @@
 </head>
 <body>
 
-<div id="debug-panel">Запуск V13...</div>
+<div id="debug-panel">Запуск V14...</div>
 <canvas id="excelCanvas"></canvas>
 <input type="text" id="cell-editor" />
 
@@ -283,20 +283,31 @@
             }
         }
 
-        // 2. СЕТКА (Аккуратные тонкие рамки)
+        // 2. СЕТКА (Отрисовываем тонкие линии везде, кроме внутренних ячеек объединений)
         ctx.save();
         ctx.strokeStyle = "#dcdcdc"; 
         ctx.lineWidth = 1;
 
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
-                if (mergeLookup[`${r}_${c}`]) continue;
+                let lookup = mergeLookup[`${r}_${c}`];
+                // Пропускаем рисование сетки для дочерних ячеек внутри объединений, чтобы сетка там не проступала
+                if (lookup && lookup.isChild) continue;
 
                 let rect = getCellRect(r, c);
+                let cw = rect.w;
+                let ch = rect.h;
+
+                if (lookup && lookup.isMain) {
+                    cw = 0; ch = 0;
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || 70);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += (heights[i] || 22);
+                }
+
                 let cx = ROW_NUM_WIDTH + Math.round((rect.x - scrollX) * zoom) + 0.5;
                 let cy = COL_NUM_HEIGHT + Math.round((rect.y - scrollY) * zoom) + 0.5;
-                let ccw = Math.round(rect.w * zoom);
-                let cch = Math.round(rect.h * zoom);
+                let ccw = Math.round(cw * zoom);
+                let cch = Math.round(ch * zoom);
 
                 if (cx + ccw >= ROW_NUM_WIDTH && cy + cch >= COL_NUM_HEIGHT && cx <= clientW && cy <= clientH) {
                     ctx.strokeRect(cx, cy, ccw, cch);
@@ -305,7 +316,7 @@
         }
         ctx.restore();
 
-        // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ
+        // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ (Жирный контур границ объединенной зоны)
         if (merges && merges.length > 0) {
             ctx.save();
             ctx.strokeStyle = "#a0a0a0";
@@ -327,7 +338,7 @@
             ctx.restore();
         }
 
-        // 4. ТЕКСТ ЯЧЕЕК (Строгое клипирование для предотвращения наложения)
+        // 4. ТЕКСТ ЯЧЕЕК (Динамическое обрезание: обрезаем только если правая ячейка занята)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -346,7 +357,8 @@
                 let cw = rect.w * zoom;
                 let ch = rect.h * zoom;
 
-                if (lookup && lookup.isMain) {
+                let isMergedMain = lookup && lookup.isMain;
+                if (isMergedMain) {
                     let fullW = 0; let fullH = 0;
                     for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 70);
                     for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 22);
@@ -360,9 +372,26 @@
                 ctx.fillStyle = textColor;
                 ctx.font = `${Math.max(9, Math.round(11 * zoom))}px Arial`;
 
-                // Обрезаем текст границами конкретной ячейки / объединенной зоны, чтобы он не залезал на соседние ячейки
+                // Проверяем, свободна ли ячейка справа. Если свободна — даем тексту перетекать вплоть до конца экрана/сетки
+                let rightIsOccupied = false;
+                if (!isMergedMain && c + 1 < maxCols) {
+                    let rightCell = matrix[r] ? matrix[r][c + 1] : null;
+                    let rightText = "";
+                    if (rightCell !== null && rightCell !== undefined) {
+                        rightText = (typeof rightCell === 'object') ? String(rightCell.v ?? rightCell.value ?? "") : String(rightCell);
+                    }
+                    if (rightText !== "" || mergeLookup[`${r}_${c + 1}`]) {
+                        rightIsOccupied = true;
+                    }
+                }
+
+                let clipRight = clientW;
+                if (rightIsOccupied) {
+                    clipRight = cx + cw; // Ограничиваем рамкой текущей ячейки
+                }
+
                 ctx.beginPath();
-                ctx.rect(Math.max(ROW_NUM_WIDTH, cx), Math.max(COL_NUM_HEIGHT, cy), cw, ch);
+                ctx.rect(Math.max(ROW_NUM_WIDTH, cx), Math.max(COL_NUM_HEIGHT, cy), clipRight - Math.max(ROW_NUM_WIDTH, cx), ch);
                 ctx.clip();
 
                 ctx.fillText(text, cx + 5, cy + ch / 2);
