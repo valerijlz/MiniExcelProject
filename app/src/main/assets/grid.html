@@ -11,6 +11,11 @@
             font-family: sans-serif;
             background-color: #f0f0f0;
             overflow: auto;
+            -webkit-text-size-adjust: 100%;
+        }
+        #table-container {
+            width: 100%;
+            overflow: auto;
         }
         table {
             border-collapse: collapse;
@@ -24,12 +29,21 @@
             overflow: hidden;
             white-space: nowrap;
             text-overflow: ellipsis;
+            height: 22px;
+        }
+        .empty-plug {
+            padding: 20px;
+            text-align: center;
+            color: #888;
+            font-size: 16px;
         }
     </style>
 </head>
 <body>
 
-    <div id="table-container"></div>
+    <div id="table-container">
+        <div class="empty-plug">Нажмите «Открыть Excel» для загрузки таблицы</div>
+    </div>
 
     <script>
         function requestDataFromAndroid() {
@@ -37,7 +51,9 @@
                 if (window.AndroidBridge && typeof window.AndroidBridge.getExcelData === "function") {
                     const jsonString = window.AndroidBridge.getExcelData();
                     const data = JSON.parse(jsonString);
-                    renderTable(data);
+                    if (data.matrix && data.matrix.length > 0) {
+                        renderTable(data);
+                    }
                 } else {
                     console.warn("AndroidBridge недоступен");
                 }
@@ -52,16 +68,16 @@
             const widths = data.widths || [];
             const heights = data.heights || [];
 
+            if (matrix.length === 0) return;
+
             let html = "<table>";
 
-            // Рендерим колонки с шириной
             html += "<colgroup>";
             widths.forEach(w => {
                 html += `<col style="width: ${w}px;">`;
             });
             html += "</colgroup>";
 
-            // Рендерим строки и ячейки
             matrix.forEach((row, rIndex) => {
                 const h = heights[rIndex] || 22;
                 html += `<tr style="height: ${h}px;">`;
@@ -85,7 +101,6 @@
                 .replace(/'/g, "&#039;");
         }
 
-        // Автоматический запуск при загрузке страницы в WebView
         window.onload = function() {
             requestDataFromAndroid();
         };
