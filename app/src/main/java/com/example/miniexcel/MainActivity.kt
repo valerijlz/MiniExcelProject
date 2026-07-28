@@ -1,4 +1,4 @@
-package com.example.exceltableView // Замените на ваш пакет
+package com.example.miniexcel
 
 import android.app.Activity
 import android.content.Intent
