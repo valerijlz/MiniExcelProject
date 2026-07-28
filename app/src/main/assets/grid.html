@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MiniExcel Ultimate Engine V14</title>
+    <title>MiniExcel Ultimate Engine V15</title>
     <style>
         * {
             box-sizing: border-box;
@@ -61,7 +61,7 @@
 </head>
 <body>
 
-<div id="debug-panel">Запуск V14...</div>
+<div id="debug-panel">Запуск V15...</div>
 <canvas id="excelCanvas"></canvas>
 <input type="text" id="cell-editor" />
 
@@ -144,8 +144,8 @@
     function getScrollLimits() {
         let clientW = canvas.clientWidth || window.innerWidth;
         let clientH = canvas.clientHeight || window.innerHeight;
-        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || 70);
-        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += (heights[i] || 22);
+        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || 80);
+        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += (heights[i] || 25);
         let maxSX = Math.max(0, totalW - (clientW - ROW_NUM_WIDTH) / zoom + 50);
         let maxSY = Math.max(0, totalH - (clientH - COL_NUM_HEIGHT) / zoom + 50);
         return { x: maxSX, y: maxSY };
@@ -153,14 +153,14 @@
 
     function initEmptyGrid() {
         maxRows = 30;
-        maxCols = 10;
+        maxCols = 15;
         matrix = [];
         for (let r = 0; r < maxRows; r++) {
             matrix[r] = [];
             for (let c = 0; c < maxCols; c++) { matrix[r][c] = { v: "" }; }
         }
-        widths = Array(maxCols).fill(70);
-        heights = Array(maxRows).fill(22);
+        widths = Array(maxCols).fill(80);
+        heights = Array(maxRows).fill(25);
         merges = [];
         mergeLookup = {};
         updateCanvasDimensions();
@@ -207,7 +207,7 @@
 
             matrix = payload.matrix;
             maxRows = matrix.length;
-            maxCols = matrix[0] ? matrix[0].length : 10;
+            maxCols = matrix[0] ? matrix[0].length : 15;
 
             merges = payload.merges || [];
             let incomingWidths = payload.widths || [];
@@ -215,12 +215,12 @@
 
             widths = [];
             for (let c = 0; c < maxCols; c++) {
-                widths[c] = (incomingWidths[c] && incomingWidths[c] > 0) ? Math.round(incomingWidths[c]) : 70;
+                widths[c] = (incomingWidths[c] && incomingWidths[c] > 0) ? Math.round(incomingWidths[c]) : 80;
             }
 
             heights = [];
             for (let r = 0; r < maxRows; r++) {
-                heights[r] = (incomingHeights[r] && incomingHeights[r] > 0) ? Math.round(incomingHeights[r]) : 22;
+                heights[r] = (incomingHeights[r] && incomingHeights[r] > 0) ? Math.round(incomingHeights[r]) : 25;
             }
 
             buildMergeLookup();
@@ -238,9 +238,9 @@
     }
 
     function getCellRect(row, col) {
-        let x = 0; for (let i = 0; i < col; i++) x += (widths[i] || 70);
-        let y = 0; for (let i = 0; i < row; i++) y += (heights[i] || 22);
-        return { x: x, y: y, w: (widths[col] || 70), h: (heights[row] || 22) };
+        let x = 0; for (let i = 0; i < col; i++) x += (widths[i] || 80);
+        let y = 0; for (let i = 0; i < row; i++) y += (heights[i] || 25);
+        return { x: x, y: y, w: (widths[col] || 80), h: (heights[row] || 25) };
     }
 
     function draw() {
@@ -268,8 +268,8 @@
 
                 if (lookup && lookup.isMain) {
                     let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 70);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 22);
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 80);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 25);
                     cw = fullW * zoom; ch = fullH * zoom;
                 }
 
@@ -283,7 +283,7 @@
             }
         }
 
-        // 2. СЕТКА (Отрисовываем тонкие линии везде, кроме внутренних ячеек объединений)
+        // 2. СЕТКА (Тонкие линии для всех ячеек, кроме внутренних дочерних ячеек объединений)
         ctx.save();
         ctx.strokeStyle = "#dcdcdc"; 
         ctx.lineWidth = 1;
@@ -291,7 +291,6 @@
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
-                // Пропускаем рисование сетки для дочерних ячеек внутри объединений, чтобы сетка там не проступала
                 if (lookup && lookup.isChild) continue;
 
                 let rect = getCellRect(r, c);
@@ -300,8 +299,8 @@
 
                 if (lookup && lookup.isMain) {
                     cw = 0; ch = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || 70);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += (heights[i] || 22);
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || 80);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += (heights[i] || 25);
                 }
 
                 let cx = ROW_NUM_WIDTH + Math.round((rect.x - scrollX) * zoom) + 0.5;
@@ -316,18 +315,18 @@
         }
         ctx.restore();
 
-        // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ (Жирный контур границ объединенной зоны)
+        // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ (Аккуратный контур границ объединенной зоны)
         if (merges && merges.length > 0) {
             ctx.save();
-            ctx.strokeStyle = "#a0a0a0";
-            ctx.lineWidth = 1;
+            ctx.strokeStyle = "#808080";
+            ctx.lineWidth = 1.5;
             merges.forEach(m => {
                 let startRect = getCellRect(m.sr, m.sc);
                 let cx = ROW_NUM_WIDTH + (startRect.x - scrollX) * zoom;
                 let cy = COL_NUM_HEIGHT + (startRect.y - scrollY) * zoom;
                 let fullW = 0; let fullH = 0;
-                for (let i = m.sc; i <= m.ec; i++) fullW += (widths[i] || 70);
-                for (let i = m.sr; i <= m.er; i++) fullH += (heights[i] || 22);
+                for (let i = m.sc; i <= m.ec; i++) fullW += (widths[i] || 80);
+                for (let i = m.sr; i <= m.er; i++) fullH += (heights[i] || 25);
                 let cw = fullW * zoom;
                 let ch = fullH * zoom;
 
@@ -338,7 +337,20 @@
             ctx.restore();
         }
 
-        // 4. ТЕКСТ ЯЧЕЕК (Динамическое обрезание: обрезаем только если правая ячейка занята)
+        // 4. ОГРАНИЧИТЕЛЬНАЯ СИНЯЯ РАМКА ЛИСТА (Граница всей таблицы)
+        ctx.save();
+        ctx.strokeStyle = "#1a73e8";
+        ctx.lineWidth = 2;
+        let totalGridW = 0; for(let i=0; i<maxCols; i++) totalGridW += (widths[i]||80);
+        let totalGridH = 0; for(let i=0; i<maxRows; i++) totalGridH += (heights[i]||25);
+        let sheetBoxX = ROW_NUM_WIDTH + (0 - scrollX) * zoom;
+        let sheetBoxY = COL_NUM_HEIGHT + (0 - scrollY) * zoom;
+        let sheetBoxW = totalGridW * zoom;
+        let sheetBoxH = totalGridH * zoom;
+        ctx.strokeRect(sheetBoxX, sheetBoxY, sheetBoxW, sheetBoxH);
+        ctx.restore();
+
+        // 5. ТЕКСТ ЯЧЕЕК (Динамическое обрезание, если следующая ячейка занята)
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -360,8 +372,8 @@
                 let isMergedMain = lookup && lookup.isMain;
                 if (isMergedMain) {
                     let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 70);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 22);
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 80);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 25);
                     cw = fullW * zoom; ch = fullH * zoom;
                 }
 
@@ -372,7 +384,7 @@
                 ctx.fillStyle = textColor;
                 ctx.font = `${Math.max(9, Math.round(11 * zoom))}px Arial`;
 
-                // Проверяем, свободна ли ячейка справа. Если свободна — даем тексту перетекать вплоть до конца экрана/сетки
+                // Проверка занятости ячейки справа (если ячейка не объединенная)
                 let rightIsOccupied = false;
                 if (!isMergedMain && c + 1 < maxCols) {
                     let rightCell = matrix[r] ? matrix[r][c + 1] : null;
@@ -387,7 +399,7 @@
 
                 let clipRight = clientW;
                 if (rightIsOccupied) {
-                    clipRight = cx + cw; // Ограничиваем рамкой текущей ячейки
+                    clipRight = cx + cw; // Обрезаем по границе текущей ячейки
                 }
 
                 ctx.beginPath();
@@ -399,7 +411,7 @@
             }
         }
 
-        // 5. ШАПКА И НОМЕРА СТРОК
+        // 6. ШАПКА И НОМЕРА СТРОК
         ctx.lineWidth = 1;
         for (let c = 0; c < maxCols; c++) {
             let rect = getCellRect(0, c);
@@ -534,8 +546,8 @@
         let mergeInfo = getMergedCellInfo(r, c);
         if (mergeInfo) {
             cw = 0; ch = 0;
-            for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += (widths[i] || 70);
-            for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += (heights[i] || 22);
+            for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += (widths[i] || 80);
+            for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += (heights[i] || 25);
             r = mergeInfo.sr;
             c = mergeInfo.sc;
             rect = getCellRect(r, c);
