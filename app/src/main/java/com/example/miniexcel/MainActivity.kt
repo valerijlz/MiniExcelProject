@@ -20,8 +20,8 @@ import java.io.FileOutputStream
 class MainActivity : AppCompatActivity() {
 
     private lateinit var tableWebView: WebView
-    private lateinit var btnOpen: Button
-    private lateinit var btnSave: Button
+    private lateinit var openButton: Button
+    private lateinit var saveButton: Button
     
     private var cachedJsonPayload: String = "{\"matrix\":[],\"widths\":[],\"heights\":[],\"merges\":[]}"
 
@@ -34,22 +34,19 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         tableWebView = findViewById(R.id.tableWebView)
-        
-        // Привязываем кнопки из разметки activity_main.xml 
-        // (если у вас другие ID, поменяйте их здесь)
-        btnOpen = findViewById(R.id.btnOpen)
-        btnSave = findViewById(R.id.btnSave)
+        openButton = findViewById(R.id.openButton)
+        saveButton = findViewById(R.id.saveButton)
 
         setupWebView()
         setupListeners()
     }
 
     private fun setupListeners() {
-        btnOpen.setOnClickListener {
+        openButton.setOnClickListener {
             openFileSelector()
         }
 
-        btnSave.setOnClickListener {
+        saveButton.setOnClickListener {
             Toast.makeText(this, "Функция сохранения в разработке", Toast.LENGTH_SHORT).show()
         }
     }
@@ -87,7 +84,6 @@ class MainActivity : AppCompatActivity() {
             val jsonString = parseExcelFile(file)
             cachedJsonPayload = jsonString
 
-            // Перезагружаем WebView для отображения данных выбранного файла
             tableWebView.loadUrl("file:///android_asset/grid.html")
         } catch (e: Exception) {
             e.printStackTrace()
