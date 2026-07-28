@@ -188,13 +188,19 @@
 
     function requestDataFromAndroid() {
         try {
-            if (!window.AndroidBridge || typeof AndroidBridge.getExcelData !== 'function') {
+            if (typeof AndroidBridge === 'undefined') {
+                document.body.innerHTML = "<h3 style='color:red; padding:20px; font-family:sans-serif;'>Ошибка: AndroidBridge не подключен!</h3>";
+                return;
+            }
+
+            if (typeof AndroidBridge.getExcelData !== 'function') {
                 initEmptyGrid();
                 return;
             }
 
             const rawJson = AndroidBridge.getExcelData();
             if (!rawJson) {
+                document.body.innerHTML = "<h3 style='color:red; padding:20px; font-family:sans-serif;'>Ошибка: Получены пустые данные из Android!</h3>";
                 initEmptyGrid();
                 return;
             }
@@ -232,8 +238,11 @@
             updateCanvasDimensions();
             draw();
         } catch(e) {
+            document.body.innerHTML = "<div style='color:red; padding:20px; font-family:sans-serif;'>" +
+                "<h3>Ошибка рендеринга таблицы (JS):</h3>" +
+                "<pre>" + e.message + "</pre>" +
+                "</div>";
             logDebug("Ошибка JSON: " + e.message);
-            initEmptyGrid();
         }
     }
 
