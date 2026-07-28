@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.widget.Button
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import org.apache.poi.ss.usermodel.DateUtil
@@ -19,6 +20,9 @@ import java.io.FileOutputStream
 class MainActivity : AppCompatActivity() {
 
     private lateinit var tableWebView: WebView
+    private lateinit var btnOpen: Button
+    private lateinit var btnSave: Button
+    
     private var cachedJsonPayload: String = "{\"matrix\":[],\"widths\":[],\"heights\":[],\"merges\":[]}"
 
     companion object {
@@ -29,8 +33,25 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        tableWebView = findViewById(R.id.tableWebView) // Убедитесь, что ID совпадает с вашим XML
+        tableWebView = findViewById(R.id.tableWebView)
+        
+        // Привязываем кнопки из разметки activity_main.xml 
+        // (если у вас другие ID, поменяйте их здесь)
+        btnOpen = findViewById(R.id.btnOpen)
+        btnSave = findViewById(R.id.btnSave)
+
         setupWebView()
+        setupListeners()
+    }
+
+    private fun setupListeners() {
+        btnOpen.setOnClickListener {
+            openFileSelector()
+        }
+
+        btnSave.setOnClickListener {
+            Toast.makeText(this, "Функция сохранения в разработке", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun setupWebView() {
@@ -39,15 +60,11 @@ class MainActivity : AppCompatActivity() {
         webSettings.domStorageEnabled = true
         webSettings.allowFileAccess = true
 
-        // Подключаем мост для связи с JavaScript
         tableWebView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
-
-        // Загружаем HTML из папки assets
         tableWebView.loadUrl("file:///android_asset/grid.html")
     }
 
-    // Метод для вызова выбора файла (например, по нажатию кнопки)
-    fun openFileSelector() {
+    private fun openFileSelector() {
         val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
             type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -70,7 +87,7 @@ class MainActivity : AppCompatActivity() {
             val jsonString = parseExcelFile(file)
             cachedJsonPayload = jsonString
 
-            // Перезагружаем страницу, чтобы инициализировать таблицу новыми данными
+            // Перезагружаем WebView для отображения данных выбранного файла
             tableWebView.loadUrl("file:///android_asset/grid.html")
         } catch (e: Exception) {
             e.printStackTrace()
@@ -166,7 +183,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Мост для взаимодействия с WebView / JavaScript
     inner class AndroidBridge {
         @JavascriptInterface
         fun getExcelData(): String {
