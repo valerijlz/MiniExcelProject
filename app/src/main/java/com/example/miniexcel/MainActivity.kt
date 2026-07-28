@@ -60,13 +60,13 @@ class MainActivity : AppCompatActivity() {
             val heights = JSONArray()
             for (r in 0 until rowsCount) heights.put(25)
 
-            val root = JSONObject().apply {
+            val jsonRoot = JSONObject().apply {
                 put("matrix", matrix)
                 put("widths", widths)
                 put("heights", heights)
                 put("merges", JSONArray())
             }
-            return root.toString()
+            return jsonRoot.toString()
         }
 
     @Volatile
@@ -294,11 +294,10 @@ class MainActivity : AppCompatActivity() {
 
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
-                    val root = JSONObject(jsonPayload)
-                    val matrix = root.optJSONArray("matrix") ?: return@launch
-                    val isFinalSave = root.optBoolean("isFinalSave", false)
+                    val jsonRoot = JSONObject(jsonPayload)
+                    val matrix = jsonRoot.optJSONArray("matrix") ?: return@launch
+                    val isFinalSave = jsonRoot.optBoolean("isFinalSave", false)
 
-                    // Безопасное сохранение в рабочий файл через POI
                     WorkbookFactory.create(fileToProcess).use { workbook ->
                         val sheet = workbook.getSheetAt(0) ?: return@use
                         for (r in 0 until matrix.length()) {
@@ -320,7 +319,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Если это финальное сохранение кнопкой, копируем во внешнее хранилище по URI
                     if (isFinalSave) {
                         contentResolver.openOutputStream(targetUri)?.use { outputStream ->
                             fileToProcess.inputStream().use { inputStream ->
@@ -333,10 +331,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (e: Exception) {
                     Log.e("ExcelSave", "Error saving file", e)
-                    if (root.optBoolean("isFinalSave", false)) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                        }
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                     }
                 }
             }
