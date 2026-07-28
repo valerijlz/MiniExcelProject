@@ -179,9 +179,11 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val inputStream = contentResolver.openInputStream(uri)
+                    ?: throw IllegalArgumentException("Не удалось получить доступ к файлу (поток равен null)")
+
                 val tempFile = File(cacheDir, "working_excel_file.tmp")
                 FileOutputStream(tempFile).use { output ->
-                    inputStream?.copyTo(output)
+                    inputStream.copyTo(output)
                 }
                 workingFile = tempFile
 
@@ -194,8 +196,9 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 Log.e("ExcelOpen", "Error opening file", e)
+                val errorDetails = e.localizedMessage ?: e.javaClass.simpleName
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Ошибка открытия: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Ошибка открытия: $errorDetails", Toast.LENGTH_LONG).show()
                 }
             }
         }
