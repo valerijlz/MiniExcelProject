@@ -12,21 +12,31 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.apache.poi.ss.usermodel.CellType
 import org.apache.poi.ss.util.CellRangeAddress
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var cachedJsonPayload: String = "{}"
 
+    // Лаунчер для ЭКСПОРТА (Сохранения)
     private val createFileLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     ) { uri: Uri? ->
         uri?.let { saveCurrentDataToUri(it) }
+    }
+
+    // 1. ДОБАВЛЕНО: Лаунчер для ОТКРЫТИЯ файла
+    private val openFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { readXlsxFromUri(it) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,6 +77,90 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript("javascript:window.loadJsonData('$escapedJson');", null)
     }
 
+    // 2. ДОБАВЛЕНО: Вызовите этот метод при нажатии на кнопку "Открыть"
+    fun openXlsx() {
+        openFileLauncher.launch(arrayOf(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+            "*/*"
+        ))
+    }
+
+    // 3. ДОБАВЛЕНО: Чтение и парсинг XLSX файла
+    private fun readXlsxFromUri(uri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val inputStream: InputStream? = contentResolver.openInputStream(uri)
+                    ?: throw Exception("Не удалось открыть файл")
+
+                val workbook = XSSFWorkbook(inputStream)
+                val sheet = workbook.getSheetAt(0) ?: throw Exception("Лист не найден")
+
+                val matrixArray = JSONArray()
+                val mergesArray = JSONArray()
+
+                // Чтение строк и ячеек
+                for (r in 0..sheet.lastRowNum) {
+                    val row = sheet.getRow(r)
+                    val rowArray = JSONArray()
+                    if (row != null) {
+                        for (c in 0 until row.lastCellNum) {
+                            val cell = row.getCell(c)
+                            if (cell != null) {
+                                val cellObj = JSONObject()
+                                val valStr = when (cell.cellType) {
+                                    CellType.NUMERIC -> cell.numericCellValue.toString().removeSuffix(".0")
+                                    CellType.STRING -> cell.stringCellValue
+                                    CellType.BOOLEAN -> cell.booleanCellValue.toString()
+                                    CellType.FORMULA -> {
+                                        try { cell.stringCellValue } catch (e: Exception) { cell.numericCellValue.toString() }
+                                    }
+                                    else -> ""
+                                }
+                                cellObj.put("v", valStr)
+                                rowArray.put(c, cellObj)
+                            } else {
+                                rowArray.put(c, JSONObject.NULL)
+                            }
+                        }
+                    }
+                    matrixArray.put(r, rowArray)
+                }
+
+                // Чтение объединенных ячеек
+                for (i in 0 until sheet.numMergedRegions) {
+                    val region: CellRangeAddress = sheet.getMergedRegion(i)
+                    val mergeObj = JSONObject().apply {
+                        put("sr", region.firstRow)
+                        put("sc", region.firstColumn)
+                        put("er", region.lastRow)
+                        put("ec", region.lastColumn)
+                    }
+                    mergesArray.put(mergeObj)
+                }
+
+                workbook.close()
+                inputStream.close()
+
+                val resultJson = JSONObject().apply {
+                    put("matrix", matrixArray)
+                    put("merges", mergesArray)
+                }
+
+                withContext(Dispatchers.Main) {
+                    updateGridData(resultJson.toString())
+                    Toast.makeText(this@MainActivity, "Файл успешно открыт", Toast.LENGTH_SHORT).show()
+                }
+
+            } catch (e: Exception) {
+                Log.e("OpenError", "Ошибка открытия XLSX", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Ошибка открытия: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     fun exportToXlsx() {
         createFileLauncher.launch("Exported_Data.xlsx")
     }
@@ -74,7 +168,6 @@ class MainActivity : AppCompatActivity() {
     private fun saveCurrentDataToUri(uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // "rwt" - усечение и очистка файла перед записью (предотвращает битые ZIP-архивы XLSX)
                 val outputStream = contentResolver.openOutputStream(uri, "rwt")
                     ?: throw Exception("Не удалось открыть поток для записи")
 
