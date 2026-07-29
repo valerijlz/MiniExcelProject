@@ -1,4 +1,4 @@
-package com.example.excelviewer // Замените на ваш package name
+package com.example.miniexcel
 
 import android.annotation.SuppressLint
 import android.net.Uri
@@ -12,6 +12,7 @@ import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.example.miniexcel.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -21,14 +22,13 @@ import org.apache.poi.ss.usermodel.Workbook
 import org.apache.poi.ss.usermodel.WorkbookFactory
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.io.InputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
-    
+
     @Volatile
     private var cachedJsonPayload: String = "{\"matrix\":[],\"widths\":[],\"heights\":[],\"merges\":[]}"
 
@@ -42,12 +42,10 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
 
-        // Обработка файла, полученного через Intent (Intent.ACTION_VIEW или ACTION_SEND)
         val fileUri: Uri? = intent.data
         if (fileUri != null) {
             loadExcelFromUri(fileUri)
         } else {
-            // Если запущен без файла, просто загружаем интерфейс
             webView.loadUrl("file:///android_asset/grid.html")
         }
     }
@@ -68,7 +66,6 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // Оповещаем JS, что страница полностью загрузилась
                 webView.evaluateJavascript("if(typeof onDataReady === 'function'){ onDataReady(); }", null)
             }
         }
@@ -116,21 +113,18 @@ class MainActivity : AppCompatActivity() {
         val matrixArray = JSONArray()
 
         var maxColsFound = 0
-        // Ограничение считывания до 3000 строк для предотвращения переполнения памяти
         val maxRowsToRead = Math.min(lastRowNum + 1, 3000)
 
-        // Первый проход: вычисление максимального количества колонок
         for (r in 0 until maxRowsToRead) {
             val row = sheet.getRow(r)
             if (row != null) {
                 val lastCellNum = row.lastCellNum.toInt()
                 if (lastCellNum > maxColsFound) {
-                    maxColsFound = Math.min(lastCellNum, 100) // Максимум 100 колонок
+                    maxColsFound = Math.min(lastCellNum, 100)
                 }
             }
         }
 
-        // Второй проход: формирование матрицы данных
         for (r in 0 until maxRowsToRead) {
             val row = sheet.getRow(r)
             val rowArray = JSONArray()
@@ -144,7 +138,6 @@ class MainActivity : AppCompatActivity() {
             matrixArray.put(rowArray)
         }
 
-        // Ширины колонок
         val widthsArray = JSONArray()
         for (c in 0 until maxColsFound) {
             val colWidth = sheet.getColumnWidth(c)
@@ -152,7 +145,6 @@ class MainActivity : AppCompatActivity() {
             widthsArray.put(pxWidth)
         }
 
-        // Высоты строк
         val heightsArray = JSONArray()
         for (r in 0 until maxRowsToRead) {
             val row = sheet.getRow(r)
@@ -160,7 +152,6 @@ class MainActivity : AppCompatActivity() {
             heightsArray.put(Math.max(18, Math.min(rowHeight, 100)))
         }
 
-        // Объединенные ячейки (Merges)
         val mergesArray = JSONArray()
         val numRegions = sheet.numMergedRegions
         for (i in 0 until numRegions) {
