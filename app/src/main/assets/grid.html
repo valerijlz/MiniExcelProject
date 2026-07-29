@@ -37,7 +37,7 @@
             position: absolute;
             display: none;
             z-index: 10;
-            border: 2px solid #0f62fe; /* Синяя ограничительная рамка активной ячейки */
+            border: 2px solid #0f62fe; /* Синяя рамка активной ячейки */
             background: #ffffff;
             outline: none;
             padding: 2px 6px;
@@ -60,11 +60,16 @@
     const ROW_NUM_WIDTH = 45;
     const COL_NUM_HEIGHT = 22;
 
+    // Константы пропорций Excel (1pt ≈ 1.33px, Excel col unit ≈ 8px)
+    const DEFAULT_COL_WIDTH = 80;
+    const DEFAULT_ROW_HEIGHT = 24;
+
     let matrix = [];
     let widths = [];
     let heights = [];
     let merges = [];
     let mergeLookup = {};
+    let filePath = ""; // Переменная для хранения оригинального пути файла
 
     let maxRows = 30;
     let maxCols = 10;
@@ -99,8 +104,8 @@
             matrix[r] = [];
             for (let c = 0; c < maxCols; c++) { matrix[r][c] = { v: "" }; }
         }
-        widths = Array(maxCols).fill(70);
-        heights = Array(maxRows).fill(22);
+        widths = Array(maxCols).fill(DEFAULT_COL_WIDTH);
+        heights = Array(maxRows).fill(DEFAULT_ROW_HEIGHT);
         merges = [];
         mergeLookup = {};
         draw();
@@ -121,7 +126,8 @@
             const parsed = JSON.parse(rawJson);
             matrix = parsed.matrix || [];
             merges = parsed.merges || [];
-            
+            filePath = parsed.filePath || parsed.path || ""; // Сохраняем имя/путь файла
+
             if (matrix.length > 0) {
                 maxRows = matrix.length;
                 maxCols = 0;
@@ -135,14 +141,17 @@
             let incomingWidths = parsed.widths || [];
             let incomingHeights = parsed.heights || [];
 
+            // 1. ТОЧНЫЙ РАСЧЕТ ПРОПОРЦИЙ ЯЧЕЕК
             widths = [];
             for (let c = 0; c < maxCols; c++) {
-                widths[c] = (incomingWidths[c] && incomingWidths[c] > 0) ? Math.round(incomingWidths[c]) : 70;
+                let w = incomingWidths[c];
+                widths[c] = (w && w > 0) ? Math.round(w) : DEFAULT_COL_WIDTH;
             }
 
             heights = [];
             for (let r = 0; r < maxRows; r++) {
-                heights[r] = (incomingHeights[r] && incomingHeights[r] > 0) ? Math.round(incomingHeights[r]) : 22;
+                let h = incomingHeights[r];
+                heights[r] = (h && h > 0) ? Math.round(h) : DEFAULT_ROW_HEIGHT;
             }
 
             buildMergeLookup();
@@ -210,16 +219,16 @@
     }
 
     function getCellRect(r, c) {
-        let x = 0; for (let i = 0; i < c; i++) x += (widths[i] || 70);
-        let y = 0; for (let i = 0; i < r; i++) y += (heights[i] || 22);
-        return { x: x, y: y, w: (widths[c] || 70), h: (heights[r] || 22) };
+        let x = 0; for (let i = 0; i < c; i++) x += (widths[i] || DEFAULT_COL_WIDTH);
+        let y = 0; for (let i = 0; i < r; i++) y += (heights[i] || DEFAULT_ROW_HEIGHT);
+        return { x: x, y: y, w: (widths[c] || DEFAULT_COL_WIDTH), h: (heights[r] || DEFAULT_ROW_HEIGHT) };
     }
 
     function getScrollLimits() {
         let clientW = window.innerWidth;
         let clientH = window.innerHeight;
-        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || 70);
-        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += (heights[i] || 22);
+        let totalW = 0; for (let i = 0; i < maxCols; i++) totalW += (widths[i] || DEFAULT_COL_WIDTH);
+        let totalH = 0; for (let i = 0; i < maxRows; i++) totalH += (heights[i] || DEFAULT_ROW_HEIGHT);
         let maxSX = Math.max(0, totalW - (clientW - ROW_NUM_WIDTH) / zoom + 50);
         let maxSY = Math.max(0, totalH - (clientH - COL_NUM_HEIGHT) / zoom + 50);
         return { x: maxSX, y: maxSY };
@@ -236,7 +245,7 @@
         ctx.save();
         ctx.textBaseline = 'middle';
 
-        // 1. ЗАЛИВКА ФОНОВ ЯЧЕЕК
+        // 1. ЗАЛИВКА ФОНОВ
         for (let r = 0; r < maxRows; r++) {
             for (let c = 0; c < maxCols; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -250,8 +259,8 @@
 
                 if (lookup && lookup.isMain) {
                     let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 70);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 22);
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || DEFAULT_COL_WIDTH);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || DEFAULT_ROW_HEIGHT);
                     cw = fullW * zoom; ch = fullH * zoom;
                 }
 
@@ -265,7 +274,7 @@
             }
         }
 
-        // 2. СЕТКА ТАБЛИЦЫ
+        // 2. БАЗОВАЯ СЕТКА ТАБЛИЦЫ
         ctx.save();
         ctx.strokeStyle = "#dcdcdc";
         ctx.lineWidth = 1;
@@ -281,8 +290,8 @@
 
                 if (lookup && lookup.isMain) {
                     cw = 0; ch = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || 70);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += (heights[i] || 22);
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || DEFAULT_COL_WIDTH);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += (heights[i] || DEFAULT_ROW_HEIGHT);
                 }
 
                 let cx = ROW_NUM_WIDTH + Math.round((rect.x - scrollX) * zoom) + 0.5;
@@ -297,18 +306,41 @@
         }
         ctx.restore();
 
+        // 2.1 ИНДИВИДУАЛЬНЫЕ РАМКИ ЯЧЕЕК ИЗ ДОКУМЕНТА (BORDERS)
+        ctx.save();
+        for (let r = 0; r < maxRows; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let cellData = matrix[r] ? matrix[r][c] : null;
+                if (!cellData || typeof cellData !== 'object' || !cellData.borders) continue;
+
+                let rect = getCellRect(r, c);
+                let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
+                let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
+                let cw = rect.w * zoom;
+                let ch = rect.h * zoom;
+
+                let b = cellData.borders;
+                // Отрисовка границ (top, bottom, left, right)
+                if (b.top) drawCustomBorder(cx, cy, cx + cw, cy, b.top);
+                if (b.bottom) drawCustomBorder(cx, cy + ch, cx + cw, cy + ch, b.bottom);
+                if (b.left) drawCustomBorder(cx, cy, cx, cy + ch, b.left);
+                if (b.right) drawCustomBorder(cx + cw, cy, cx + cw, cy + ch, b.right);
+            }
+        }
+        ctx.restore();
+
         // 3. РАМКИ ВОКРУГ ОБЪЕДИНЕНИЙ
         if (merges && merges.length > 0) {
             ctx.save();
-            ctx.strokeStyle = "#a0a0a0";
+            ctx.strokeStyle = "#808080";
             ctx.lineWidth = 1;
             merges.forEach(m => {
                 let startRect = getCellRect(m.sr, m.sc);
                 let cx = ROW_NUM_WIDTH + (startRect.x - scrollX) * zoom;
                 let cy = COL_NUM_HEIGHT + (startRect.y - scrollY) * zoom;
                 let fullW = 0; let fullH = 0;
-                for (let i = m.sc; i <= m.ec; i++) fullW += (widths[i] || 70);
-                for (let i = m.sr; i <= m.er; i++) fullH += (heights[i] || 22);
+                for (let i = m.sc; i <= m.ec; i++) fullW += (widths[i] || DEFAULT_COL_WIDTH);
+                for (let i = m.sr; i <= m.er; i++) fullH += (heights[i] || DEFAULT_ROW_HEIGHT);
                 let cw = fullW * zoom;
                 let ch = fullH * zoom;
 
@@ -318,6 +350,21 @@
             });
             ctx.restore();
         }
+
+        // 3.1 СИНЯЯ ОГРАНИЧИТЕЛЬНАЯ РАМКА ВСЕГО ЛИСТА (BOUNDING BOX)
+        ctx.save();
+        let totalGridW = 0; for (let i = 0; i < maxCols; i++) totalGridW += (widths[i] || DEFAULT_COL_WIDTH);
+        let totalGridH = 0; for (let i = 0; i < maxRows; i++) totalGridH += (heights[i] || DEFAULT_ROW_HEIGHT);
+
+        let sheetX = ROW_NUM_WIDTH + (0 - scrollX) * zoom;
+        let sheetY = COL_NUM_HEIGHT + (0 - scrollY) * zoom;
+        let sheetW = totalGridW * zoom;
+        let sheetH = totalGridH * zoom;
+
+        ctx.strokeStyle = "#0f62fe"; // Фирменный синий цвет границы таблицы
+        ctx.lineWidth = 2;
+        ctx.strokeRect(Math.round(sheetX) + 0.5, Math.round(sheetY) + 0.5, Math.round(sheetW), Math.round(sheetH));
+        ctx.restore();
 
         // 4. ТЕКСТ ЯЧЕЕК
         for (let r = 0; r < maxRows; r++) {
@@ -341,8 +388,8 @@
                 let isMergedMain = lookup && lookup.isMain;
                 if (isMergedMain) {
                     let fullW = 0; let fullH = 0;
-                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || 70);
-                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || 22);
+                    for (let i = lookup.m.sc; i <= lookup.m.ec; i++) fullW += (widths[i] || DEFAULT_COL_WIDTH);
+                    for (let i = lookup.m.sr; i <= lookup.m.er; i++) fullH += (heights[i] || DEFAULT_ROW_HEIGHT);
                     cw = fullW * zoom; ch = fullH * zoom;
                 }
 
@@ -412,6 +459,18 @@
         ctx.strokeStyle = "#c0c0c0"; ctx.strokeRect(0.5, 0.5, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
 
         ctx.restore();
+    }
+
+    function drawCustomBorder(x1, y1, x2, y2, style) {
+        ctx.beginPath();
+        ctx.moveTo(Math.round(x1) + 0.5, Math.round(y1) + 0.5);
+        ctx.lineTo(Math.round(x2) + 0.5, Math.round(y2) + 0.5);
+        ctx.strokeStyle = style.color || "#000000";
+        ctx.lineWidth = style.width || 1;
+        if (style.dash) ctx.setLineDash(style.dash);
+        else ctx.setLineDash([]);
+        ctx.stroke();
+        ctx.setLineDash([]);
     }
 
     function setupEvents() {
@@ -529,8 +588,8 @@
         let mergeInfo = getMergedCellInfo(r, c);
         if (mergeInfo) {
             cw = 0; ch = 0;
-            for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += (widths[i] || 70);
-            for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += (heights[i] || 22);
+            for (let i = mergeInfo.sc; i <= mergeInfo.ec; i++) cw += (widths[i] || DEFAULT_COL_WIDTH);
+            for (let i = mergeInfo.sr; i <= mergeInfo.er; i++) ch += (heights[i] || DEFAULT_ROW_HEIGHT);
             r = mergeInfo.sr;
             c = mergeInfo.sc;
             rect = getCellRect(r, c);
@@ -563,10 +622,12 @@
         sendCurrentDataToAndroid(false);
     }
 
+    // 4. ПЕРЕДАЧА ИМЕНИ И ПУТИ ФАЙЛА В АНДРОИД
     function sendCurrentDataToAndroid(isFinal) {
         try {
             if (window.AndroidBridge && typeof AndroidBridge.saveExcelData === 'function') {
                 const fullPayload = {
+                    filePath: filePath, // Передаем оригинальный путь/имя файла
                     matrix: matrix,
                     merges: merges,
                     widths: widths,
