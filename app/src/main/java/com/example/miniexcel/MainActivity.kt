@@ -3,8 +3,11 @@ package com.example.miniexcel
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -23,16 +26,15 @@ import java.io.InputStream
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var progressBar: ProgressBar
     private var cachedJsonPayload: String = "{}"
 
-    // Лаунчер для ЭКСПОРТА (Сохранения)
     private val createFileLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     ) { uri: Uri? ->
         uri?.let { saveCurrentDataToUri(it) }
     }
 
-    // 1. ДОБАВЛЕНО: Лаунчер для ОТКРЫТИЯ файла
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -44,6 +46,16 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webView)
+        progressBar = findViewById(R.id.progressBar)
+
+        findViewById<Button>(R.id.btnOpen).setOnClickListener {
+            openXlsx()
+        }
+
+        findViewById<Button>(R.id.btnSave).setOnClickListener {
+            exportToXlsx()
+        }
+
         setupWebView()
     }
 
@@ -77,17 +89,18 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript("javascript:window.loadJsonData('$escapedJson');", null)
     }
 
-    // 2. ДОБАВЛЕНО: Вызовите этот метод при нажатии на кнопку "Открыть"
     fun openXlsx() {
-        openFileLauncher.launch(arrayOf(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.ms-excel",
-            "*/*"
-        ))
+        openFileLauncher.launch(
+            arrayOf(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-excel",
+                "*/*"
+            )
+        )
     }
 
-    // 3. ДОБАВЛЕНО: Чтение и парсинг XLSX файла
     private fun readXlsxFromUri(uri: Uri) {
+        progressBar.visibility = View.VISIBLE
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val inputStream: InputStream? = contentResolver.openInputStream(uri)
@@ -99,7 +112,6 @@ class MainActivity : AppCompatActivity() {
                 val matrixArray = JSONArray()
                 val mergesArray = JSONArray()
 
-                // Чтение строк и ячеек
                 for (r in 0..sheet.lastRowNum) {
                     val row = sheet.getRow(r)
                     val rowArray = JSONArray()
@@ -113,7 +125,11 @@ class MainActivity : AppCompatActivity() {
                                     CellType.STRING -> cell.stringCellValue
                                     CellType.BOOLEAN -> cell.booleanCellValue.toString()
                                     CellType.FORMULA -> {
-                                        try { cell.stringCellValue } catch (e: Exception) { cell.numericCellValue.toString() }
+                                        try {
+                                            cell.stringCellValue
+                                        } catch (e: Exception) {
+                                            cell.numericCellValue.toString()
+                                        }
                                     }
                                     else -> ""
                                 }
@@ -127,7 +143,6 @@ class MainActivity : AppCompatActivity() {
                     matrixArray.put(r, rowArray)
                 }
 
-                // Чтение объединенных ячеек
                 for (i in 0 until sheet.numMergedRegions) {
                     val region: CellRangeAddress = sheet.getMergedRegion(i)
                     val mergeObj = JSONObject().apply {
@@ -148,6 +163,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
                     updateGridData(resultJson.toString())
                     Toast.makeText(this@MainActivity, "Файл успешно открыт", Toast.LENGTH_SHORT).show()
                 }
@@ -155,6 +171,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e("OpenError", "Ошибка открытия XLSX", e)
                 withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
                     Toast.makeText(this@MainActivity, "Ошибка открытия: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
@@ -166,6 +183,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveCurrentDataToUri(uri: Uri) {
+        progressBar.visibility = View.VISIBLE
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val outputStream = contentResolver.openOutputStream(uri, "rwt")
@@ -178,7 +196,6 @@ class MainActivity : AppCompatActivity() {
                 val matrixArray = jsonObj.optJSONArray("matrix") ?: JSONArray()
                 val mergesArray = jsonObj.optJSONArray("merges") ?: JSONArray()
 
-                // 1. Заполнение ячеек
                 for (r in 0 until matrixArray.length()) {
                     val rowArray = matrixArray.optJSONArray(r) ?: continue
                     val row = sheet.createRow(r)
@@ -198,7 +215,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 2. Восстановление объединённых областей
                 for (i in 0 until mergesArray.length()) {
                     val m = mergesArray.optJSONObject(i) ?: continue
                     val sr = m.optInt("sr", m.optInt("startRow", -1))
@@ -211,7 +227,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 3. Безопасная запись через буфер байтов
                 val bytesOut = ByteArrayOutputStream()
                 workbook.write(bytesOut)
                 workbook.close()
@@ -221,11 +236,13 @@ class MainActivity : AppCompatActivity() {
                 outputStream.close()
 
                 withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
                     Toast.makeText(this@MainActivity, "Файл успешно сохранён", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 Log.e("SaveError", "Ошибка сохранения XLSX", e)
                 withContext(Dispatchers.Main) {
+                    progressBar.visibility = View.GONE
                     Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
