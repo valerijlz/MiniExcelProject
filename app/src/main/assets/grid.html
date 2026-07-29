@@ -192,7 +192,6 @@
             for (let r = 0; r < maxRows; r++) {
                 for (let c = 0; c < maxCols; c++) {
                     let lookup = mergeLookup[`${r}_${c}`];
-                    // Пропускаем дочерние ячейки объединенной области
                     if (lookup && lookup.isChild) continue;
 
                     let cellData = matrix[r] ? matrix[r][c] : null;
@@ -202,7 +201,6 @@
                     let cw = rect.w;
                     let ch = rect.h;
 
-                    // Если это главная ячейка объединения, вычисляем внешние габариты
                     if (lookup && lookup.isMain) {
                         cw = 0; ch = 0;
                         for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || DEFAULT_COL_WIDTH);
@@ -258,7 +256,6 @@
                     ctx.font = `${Math.max(9, Math.round(11 * zoom))}px Arial`;
                     ctx.textBaseline = "middle";
 
-                    // Строгая обрезка текста по габаритам ячейки (одиночной или объединенной)
                     ctx.beginPath();
                     let clipX = Math.max(ROW_NUM_WIDTH, cx);
                     let clipY = Math.max(COL_NUM_HEIGHT, cy);
@@ -288,7 +285,6 @@
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
 
-            // Буквы колонок (A, B, C...)
             let hX = ROW_NUM_WIDTH - (scrollX * zoom);
             for (let c = 0; c < maxCols; c++) {
                 let w = (widths[c] || DEFAULT_COL_WIDTH) * zoom;
@@ -303,7 +299,6 @@
                 hX += w;
             }
 
-            // Номера строк (1, 2, 3...)
             let hY = COL_NUM_HEIGHT - (scrollY * zoom);
             for (let r = 0; r < maxRows; r++) {
                 let h = (heights[r] || DEFAULT_ROW_HEIGHT) * zoom;
@@ -317,7 +312,6 @@
                 hY += h;
             }
 
-            // Левый верхний угол
             ctx.fillStyle = '#e0e0e0';
             ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
             ctx.strokeRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
