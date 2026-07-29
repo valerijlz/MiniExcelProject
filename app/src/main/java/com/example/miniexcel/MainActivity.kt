@@ -20,8 +20,8 @@ import org.apache.poi.ss.util.CellRangeAddress
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.io.OutputStream
 
 class MainActivity : AppCompatActivity() {
 
@@ -103,59 +103,61 @@ class MainActivity : AppCompatActivity() {
         progressBar.visibility = View.VISIBLE
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val inputStream: InputStream? = contentResolver.openInputStream(uri)
+                val inputStream: InputStream = contentResolver.openInputStream(uri)
                     ?: throw Exception("Не удалось открыть файл")
 
-                val workbook = XSSFWorkbook(inputStream)
-                val sheet = workbook.getSheetAt(0) ?: throw Exception("Лист не найден")
+                val (matrixArray, mergesArray) = inputStream.use { stream ->
+                    val workbook = XSSFWorkbook(stream)
+                    val sheet = workbook.getSheetAt(0) ?: throw Exception("Лист не найден")
 
-                val matrixArray = JSONArray()
-                val mergesArray = JSONArray()
+                    val matrix = JSONArray()
+                    val merges = JSONArray()
 
-                for (r in 0..sheet.lastRowNum) {
-                    val row = sheet.getRow(r)
-                    val rowArray = JSONArray()
-                    if (row != null) {
-                        for (c in 0 until row.lastCellNum) {
-                            val cell = row.getCell(c)
-                            if (cell != null) {
-                                val cellObj = JSONObject()
-                                val valStr = when (cell.cellType) {
-                                    CellType.NUMERIC -> cell.numericCellValue.toString().removeSuffix(".0")
-                                    CellType.STRING -> cell.stringCellValue
-                                    CellType.BOOLEAN -> cell.booleanCellValue.toString()
-                                    CellType.FORMULA -> {
-                                        try {
-                                            cell.stringCellValue
-                                        } catch (e: Exception) {
-                                            cell.numericCellValue.toString()
+                    for (r in 0..sheet.lastRowNum) {
+                        val row = sheet.getRow(r)
+                        val rowArray = JSONArray()
+                        if (row != null) {
+                            for (c in 0 until row.lastCellNum) {
+                                val cell = row.getCell(c)
+                                if (cell != null) {
+                                    val cellObj = JSONObject()
+                                    val valStr = when (cell.cellType) {
+                                        CellType.NUMERIC -> cell.numericCellValue.toString().removeSuffix(".0")
+                                        CellType.STRING -> cell.stringCellValue
+                                        CellType.BOOLEAN -> cell.booleanCellValue.toString()
+                                        CellType.FORMULA -> {
+                                            try {
+                                                cell.stringCellValue
+                                            } catch (e: Exception) {
+                                                cell.numericCellValue.toString()
+                                            }
                                         }
+                                        else -> ""
                                     }
-                                    else -> ""
+                                    cellObj.put("v", valStr)
+                                    rowArray.put(c, cellObj)
+                                } else {
+                                    rowArray.put(c, JSONObject.NULL)
                                 }
-                                cellObj.put("v", valStr)
-                                rowArray.put(c, cellObj)
-                            } else {
-                                rowArray.put(c, JSONObject.NULL)
                             }
                         }
+                        matrix.put(r, rowArray)
                     }
-                    matrixArray.put(r, rowArray)
-                }
 
-                for (i in 0 until sheet.numMergedRegions) {
-                    val region: CellRangeAddress = sheet.getMergedRegion(i)
-                    val mergeObj = JSONObject().apply {
-                        put("sr", region.firstRow)
-                        put("sc", region.firstColumn)
-                        put("er", region.lastRow)
-                        put("ec", region.lastColumn)
+                    for (i in 0 until sheet.numMergedRegions) {
+                        val region: CellRangeAddress = sheet.getMergedRegion(i)
+                        val mergeObj = JSONObject().apply {
+                            put("sr", region.firstRow)
+                            put("sc", region.firstColumn)
+                            put("er", region.lastRow)
+                            put("ec", region.lastColumn)
+                        }
+                        merges.put(mergeObj)
                     }
-                    mergesArray.put(mergeObj)
-                }
 
-                workbook.close()
-                inputStream.close()
+                    workbook.close()
+                    Pair(matrix, merges)
+                }
 
                 val resultJson = JSONObject().apply {
                     put("matrix", matrixArray)
@@ -186,54 +188,51 @@ class MainActivity : AppCompatActivity() {
         progressBar.visibility = View.VISIBLE
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val outputStream = contentResolver.openOutputStream(uri, "rwt")
+                val outputStream: OutputStream = contentResolver.openOutputStream(uri, "rwt")
                     ?: throw Exception("Не удалось открыть поток для записи")
 
-                val workbook = XSSFWorkbook()
-                val sheet = workbook.createSheet("Sheet1")
+                outputStream.use { stream ->
+                    val workbook = XSSFWorkbook()
+                    val sheet = workbook.createSheet("Sheet1")
 
-                val jsonObj = JSONObject(cachedJsonPayload)
-                val matrixArray = jsonObj.optJSONArray("matrix") ?: JSONArray()
-                val mergesArray = jsonObj.optJSONArray("merges") ?: JSONArray()
+                    val jsonObj = JSONObject(cachedJsonPayload)
+                    val matrixArray = jsonObj.optJSONArray("matrix") ?: JSONArray()
+                    val mergesArray = jsonObj.optJSONArray("merges") ?: JSONArray()
 
-                for (r in 0 until matrixArray.length()) {
-                    val rowArray = matrixArray.optJSONArray(r) ?: continue
-                    val row = sheet.createRow(r)
-                    for (c in 0 until rowArray.length()) {
-                        val cellData = rowArray.opt(c)
-                        var textValue = ""
-                        if (cellData is JSONObject) {
-                            textValue = cellData.optString("v", cellData.optString("value", ""))
-                        } else if (cellData != null && cellData != JSONObject.NULL) {
-                            textValue = cellData.toString()
-                        }
+                    for (r in 0 until matrixArray.length()) {
+                        val rowArray = matrixArray.optJSONArray(r) ?: continue
+                        val row = sheet.createRow(r)
+                        for (c in 0 until rowArray.length()) {
+                            val cellData = rowArray.opt(c)
+                            var textValue = ""
+                            if (cellData is JSONObject) {
+                                textValue = cellData.optString("v", cellData.optString("value", ""))
+                            } else if (cellData != null && cellData != JSONObject.NULL) {
+                                textValue = cellData.toString()
+                            }
 
-                        if (textValue.isNotEmpty()) {
-                            val cell = row.createCell(c)
-                            cell.setCellValue(textValue)
+                            if (textValue.isNotEmpty()) {
+                                val cell = row.createCell(c)
+                                cell.setCellValue(textValue)
+                            }
                         }
                     }
-                }
 
-                for (i in 0 until mergesArray.length()) {
-                    val m = mergesArray.optJSONObject(i) ?: continue
-                    val sr = m.optInt("sr", m.optInt("startRow", -1))
-                    val sc = m.optInt("sc", m.optInt("startCol", -1))
-                    val er = m.optInt("er", m.optInt("endRow", -1))
-                    val ec = m.optInt("ec", m.optInt("endCol", -1))
+                    for (i in 0 until mergesArray.length()) {
+                        val m = mergesArray.optJSONObject(i) ?: continue
+                        val sr = m.optInt("sr", m.optInt("startRow", -1))
+                        val sc = m.optInt("sc", m.optInt("startCol", -1))
+                        val er = m.optInt("er", m.optInt("endRow", -1))
+                        val ec = m.optInt("ec", m.optInt("endCol", -1))
 
-                    if (sr >= 0 && sc >= 0 && er >= sr && ec >= sc) {
-                        sheet.addMergedRegion(CellRangeAddress(sr, er, sc, ec))
+                        if (sr >= 0 && sc >= 0 && er >= sr && ec >= sc) {
+                            sheet.addMergedRegion(CellRangeAddress(sr, er, sc, ec))
+                        }
                     }
+
+                    workbook.write(stream)
+                    workbook.close()
                 }
-
-                val bytesOut = ByteArrayOutputStream()
-                workbook.write(bytesOut)
-                workbook.close()
-
-                outputStream.write(bytesOut.toByteArray())
-                outputStream.flush()
-                outputStream.close()
 
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
