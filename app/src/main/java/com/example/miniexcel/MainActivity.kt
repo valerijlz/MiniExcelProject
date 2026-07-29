@@ -5,7 +5,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.ProgressBar
@@ -46,6 +48,7 @@ class MainActivity : AppCompatActivity() {
         if (fileUri != null) {
             loadExcelFromUri(fileUri)
         } else {
+            // Если запустили просто так без файла — загружаем пустую сетку
             webView.loadUrl("file:///android_asset/grid.html")
         }
     }
@@ -63,9 +66,18 @@ class MainActivity : AppCompatActivity() {
 
         webView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
 
+        // Перехватываем ошибки JavaScript в Android Logcat (тег WebConsole)
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                Log.d("WebConsole", "${consoleMessage?.message()} -- Line ${consoleMessage?.lineNumber()} of ${consoleMessage?.sourceId()}")
+                return true
+            }
+        }
+
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                // Безопасный вызов инициализации данных в JS после загрузки HTML
                 webView.evaluateJavascript("if(typeof onDataReady === 'function'){ onDataReady(); }", null)
             }
         }
