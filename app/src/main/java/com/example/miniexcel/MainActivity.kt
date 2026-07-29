@@ -1,21 +1,15 @@
-package com.example.miniexcel
+package com.example.excelviewer // Замените на ваш package name
 
-import android.os.Build
-import android.app.Activity
-import android.content.Intent
+import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
-import android.webkit.ConsoleMessage
+import android.view.View
 import android.webkit.JavascriptInterface
-import android.webkit.WebChromeClient
-import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
+import android.widget.ProgressBar
 import android.widget.Toast
-import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -23,263 +17,213 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.poi.openxml4j.util.ZipSecureFile
 import org.apache.poi.ss.usermodel.DateUtil
+import org.apache.poi.ss.usermodel.Workbook
 import org.apache.poi.ss.usermodel.WorkbookFactory
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
+import java.io.InputStream
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var tableWebView: WebView
-    private lateinit var openButton: Button
-    private lateinit var saveButton: Button
+    private lateinit var webView: WebView
+    private lateinit var progressBar: ProgressBar
     
-    private var currentFileUri: Uri? = null
-    private var workingFile: File? = null
-    
-    private val emptyPayload: String
-        get() {
-            val rowsCount = 30
-            val colsCount = 15
-            
-            val matrix = JSONArray()
-            for (r in 0 until rowsCount) {
-                val rowArray = JSONArray()
-                for (c in 0 until colsCount) {
-                    val cellObj = JSONObject()
-                    cellObj.put("v", "")
-                    rowArray.put(cellObj)
-                }
-                matrix.put(rowArray)
-            }
-            
-            val widths = JSONArray()
-            for (c in 0 until colsCount) widths.put(80)
-            
-            val heights = JSONArray()
-            for (r in 0 until rowsCount) heights.put(25)
-
-            val jsonRoot = JSONObject().apply {
-                put("matrix", matrix)
-                put("widths", widths)
-                put("heights", heights)
-                put("merges", JSONArray())
-            }
-            return jsonRoot.toString()
-        }
-
     @Volatile
-    private var cachedJsonPayload: String = emptyPayload
+    private var cachedJsonPayload: String = "{\"matrix\":[],\"widths\":[],\"heights\":[],\"merges\":[]}"
 
-    private lateinit var openFileLauncher: ActivityResultLauncher<Intent>
-    private lateinit var saveFileLauncher: ActivityResultLauncher<Intent>
-
+    @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        ZipSecureFile.setMinInflateRatio(0.005)
-
-        openButton = findViewById(R.id.openButton)
-        saveButton = findViewById(R.id.saveButton)
-        tableWebView = findViewById(R.id.tableWebView)
+        webView = findViewById(R.id.webView)
+        progressBar = findViewById(R.id.progressBar)
 
         setupWebView()
-        initFileLaunchers()
 
-        openButton.setOnClickListener {
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "*/*"
-                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    "application/vnd.ms-excel"
-                ))
-            }
-            openFileLauncher.launch(intent)
-        }
-
-        saveButton.setOnClickListener {
-            if (currentFileUri == null) {
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    putExtra(Intent.EXTRA_TITLE, "edited_sheet.xlsx")
-                }
-                saveFileLauncher.launch(intent)
-            } else {
-                triggerJSExportAndSave()
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            WebView.setWebContentsDebuggingEnabled(true)
+        // Обработка файла, полученного через Intent (Intent.ACTION_VIEW или ACTION_SEND)
+        val fileUri: Uri? = intent.data
+        if (fileUri != null) {
+            loadExcelFromUri(fileUri)
+        } else {
+            // Если запущен без файла, просто загружаем интерфейс
+            webView.loadUrl("file:///android_asset/grid.html")
         }
     }
 
-    private fun triggerJSExportAndSave() {
-        tableWebView.post { 
-            tableWebView.evaluateJavascript("exportExcelToAndroid();", null) 
-        }
-    }
-
+    @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
-        tableWebView.apply {
-            setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
-            clearCache(true)
-            clearHistory()
-            clearFormData()
-            
-            settings.apply {
-                javaScriptEnabled = true
-                cacheMode = WebSettings.LOAD_NO_CACHE
-                textZoom = 100
-                useWideViewPort = true
-                loadWithOverviewMode = true
-                setSupportZoom(false)
-                builtInZoomControls = false
-                domStorageEnabled = true
-                allowFileAccess = true
-            }
-            
-            addJavascriptInterface(AndroidBridge(), "AndroidBridge")
-            webViewClient = WebViewClient()
-            webChromeClient = object : WebChromeClient() {
-                override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-                    Log.d("WebViewJS", "${consoleMessage.message()} -- Line ${consoleMessage.lineNumber()} of ${consoleMessage.sourceId()}")
-                    return true
-                }
-            }
-            loadUrl("file:///android_asset/grid.html")
-        }
-    }
-
-    private fun initFileLaunchers() {
-        openFileLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                result.data?.data?.let { uri ->
-                    currentFileUri = uri
-                    createWorkingCopyAndParse(uri)
-                }
-            }
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            useWideViewPort = true
+            loadWithOverviewMode = true
+            allowFileAccess = true
+            allowContentAccess = true
         }
 
-        saveFileLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                result.data?.data?.let { uri ->
-                    currentFileUri = uri
-                    triggerJSExportAndSave()
-                }
+        webView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
+
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                // Оповещаем JS, что страница полностью загрузилась
+                webView.evaluateJavascript("if(typeof onDataReady === 'function'){ onDataReady(); }", null)
             }
         }
     }
 
-    private fun createWorkingCopyAndParse(uri: Uri) {
+    private fun loadExcelFromUri(uri: Uri) {
+        progressBar.visibility = View.VISIBLE
+
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val inputStream = contentResolver.openInputStream(uri)
-                    ?: throw IllegalArgumentException("Не удалось получить доступ к файлу (поток равен null)")
+                ZipSecureFile.setMinInflateRatio(0.0001)
 
-                val tempFile = File(cacheDir, "working_excel_file.tmp")
-                FileOutputStream(tempFile).use { output ->
-                    inputStream.copyTo(output)
-                }
-                workingFile = tempFile
+                val inputStream: InputStream? = contentResolver.openInputStream(uri)
+                if (inputStream != null) {
+                    val workbook = WorkbookFactory.create(inputStream)
+                    val jsonResult = parseWorkbookToJson(workbook)
+                    workbook.close()
+                    inputStream.close()
 
-                val jsonResult = parseExcelFile(tempFile)
-                cachedJsonPayload = jsonResult
+                    cachedJsonPayload = jsonResult
 
-                withContext(Dispatchers.Main) {
-                    tableWebView.loadUrl("file:///android_asset/grid.html")
-                    Toast.makeText(this@MainActivity, "Файл успешно открыт", Toast.LENGTH_SHORT).show()
+                    withContext(Dispatchers.Main) {
+                        progressBar.visibility = View.GONE
+                        webView.loadUrl("file:///android_asset/grid.html")
+                    }
+                } else {
+                    showError("Не удалось открыть файл")
                 }
             } catch (e: Exception) {
-                Log.e("ExcelOpen", "Error opening file", e)
-                val errorDetails = e.localizedMessage ?: e.javaClass.simpleName
+                Log.e("MainActivity", "Ошибка при обработке Excel: ${e.message}", e)
+                showError("Ошибка чтения файла: ${e.localizedMessage}")
+            } finally {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Ошибка открытия: $errorDetails", Toast.LENGTH_LONG).show()
+                    progressBar.visibility = View.GONE
                 }
+                System.gc()
             }
         }
     }
 
-    private fun parseExcelFile(file: File): String {
-        WorkbookFactory.create(file).use { workbook ->
-            val sheet = workbook.getSheetAt(0) ?: return emptyPayload
-            val matrix = JSONArray()
-            val widths = JSONArray()
-            val heights = JSONArray()
-            val merges = JSONArray()
+    private fun parseWorkbookToJson(workbook: Workbook): String {
+        val sheet = workbook.getSheetAt(0) ?: return cachedJsonPayload
 
-            val maxRow = sheet.lastRowNum
-            var maxCol = 0
+        val lastRowNum = sheet.lastRowNum
+        val matrixArray = JSONArray()
 
-            for (r in 0..maxRow) {
-                val row = sheet.getRow(r)
-                if (row != null && row.lastCellNum > maxCol) {
-                    maxCol = row.lastCellNum.toInt()
+        var maxColsFound = 0
+        // Ограничение считывания до 3000 строк для предотвращения переполнения памяти
+        val maxRowsToRead = Math.min(lastRowNum + 1, 3000)
+
+        // Первый проход: вычисление максимального количества колонок
+        for (r in 0 until maxRowsToRead) {
+            val row = sheet.getRow(r)
+            if (row != null) {
+                val lastCellNum = row.lastCellNum.toInt()
+                if (lastCellNum > maxColsFound) {
+                    maxColsFound = Math.min(lastCellNum, 100) // Максимум 100 колонок
                 }
             }
-            maxCol = Math.max(maxCol, 15)
-            val totalRows = Math.max(maxRow, 30)
+        }
 
-            for (r in 0..totalRows) {
-                val row = sheet.getRow(r)
-                val rowArray = JSONArray()
-                val h = if (row != null && row.height > 0) (row.height / 20 * 1.33).toInt() else 25
-                
-                if (r == 0) {
-                    for (c in 0 until maxCol) {
-                        val w = sheet.getColumnWidth(c)
-                        widths.put(if (w > 0) w / 37 else 80)
-                    }
-                }
-                heights.put(h)
+        // Второй проход: формирование матрицы данных
+        for (r in 0 until maxRowsToRead) {
+            val row = sheet.getRow(r)
+            val rowArray = JSONArray()
 
-                for (c in 0 until maxCol) {
-                    val cell = row?.getCell(c)
-                    val cellObj = JSONObject()
-                    var cellVal = ""
-                    if (cell != null) {
-                        cellVal = when (cell.cellType) {
-                            org.apache.poi.ss.usermodel.CellType.STRING -> cell.stringCellValue
-                            org.apache.poi.ss.usermodel.CellType.NUMERIC -> {
-                                if (DateUtil.isCellDateFormatted(cell)) {
-                                    cell.dateCellValue.toString()
-                                } else {
-                                    val num = cell.numericCellValue
-                                    if (num == num.toInt().toDouble()) num.toInt().toString() else num.toString()
-                                }
-                            }
-                            org.apache.poi.ss.usermodel.CellType.BOOLEAN -> cell.booleanCellValue.toString()
-                            org.apache.poi.ss.usermodel.CellType.FORMULA -> cell.cellFormula
-                            else -> ""
-                        }
-                    }
-                    cellObj.put("v", cellVal)
-                    rowArray.put(cellObj)
-                }
-                matrix.put(rowArray)
+            for (c in 0 until maxColsFound) {
+                val cell = row?.getCell(c)
+                val cellObj = JSONObject()
+                cellObj.put("v", getCellValueAsString(cell))
+                rowArray.put(cellObj)
             }
+            matrixArray.put(rowArray)
+        }
 
-            for (i in 0 until sheet.numMergedRegions) {
-                val region = sheet.getMergedRegion(i)
-                val mObj = JSONObject().apply {
+        // Ширины колонок
+        val widthsArray = JSONArray()
+        for (c in 0 until maxColsFound) {
+            val colWidth = sheet.getColumnWidth(c)
+            val pxWidth = Math.max(60, Math.min((colWidth / 256) * 8, 300))
+            widthsArray.put(pxWidth)
+        }
+
+        // Высоты строк
+        val heightsArray = JSONArray()
+        for (r in 0 until maxRowsToRead) {
+            val row = sheet.getRow(r)
+            val rowHeight = row?.heightInPoints?.toInt() ?: 20
+            heightsArray.put(Math.max(18, Math.min(rowHeight, 100)))
+        }
+
+        // Объединенные ячейки (Merges)
+        val mergesArray = JSONArray()
+        val numRegions = sheet.numMergedRegions
+        for (i in 0 until numRegions) {
+            val region = sheet.getMergedRegion(i)
+            if (region.firstRow < maxRowsToRead) {
+                val mergeObj = JSONObject().apply {
                     put("sr", region.firstRow)
                     put("sc", region.firstColumn)
-                    put("er", region.lastRow)
-                    put("ec", region.lastColumn)
+                    put("er", Math.min(region.lastRow, maxRowsToRead - 1))
+                    put("ec", Math.min(region.lastColumn, maxColsFound - 1))
                 }
-                merges.put(mObj)
+                mergesArray.put(mergeObj)
             }
+        }
 
-            return JSONObject().apply {
-                put("matrix", matrix)
-                put("widths", widths)
-                put("heights", heights)
-                put("merges", merges)
-            }.toString()
+        return JSONObject().apply {
+            put("matrix", matrixArray)
+            put("widths", widthsArray)
+            put("heights", heightsArray)
+            put("merges", mergesArray)
+        }.toString()
+    }
+
+    private fun getCellValueAsString(cell: org.apache.poi.ss.usermodel.Cell?): String {
+        if (cell == null) return ""
+        return try {
+            when (cell.cellType) {
+                org.apache.poi.ss.usermodel.CellType.STRING -> cell.stringCellValue ?: ""
+                org.apache.poi.ss.usermodel.CellType.NUMERIC -> {
+                    if (DateUtil.isCellDateFormatted(cell)) {
+                        cell.dateCellValue?.toString() ?: ""
+                    } else {
+                        val num = cell.numericCellValue
+                        if (num == Math.floor(num)) {
+                            num.toLong().toString()
+                        } else {
+                            num.toString()
+                        }
+                    }
+                }
+                org.apache.poi.ss.usermodel.CellType.BOOLEAN -> cell.booleanCellValue.toString()
+                org.apache.poi.ss.usermodel.CellType.FORMULA -> {
+                    try {
+                        cell.stringCellValue
+                    } catch (e: Exception) {
+                        try {
+                            cell.numericCellValue.toString()
+                        } catch (e2: Exception) {
+                            ""
+                        }
+                    }
+                }
+                else -> ""
+            }
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    private suspend fun showError(message: String) {
+        withContext(Dispatchers.Main) {
+            progressBar.visibility = View.GONE
+            Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -287,58 +231,6 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun getExcelData(): String {
             return cachedJsonPayload
-        }
-
-        @JavascriptInterface
-        fun saveExcelData(jsonPayload: String) {
-            cachedJsonPayload = jsonPayload
-            val targetUri = currentFileUri ?: return
-            val fileToProcess = workingFile ?: return
-
-            lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val jsonRoot = JSONObject(jsonPayload)
-                    val matrix = jsonRoot.optJSONArray("matrix") ?: return@launch
-                    val isFinalSave = jsonRoot.optBoolean("isFinalSave", false)
-
-                    WorkbookFactory.create(fileToProcess).use { workbook ->
-                        val sheet = workbook.getSheetAt(0) ?: return@use
-                        for (r in 0 until matrix.length()) {
-                            val rowArray = matrix.optJSONArray(r) ?: continue
-                            val row = sheet.getRow(r) ?: sheet.createRow(r)
-                            for (c in 0 until rowArray.length()) {
-                                val cellObj = rowArray.optJSONObject(c) ?: continue
-                                val v = cellObj.optString("v", "")
-                                val cell = row.getCell(c) ?: row.createCell(c)
-                                if (v.toDoubleOrNull() != null) {
-                                    cell.setCellValue(v.toDouble())
-                                } else {
-                                    cell.setCellValue(v)
-                                }
-                            }
-                        }
-                        FileOutputStream(fileToProcess).use { fos ->
-                            workbook.write(fos)
-                        }
-                    }
-
-                    if (isFinalSave) {
-                        contentResolver.openOutputStream(targetUri)?.use { outputStream ->
-                            fileToProcess.inputStream().use { inputStream ->
-                                inputStream.copyTo(outputStream)
-                            }
-                        }
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(this@MainActivity, "Файл успешно сохранен", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("ExcelSave", "Error saving file", e)
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
         }
     }
 }
