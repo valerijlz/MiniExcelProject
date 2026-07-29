@@ -38,8 +38,8 @@
     let merges = [];
     let mergeLookup = {};
 
-    let maxRows = 0;
-    let maxCols = 0;
+    let maxRows = 50; // Базовые размеры для отображения сетки по умолчанию
+    let maxCols = 20;
 
     let scrollX = 0;
     let scrollY = 0;
@@ -60,10 +60,11 @@
         });
         setupTouchEvents();
         
-        // Автоматический запуск, если Bridge доступен
-        if (window.AndroidBridge && typeof window.AndroidBridge.getExcelData === 'function') {
-            loadData();
-        }
+        // Сразу рисуем базовую пустую сетку
+        draw();
+
+        // Пробуем загрузить данные, если AndroidBridge уже доступен
+        loadData();
     }
 
     function onDataReady() {
@@ -72,7 +73,9 @@
 
     function loadData() {
         try {
-            if (!window.AndroidBridge) return;
+            if (!window.AndroidBridge || typeof window.AndroidBridge.getExcelData !== 'function') {
+                return;
+            }
             const rawJson = window.AndroidBridge.getExcelData();
             if (!rawJson) return;
 
@@ -82,11 +85,13 @@
             heights = parsed.heights || [];
             merges = parsed.merges || [];
 
-            maxRows = matrix.length;
-            maxCols = 0;
-            for (let r = 0; r < maxRows; r++) {
-                if (matrix[r] && matrix[r].length > maxCols) {
-                    maxCols = matrix[r].length;
+            if (matrix.length > 0) {
+                maxRows = matrix.length;
+                maxCols = 0;
+                for (let r = 0; r < maxRows; r++) {
+                    if (matrix[r] && matrix[r].length > maxCols) {
+                        maxCols = matrix[r].length;
+                    }
                 }
             }
 
@@ -150,12 +155,10 @@
         let clientH = window.innerHeight;
 
         ctx.clearRect(0, 0, clientW, clientH);
-        if (maxRows === 0) return;
 
         ctx.save();
         ctx.textBaseline = 'middle';
 
-        // ВИРТУАЛИЗАЦИЯ: Определение видимых диапазонов для отсечения лишнего рендера
         let visibleStartCol = 0, visibleEndCol = maxCols - 1;
         let visibleStartRow = 0, visibleEndRow = maxRows - 1;
 
@@ -177,7 +180,7 @@
             currentY += (heights[r] || 25);
         }
 
-        // 1. Отрисовка основной сетки ячеек
+        // 1. Отрисовка основной сетки
         for (let r = visibleStartRow; r <= visibleEndRow; r++) {
             for (let c = visibleStartCol; c <= visibleEndCol; c++) {
                 let lookup = mergeLookup[`${r}_${c}`];
@@ -196,17 +199,14 @@
                     cw = fullW * zoom; ch = fullH * zoom;
                 }
 
-                // Фон ячейки
-                let cellData = matrix[r] ? matrix[r][c] : null;
                 ctx.fillStyle = "#ffffff";
                 ctx.fillRect(Math.floor(cx), Math.floor(cy), Math.ceil(cw), Math.ceil(ch));
 
-                // Границы ячейки
                 ctx.strokeStyle = "#e0e0e0";
                 ctx.lineWidth = 1;
                 ctx.strokeRect(Math.floor(cx) + 0.5, Math.floor(cy) + 0.5, Math.ceil(cw), Math.ceil(ch));
 
-                // Текст ячейки
+                let cellData = matrix[r] ? matrix[r][c] : null;
                 let text = "";
                 if (cellData !== null && cellData !== undefined) {
                     text = (typeof cellData === 'object') ? String(cellData.v ?? "") : String(cellData);
@@ -263,7 +263,7 @@
             ctx.fillText(r + 1, ROW_NUM_WIDTH / 2, ry + rh / 2);
         }
 
-        // Угловая залушка
+        // Угловой квадрат
         ctx.fillStyle = "#e9ecef";
         ctx.fillRect(0, 0, ROW_NUM_WIDTH, COL_NUM_HEIGHT);
         ctx.strokeStyle = "#c0c0c0";
