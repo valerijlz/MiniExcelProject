@@ -4,7 +4,6 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- Панель управления с кнопками -->
     <LinearLayout
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
@@ -30,7 +29,6 @@
             android:text="Сохранить" />
     </LinearLayout>
 
-    <!-- Основная область с сеткой и индикатором загрузки -->
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
