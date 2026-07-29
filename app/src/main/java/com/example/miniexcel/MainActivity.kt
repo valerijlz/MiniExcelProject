@@ -1,6 +1,7 @@
 package com.example.miniexcel
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -10,8 +11,10 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.example.miniexcel.R
@@ -30,9 +33,33 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
+    private lateinit var btnOpen: Button
+    private lateinit var btnSave: Button
 
     @Volatile
     private var cachedJsonPayload: String = "{\"matrix\":[],\"widths\":[],\"heights\":[],\"merges\":[]}"
+
+    // Лаунчер для открытия файла с устройства
+    private val openFileLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            result.data?.data?.let { uri ->
+                loadExcelFromUri(uri)
+            }
+        }
+    }
+
+    // Лаунчер для сохранения/экспорта файла
+    private val saveFileLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            result.data?.data?.let { uri ->
+                Toast.makeText(this, "Файл успешно сохранён", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,15 +68,40 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webView)
         progressBar = findViewById(R.id.progressBar)
+        btnOpen = findViewById(R.id.btnOpen)
+        btnSave = findViewById(R.id.btnSave)
 
+        setupButtons()
         setupWebView()
 
         val fileUri: Uri? = intent.data
         if (fileUri != null) {
             loadExcelFromUri(fileUri)
         } else {
-            // Если запустили просто так без файла — загружаем пустую сетку
             webView.loadUrl("file:///android_asset/grid.html")
+        }
+    }
+
+    private fun setupButtons() {
+        btnOpen.setOnClickListener {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/vnd.ms-excel"
+                ))
+            }
+            openFileLauncher.launch(intent)
+        }
+
+        btnSave.setOnClickListener {
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                putExtra(Intent.EXTRA_TITLE, "export.xlsx")
+            }
+            saveFileLauncher.launch(intent)
         }
     }
 
@@ -66,7 +118,6 @@ class MainActivity : AppCompatActivity() {
 
         webView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
 
-        // Перехватываем ошибки JavaScript в Android Logcat (тег WebConsole)
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                 Log.d("WebConsole", "${consoleMessage?.message()} -- Line ${consoleMessage?.lineNumber()} of ${consoleMessage?.sourceId()}")
@@ -77,7 +128,6 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // Безопасный вызов инициализации данных в JS после загрузки HTML
                 webView.evaluateJavascript("if(typeof onDataReady === 'function'){ onDataReady(); }", null)
             }
         }
