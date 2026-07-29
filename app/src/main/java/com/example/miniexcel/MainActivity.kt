@@ -15,8 +15,11 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.apache.poi.ss.usermodel.BorderStyle
 import org.apache.poi.ss.usermodel.CellType
+import org.apache.poi.ss.usermodel.FillPatternType
 import org.apache.poi.ss.util.CellRangeAddress
+import org.apache.poi.xssf.usermodel.XSSFColor
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.json.JSONArray
 import org.json.JSONObject
@@ -48,13 +51,8 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         progressBar = findViewById(R.id.progressBar)
 
-        findViewById<Button>(R.id.btnOpen).setOnClickListener {
-            openXlsx()
-        }
-
-        findViewById<Button>(R.id.btnSave).setOnClickListener {
-            exportToXlsx()
-        }
+        findViewById<Button>(R.id.btnOpen).setOnClickListener { openXlsx() }
+        findViewById<Button>(R.id.btnSave).setOnClickListener { exportToXlsx() }
 
         setupWebView()
     }
@@ -79,7 +77,7 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
-    fun updateGridData(jsonPayload: String) {
+    private fun updateGridData(jsonPayload: String) {
         this.cachedJsonPayload = jsonPayload
         sendJsonToWebView(jsonPayload)
     }
@@ -106,67 +104,102 @@ class MainActivity : AppCompatActivity() {
                 val inputStream: InputStream = contentResolver.openInputStream(uri)
                     ?: throw Exception("Не удалось открыть файл")
 
-                val (matrixArray, mergesArray) = inputStream.use { stream ->
+                val resultPayload = inputStream.use { stream ->
                     val workbook = XSSFWorkbook(stream)
                     val sheet = workbook.getSheetAt(0) ?: throw Exception("Лист не найден")
 
-                    val matrix = JSONArray()
-                    val merges = JSONArray()
+                    val matrixArray = JSONArray()
+                    val mergesArray = JSONArray()
+                    val widthsObj = JSONObject()
+                    val heightsObj = JSONObject()
+
+                    var maxCol = 0
 
                     for (r in 0..sheet.lastRowNum) {
                         val row = sheet.getRow(r)
                         val rowArray = JSONArray()
                         if (row != null) {
+                            heightsObj.put(r.toString(), (row.heightInPoints * 1.33).toInt())
+                            if (row.lastCellNum > maxCol) maxCol = row.lastCellNum.toInt()
+
                             for (c in 0 until row.lastCellNum) {
                                 val cell = row.getCell(c)
                                 if (cell != null) {
                                     val cellObj = JSONObject()
+
                                     val valStr = when (cell.cellType) {
                                         CellType.NUMERIC -> cell.numericCellValue.toString().removeSuffix(".0")
                                         CellType.STRING -> cell.stringCellValue
                                         CellType.BOOLEAN -> cell.booleanCellValue.toString()
                                         CellType.FORMULA -> {
-                                            try {
-                                                cell.stringCellValue
-                                            } catch (e: Exception) {
-                                                cell.numericCellValue.toString()
-                                            }
+                                            try { cell.stringCellValue } catch (e: Exception) { cell.numericCellValue.toString() }
                                         }
                                         else -> ""
                                     }
                                     cellObj.put("v", valStr)
+
+                                    val style = cell.cellStyle
+                                    if (style != null) {
+                                        if (style.fillPattern == FillPatternType.SOLID_FOREGROUND) {
+                                            val fillClr = style.fillForegroundColorColor as? XSSFColor
+                                            fillClr?.rgb?.let { rgb ->
+                                                cellObj.put("bg", String.format("#%02X%02X%02X", rgb[0], rgb[1], rgb[2]))
+                                            }
+                                        }
+
+                                        val borderObj = JSONObject()
+                                        if (style.borderTop != BorderStyle.NONE) {
+                                            borderObj.put("top", JSONObject().put("style", style.borderTop.name.lowercase()))
+                                        }
+                                        if (style.borderBottom != BorderStyle.NONE) {
+                                            borderObj.put("bottom", JSONObject().put("style", style.borderBottom.name.lowercase()))
+                                        }
+                                        if (style.borderLeft != BorderStyle.NONE) {
+                                            borderObj.put("left", JSONObject().put("style", style.borderLeft.name.lowercase()))
+                                        }
+                                        if (style.borderRight != BorderStyle.NONE) {
+                                            borderObj.put("right", JSONObject().put("style", style.borderRight.name.lowercase()))
+                                        }
+                                        if (borderObj.length() > 0) cellObj.put("borders", borderObj)
+                                    }
+
                                     rowArray.put(c, cellObj)
                                 } else {
                                     rowArray.put(c, JSONObject.NULL)
                                 }
                             }
                         }
-                        matrix.put(r, rowArray)
+                        matrixArray.put(r, rowArray)
+                    }
+
+                    for (c in 0 until maxCol) {
+                        val colW = sheet.getColumnWidth(c)
+                        widthsObj.put(c.toString(), (colW / 256.0 * 7.5).toInt())
                     }
 
                     for (i in 0 until sheet.numMergedRegions) {
                         val region: CellRangeAddress = sheet.getMergedRegion(i)
-                        val mergeObj = JSONObject().apply {
+                        mergesArray.put(JSONObject().apply {
                             put("sr", region.firstRow)
                             put("sc", region.firstColumn)
                             put("er", region.lastRow)
                             put("ec", region.lastColumn)
-                        }
-                        merges.put(mergeObj)
+                        })
                     }
 
                     workbook.close()
-                    Pair(matrix, merges)
-                }
 
-                val resultJson = JSONObject().apply {
-                    put("matrix", matrixArray)
-                    put("merges", mergesArray)
+                    JSONObject().apply {
+                        put("matrix", matrixArray)
+                        put("merges", mergesArray)
+                        put("widths", widthsObj)
+                        put("heights", heightsObj)
+                    }.toString()
                 }
 
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
-                    updateGridData(resultJson.toString())
+                    updateGridData(resultPayload)
                     Toast.makeText(this@MainActivity, "Файл успешно открыт", Toast.LENGTH_SHORT).show()
                 }
 
@@ -181,7 +214,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun exportToXlsx() {
-        createFileLauncher.launch("Exported_Data.xlsx")
+        webView.evaluateJavascript("javascript:window.getCurrentDataJson();") { json ->
+            if (json != null && json != "null") {
+                var cleanJson = json
+                if (cleanJson.startsWith("\"") && cleanJson.endsWith("\"")) {
+                    cleanJson = cleanJson.substring(1, cleanJson.length - 1)
+                        .replace("\\\"", "\"")
+                        .replace("\\\\", "\\")
+                }
+                cachedJsonPayload = cleanJson
+            }
+            createFileLauncher.launch("Exported_Data.xlsx")
+        }
     }
 
     private fun saveCurrentDataToUri(uri: Uri) {
