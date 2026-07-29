@@ -1,4 +1,4 @@
-package com.example.excelviewer
+package com.example.miniexcel
 
 import android.net.Uri
 import android.os.Bundle
