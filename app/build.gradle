@@ -51,10 +51,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'com.google.android.material:material:1.12.0'
 
-    // Поддержка обычных .xls (HSSF)
+    // Единая подложка POI для Android (включает поддержку как .xls, так и .xlsx)
     implementation 'com.github.SUPERCILEX.poi-android:poi:3.17'
-    // Поддержка современных .xlsx (XSSF/ZipPackage) — без этого был вылет!
-    implementation 'com.github.SUPERCILEX.poi-android:poi-ooxml:3.17'
 
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0'
