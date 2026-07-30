@@ -1,39 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout 
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- Панель управления -->
+    <!-- Верхняя панель управления -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:background="#F3F3F3"
+        android:elevation="4dp"
         android:orientation="horizontal"
-        android:padding="8dp"
-        android:background="#E0E0E0">
+        android:padding="8dp">
 
         <Button
             android:id="@+id/btnOpen"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:layout_marginEnd="4dp"
+            android:layout_weight="1"
             android:text="Открыть" />
 
         <Button
             android:id="@+id/btnSave"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:layout_marginStart="4dp"
+            android:layout_weight="1"
             android:text="Сохранить" />
     </LinearLayout>
 
-    <!-- WebView для Canvas-сетки -->
+    <!-- Компонент отображения таблицы -->
     <WebView
         android:id="@+id/webView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 
 </LinearLayout>
