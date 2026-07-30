@@ -7,7 +7,9 @@ import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -23,12 +25,55 @@ class MainActivity : AppCompatActivity() {
     private var currentWorkbook: Workbook? = null
     private var currentUri: Uri? = null
 
+    // Регистрация лаунчера для выбора .xls / .xlsx файлов
+    private val openFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            currentUri = it
+            // Предоставляем устойчивые права на чтение/запись системного Uri
+            try {
+                contentResolver.takePersistableUriPermission(
+                    it,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or 
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                Log.w("MiniExcel", "Persistable permission not granted: ${e.message}")
+            }
+            loadExcelFile(it)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        webView = WebView(this)
-        setContentView(webView)
+        setContentView(R.layout.activity_main)
+
+        webView = findViewById(R.id.webView)
+        val btnOpen = findViewById<Button>(R.id.btnOpen)
+        val btnSave = findViewById<Button>(R.id.btnSave)
 
         setupWebView()
+
+        // Кнопка Открыть -> открывает системный файловый менеджер
+        btnOpen.setOnClickListener {
+            openFileLauncher.launch(
+                arrayOf(
+                    "application/vnd.ms-excel",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/octet-stream"
+                )
+            )
+        }
+
+        // Кнопка Сохранить -> запрашивает актуальный JSON с JS и запускает сохранение
+        btnSave.setOnClickListener {
+            if (currentWorkbook == null) {
+                Toast.makeText(this, "Сначала откройте файл", Toast.LENGTH_SHORT).show()
+            } else {
+                webView.evaluateJavascript("window.sendDiffsToKotlin()", null)
+            }
+        }
 
         intent?.data?.let { uri ->
             currentUri = uri
@@ -55,9 +100,6 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
-    /**
-     * Безопасное чтение XLS / XLSX
-     */
     private fun loadExcelFile(uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -110,7 +152,6 @@ class MainActivity : AppCompatActivity() {
                         hasDataInRow = true
                     }
 
-                    // Исправлено: работаем со строгой non-null гарантией для JSONObject.put
                     val bgHex = getSafeBackgroundColor(cell)
                     if (!bgHex.isNullOrEmpty()) {
                         cellObj.put("bg", bgHex as String)
@@ -169,9 +210,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Безопасный извлекатель фонового цвета ячейки без падения по java.awt
-     */
     private fun getSafeBackgroundColor(cell: Cell): String? {
         return try {
             val fill = cell.cellStyle?.fillForegroundColorColor ?: return null
@@ -182,9 +220,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Мост сохранения диффов без потери исходного форматирования
-     */
     inner class WebAppInterface {
 
         @JavascriptInterface
