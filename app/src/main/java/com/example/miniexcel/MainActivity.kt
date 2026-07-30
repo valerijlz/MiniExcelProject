@@ -1,13 +1,14 @@
-package com.miniexcel.app
+package com.example.miniexcel
 
 import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
-import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -16,26 +17,50 @@ import kotlinx.coroutines.withContext
 import org.apache.poi.ss.usermodel.*
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.InputStream
-import java.io.OutputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var btnOpen: Button
+    private lateinit var btnSave: Button
+
     private var currentWorkbook: Workbook? = null
     private var currentUri: Uri? = null
 
+    // Вызов встроенного проводника Android для выбора файлов .xls / .xlsx
+    private val openFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            currentUri = it
+            contentResolver.takePersistableUriPermission(
+                it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            loadExcelFile(it)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        webView = WebView(this)
-        setContentView(webView)
+        setContentView(R.layout.activity_main)
+
+        webView = findViewById(R.id.webView)
+        btnOpen = findViewById(R.id.btnOpen)
+        btnSave = findViewById(R.id.btnSave)
 
         setupWebView()
 
-        // Входной Uri (например, из Intent)
-        intent?.data?.let { uri ->
-            currentUri = uri
-            loadExcelFile(uri)
+        btnOpen.setOnClickListener {
+            openFileLauncher.launch(
+                arrayOf(
+                    "application/vnd.ms-excel",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            )
+        }
+
+        btnSave.setOnClickListener {
+            saveExcelFile()
         }
     }
 
@@ -45,28 +70,20 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             allowFileAccess = true
-            useWideViewPort = true
-            loadWithOverviewMode = true
         }
-        webView.addJavascriptInterface(WebAppInterface(), "AndroidBridge")
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // Если файл уже открыт, передаем данные после загрузки HTML
                 currentUri?.let { loadExcelFile(it) }
             }
         }
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
-    /**
-     * Фича A: Безопасное чтение XLS / XLSX без полного сканирования тяжелых стилей
-     */
     private fun loadExcelFile(uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 contentResolver.openInputStream(uri)?.use { inputStream ->
-                    // WorkbookFactory корректно распознает как HSSF (.xls), так и XSSF (.xlsx)
                     currentWorkbook = WorkbookFactory.create(inputStream)
                 }
 
@@ -77,9 +94,9 @@ class MainActivity : AppCompatActivity() {
                     webView.evaluateJavascript("window.loadJsonData($jsonResult)", null)
                 }
             } catch (e: Exception) {
-                Log.e("MiniExcel", "Error loading workbook", e)
+                Log.e("MiniExcel", "Error loading file", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Ошибка открытия файла", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "Ошибка чтения файла", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -91,8 +108,7 @@ class MainActivity : AppCompatActivity() {
         val evaluator = currentWorkbook?.creationHelper?.createFormulaEvaluator()
 
         val lastRowNum = sheet.lastRowNum
-        // Ограничиваем считывание только активными строками
-        val maxRows = minOf(lastRowNum, 5000) 
+        val maxRows = minOf(lastRowNum, 200)
 
         for (r in 0..maxRows) {
             val row = sheet.getRow(r) ?: continue
@@ -102,38 +118,26 @@ class MainActivity : AppCompatActivity() {
 
             if (lastCellNum < 0) continue
 
-            var hasDataInRow = false
-            for (c in 0 until minOf(lastCellNum, 256)) { // Ограничение по колонкам (A..Z+)
-                val cell = row.getCell(c)
+            for (c in 0 until minOf(lastCellNum, 50)) {
+                val cell = row.getCell(c) ?: continue
                 val cellObj = JSONObject()
                 cellObj.put("r", r)
                 cellObj.put("c", c)
 
-                if (cell != null) {
-                    val value = getCellValueAsString(cell, evaluator)
-                    if (value.isNotEmpty()) {
-                        cellObj.put("v", value)
-                        hasDataInRow = true
-                    }
-                    
-                    // Безопасное извлечение фонового цвета без java.awt
-                    val bgHex = getSafeBackgroundColor(cell)
-                    if (bgHex != null) {
-                        cellObj.put("bg", bgHex)
-                    }
+                val value = getCellValueAsString(cell, evaluator)
+                if (value.isNotEmpty()) {
+                    cellObj.put("v", value)
                 }
                 cellsArray.put(cellObj)
             }
 
-            if (hasDataInRow || cellsArray.length() > 0) {
-                rowObj.put("r", r)
-                rowObj.put("cells", cellsArray)
-                rowsArray.put(rowObj)
-            }
+            rowObj.put("r", r)
+            rowObj.put("cells", cellsArray)
+            rowsArray.put(rowObj)
         }
 
-        root.put("maxRows", maxRows + 1)
-        root.put("maxCols", 26) // По умолчанию сетка A-Z
+        root.put("maxRows", maxOf(maxRows + 1, 50))
+        root.put("maxCols", 26)
         root.put("rows", rowsArray)
         return root.toString()
     }
@@ -144,8 +148,8 @@ class MainActivity : AppCompatActivity() {
                 CellType.STRING -> cell.stringCellValue
                 CellType.NUMERIC -> {
                     if (DateUtil.isCellDateFormatted(cell)) cell.dateCellValue.toString()
-                    else cell.numericCellValue.let { 
-                        if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString() 
+                    else cell.numericCellValue.let {
+                        if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
                     }
                 }
                 CellType.BOOLEAN -> cell.booleanCellValue.toString()
@@ -167,31 +171,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun getSafeBackgroundColor(cell: Cell): String? {
-        return try {
-            val fill = cell.cellStyle.fillForegroundColorColor ?: return null
-            // Извлекаем RGB hex безопасно
-            val hex = fill.toString() 
-            if (hex.length >= 6) "#${hex.takeLast(6)}" else null
-        } catch (t: Throwable) {
-            null // Игнорируем ошибки отсутствия java.awt классов
+    private fun saveExcelFile() {
+        val uri = currentUri ?: run {
+            Toast.makeText(this, "Нет открытого файла для сохранения", Toast.LENGTH_SHORT).show()
+            return
         }
-    }
 
-    /**
-     * Фича C: Мост синхронизации и сохранение диффов без потери исходного форматирования
-     */
-    inner class WebAppInterface {
+        // Запрашиваем из JS накопившиеся диффы изменений
+        webView.evaluateJavascript("window.getDiffsJson()") { diffJsonString ->
+            if (diffJsonString == null || diffJsonString == "null") return@evaluateJavascript
 
-        @JavascriptInterface
-        fun saveChanges(diffJsonString: String) {
+            // Убираем экранирование строк JS
+            val unescapedJson = if (diffJsonString.startsWith("\"") && diffJsonString.endsWith("\"")) {
+                diffJsonString.substring(1, diffJsonString.length - 1).replace("\\\"", "\"")
+            } else diffJsonString
+
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     val wb = currentWorkbook ?: return@launch
-                    val uri = currentUri ?: return@launch
                     val sheet = wb.getSheetAt(0)
+                    val diffArray = JSONArray(unescapedJson)
 
-                    val diffArray = JSONArray(diffJsonString)
                     for (i in 0 until diffArray.length()) {
                         val change = diffArray.getJSONObject(i)
                         val r = change.getInt("r")
@@ -204,25 +204,25 @@ class MainActivity : AppCompatActivity() {
                         var cell = row.getCell(c)
                         if (cell == null) cell = row.createCell(c)
 
-                        // Обновляем исключительно значение, сохраняя существующий CellStyle
-                        if (newValue.toDoubleOrNull() != null) {
-                            cell.setCellValue(newValue.toDouble())
+                        val numVal = newValue.toDoubleOrNull()
+                        if (numVal != null) {
+                            cell.setCellValue(numVal)
                         } else {
                             cell.setCellValue(newValue)
                         }
                     }
 
-                    // Перезапись исходного файла
+                    // Запись обратно в файл
                     contentResolver.openOutputStream(uri, "rwt")?.use { os ->
                         wb.write(os)
                         os.flush()
                     }
 
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Сохранено успешно", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Файл успешно сохранен!", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    Log.e("MiniExcel", "Error saving workbook", e)
+                    Log.e("MiniExcel", "Save error", e)
                     withContext(Dispatchers.Main) {
                         Toast.makeText(this@MainActivity, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
                     }
