@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body { width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; background: #e0e0e0; }
+        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        html, body { width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; background: #e0e0e0; touch-action: none; }
         #container { position: relative; width: 100%; height: 100%; }
         #canvas { display: block; width: 100%; height: 100%; background: #fff; }
         #cellInput {
@@ -48,8 +48,14 @@
         let maxCols = 30;
         let maxRows = 60;
 
-        let selectedCell = null; // { r, c }
+        let selectedCell = null;
         let mergeLookup = {};
+
+        // Для жестового управления (Touch)
+        let lastTouchX = 0, lastTouchY = 0;
+        let initialPinchDist = null;
+        let initialZoom = 1.0;
+        let isEditing = false;
 
         function initData(data) {
             if (!data) return;
@@ -121,18 +127,9 @@
             ctx.beginPath();
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
-
-            let style = borderStyle.style || 'thin';
-            let color = borderStyle.color || '#000000';
-
-            ctx.strokeStyle = color;
-            if (style === 'dashed') ctx.setLineDash([4, 4]);
-            else if (style === 'dotted') ctx.setLineDash([2, 2]);
-            else ctx.setLineDash([]);
-
-            ctx.lineWidth = (style === 'thick' || style === 'medium') ? 2 * zoom : 1 * zoom;
+            ctx.strokeStyle = borderStyle.color || '#000000';
+            ctx.lineWidth = (borderStyle.width || 1) * zoom;
             ctx.stroke();
-            ctx.setLineDash([]);
         }
 
         function render() {
@@ -160,7 +157,7 @@
             let curY = COL_NUM_HEIGHT - (scrollY * zoom);
             for (let r = 0; r < maxRows; r++) {
                 let h = (heights[r] || DEFAULT_ROW_HEIGHT) * zoom;
-                if (curY + h >= COL_NUM_HEIGHT && curY <= clientH) {
+                if (curY + h >= COL_NUM_HEIGHT && cy <= clientH) {
                     ctx.beginPath();
                     ctx.moveTo(ROW_NUM_WIDTH, curY + h);
                     ctx.lineTo(clientW, curY + h);
@@ -169,46 +166,18 @@
                 curY += h;
             }
 
-            // 2. ФОН И СТИЛИ ЯЧЕЕК
+            // 2. ФОН ЯЧЕЕК И РАМКИ
             for (let r = 0; r < maxRows; r++) {
                 for (let c = 0; c < maxCols; c++) {
                     let lookup = mergeLookup[`${r}_${c}`];
                     if (lookup && lookup.isChild) continue;
 
                     let cellData = matrix[r] ? matrix[r][c] : null;
-                    let bgColor = (typeof cellData === 'object' && cellData !== null) ? cellData.bg : null;
-
-                    if (!bgColor) continue;
-
-                    let rect = getCellRect(r, c);
-                    let cw = rect.w;
-                    let ch = rect.h;
-
-                    if (lookup && lookup.isMain) {
-                        cw = 0; ch = 0;
-                        for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || DEFAULT_COL_WIDTH);
-                        for (let i = lookup.m.sr; i <= lookup.m.er; i++) ch += (heights[i] || DEFAULT_ROW_HEIGHT);
-                    }
-
-                    let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
-                    let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
-
-                    ctx.fillStyle = bgColor;
-                    ctx.fillRect(cx, cy, cw * zoom, ch * zoom);
-                }
-            }
-
-            // 2.1 ИНДИВИДУАЛЬНЫЕ ГРАНИЦЫ
-            for (let r = 0; r < maxRows; r++) {
-                for (let c = 0; c < maxCols; c++) {
-                    let lookup = mergeLookup[`${r}_${c}`];
-                    if (lookup && lookup.isChild) continue;
-
-                    let cellData = matrix[r] ? matrix[r][c] : null;
-                    if (!cellData || typeof cellData !== 'object' || !cellData.borders) continue;
+                    if (!cellData || typeof cellData !== 'object') continue;
 
                     let rect = getCellRect(r, c);
                     let cw = rect.w; let ch = rect.h;
+
                     if (lookup && lookup.isMain) {
                         cw = 0; ch = 0;
                         for (let i = lookup.m.sc; i <= lookup.m.ec; i++) cw += (widths[i] || DEFAULT_COL_WIDTH);
@@ -217,17 +186,24 @@
 
                     let cx = ROW_NUM_WIDTH + (rect.x - scrollX) * zoom;
                     let cy = COL_NUM_HEIGHT + (rect.y - scrollY) * zoom;
-                    let ccw = cw * zoom; let cch = ch * zoom;
 
-                    let b = cellData.borders;
-                    if (b.top) drawCustomBorder(cx, cy, cx + ccw, cy, b.top);
-                    if (b.bottom) drawCustomBorder(cx, cy + cch, cx + ccw, cy + cch, b.bottom);
-                    if (b.left) drawCustomBorder(cx, cy, cx, cy + cch, b.left);
-                    if (b.right) drawCustomBorder(cx + ccw, cy, cx + ccw, cy + cch, b.right);
+                    if (cellData.bg) {
+                        ctx.fillStyle = cellData.bg;
+                        ctx.fillRect(cx, cy, cw * zoom, ch * zoom);
+                    }
+
+                    if (cellData.borders) {
+                        let b = cellData.borders;
+                        let ccw = cw * zoom; let cch = ch * zoom;
+                        if (b.top) drawCustomBorder(cx, cy, cx + ccw, cy, b.top);
+                        if (b.bottom) drawCustomBorder(cx, cy + cch, cx + ccw, cy + cch, b.bottom);
+                        if (b.left) drawCustomBorder(cx, cy, cx, cy + cch, b.left);
+                        if (b.right) drawCustomBorder(cx + ccw, cy, cx + ccw, cy + cch, b.right);
+                    }
                 }
             }
 
-            // 3. ТЕКСТ ЯЧЕЕК
+            // 3. ТЕКСТ ЯЧЕЕК (Без обрезания, если соседние ячейки пустые)
             for (let r = 0; r < maxRows; r++) {
                 for (let c = 0; c < maxCols; c++) {
                     let lookup = mergeLookup[`${r}_${c}`];
@@ -255,6 +231,20 @@
 
                     if (cx + cw < ROW_NUM_WIDTH || cy + ch < COL_NUM_HEIGHT || cx > clientW || cy > clientH) continue;
 
+                    // Вычисляем доступное место под текст (протекание на соседние пустые ячейки)
+                    let maxAvailableWidth = cw;
+                    if (!lookup) {
+                        for (let nextC = c + 1; nextC < maxCols; nextC++) {
+                            let nextCell = matrix[r] ? matrix[r][nextC] : null;
+                            let nextVal = (typeof nextCell === 'object' && nextCell) ? nextCell.v : nextCell;
+                            if (!nextVal) {
+                                maxAvailableWidth += (widths[nextC] || DEFAULT_COL_WIDTH) * zoom;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
                     ctx.save();
                     let textColor = (typeof cellData === 'object' && cellData !== null) ? (cellData.color || "#000000") : "#000000";
                     ctx.fillStyle = textColor;
@@ -264,7 +254,7 @@
                     ctx.beginPath();
                     let clipX = Math.max(ROW_NUM_WIDTH, cx);
                     let clipY = Math.max(COL_NUM_HEIGHT, cy);
-                    let clipW = Math.min(clientW, cx + cw) - clipX;
+                    let clipW = Math.min(clientW, cx + maxAvailableWidth) - clipX;
                     let clipH = Math.min(clientH, cy + ch) - clipY;
 
                     if (clipW > 0 && clipH > 0) {
@@ -291,7 +281,7 @@
             ctx.lineWidth = 2;
             ctx.strokeRect(boundX, boundY, boundW, boundH);
 
-            // 5. ВЫДЕЛЕННАЯ ЯЧЕЙКА
+            // 5. ВЫДЕЛЕНИЕ ЯЧЕЙКИ
             if (selectedCell) {
                 let lookup = mergeLookup[`${selectedCell.r}_${selectedCell.c}`];
                 let targetR = selectedCell.r;
@@ -320,7 +310,7 @@
                 ctx.strokeRect(cx, cy, cw * zoom, ch * zoom);
             }
 
-            // 6. ЗАГОЛОВКИ СТРОК И КОЛОНОК
+            // 6. ШАПКИ СТРОК И КОЛОНОК
             ctx.fillStyle = '#f4f4f4';
             ctx.fillRect(0, 0, clientW, COL_NUM_HEIGHT);
             ctx.fillRect(0, 0, ROW_NUM_WIDTH, clientH);
@@ -340,9 +330,7 @@
                 let w = (widths[c] || DEFAULT_COL_WIDTH) * zoom;
                 if (hX + w >= ROW_NUM_WIDTH && hX <= clientW) {
                     ctx.fillText(getColName(c), hX + w / 2, COL_NUM_HEIGHT / 2);
-                    ctx.beginPath();
-                    ctx.moveTo(hX + w, 0); ctx.lineTo(hX + w, COL_NUM_HEIGHT);
-                    ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(hX + w, 0); ctx.lineTo(hX + w, COL_NUM_HEIGHT); ctx.stroke();
                 }
                 hX += w;
             }
@@ -352,9 +340,7 @@
                 let h = (heights[r] || DEFAULT_ROW_HEIGHT) * zoom;
                 if (hY + h >= COL_NUM_HEIGHT && hY <= clientH) {
                     ctx.fillText(String(r + 1), ROW_NUM_WIDTH / 2, hY + h / 2);
-                    ctx.beginPath();
-                    ctx.moveTo(0, hY + h); ctx.lineTo(ROW_NUM_WIDTH, hY + h);
-                    ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0, hY + h); ctx.lineTo(ROW_NUM_WIDTH, hY + h); ctx.stroke();
                 }
                 hY += h;
             }
@@ -373,12 +359,66 @@
             return name;
         }
 
-        // КЛИКИ И РЕДАКТИРОВАНИЕ
-        canvas.addEventListener('click', (e) => {
-            commitEditing();
-            const clickX = e.clientX - ROW_NUM_WIDTH;
-            const clickY = e.clientY - COL_NUM_HEIGHT;
+        // --- ОБРАБОТКА ТАЧ-ЖЕСТОВ (Сдвиг, Зум пальцами, Выделение) ---
+        let tapTimer = null;
+        let lastTapTime = 0;
 
+        canvas.addEventListener('touchstart', (e) => {
+            commitEditing();
+            if (e.touches.length === 1) {
+                lastTouchX = e.touches[0].clientX;
+                lastTouchY = e.touches[0].clientY;
+            } else if (e.touches.length === 2) {
+                initialPinchDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                initialZoom = zoom;
+            }
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 1) {
+                let dx = e.touches[0].clientX - lastTouchX;
+                let dy = e.touches[0].clientY - lastTouchY;
+                lastTouchX = e.touches[0].clientX;
+                lastTouchY = e.touches[0].clientY;
+
+                scrollX = Math.max(0, scrollX - dx / zoom);
+                scrollY = Math.max(0, scrollY - dy / zoom);
+                render();
+            } else if (e.touches.length === 2 && initialPinchDist) {
+                let dist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                zoom = Math.min(Math.max(0.4, initialZoom * (dist / initialPinchDist)), 2.5);
+                render();
+            }
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            initialPinchDist = null;
+
+            if (e.changedTouches.length === 1) {
+                let touch = e.changedTouches[0];
+                let currentTime = new Date().getTime();
+                let tapLength = currentTime - lastTapTime;
+
+                if (tapLength < 300 && tapLength > 0) {
+                    // Двойное нажатие -> Редактирование
+                    if (selectedCell) startEditing(selectedCell.r, selectedCell.c);
+                } else {
+                    // Одиночное нажатие -> Выбор ячейки
+                    handleSelectCell(touch.clientX, touch.clientY);
+                }
+                lastTapTime = currentTime;
+            }
+        });
+
+        function handleSelectCell(clientX, clientY) {
+            const clickX = clientX - ROW_NUM_WIDTH;
+            const clickY = clientY - COL_NUM_HEIGHT;
             if (clickX < 0 || clickY < 0) return;
 
             let targetC = -1;
@@ -407,12 +447,7 @@
                 selectedCell = { r: targetR, c: targetC };
                 render();
             }
-        });
-
-        canvas.addEventListener('dblclick', () => {
-            if (!selectedCell) return;
-            startEditing(selectedCell.r, selectedCell.c);
-        });
+        }
 
         function startEditing(r, c) {
             let rect = getCellRect(r, c);
@@ -433,10 +468,11 @@
             cellInput.value = val;
             cellInput.style.display = 'block';
             cellInput.focus();
+            isEditing = true;
         }
 
         function commitEditing() {
-            if (cellInput.style.display === 'none' || !selectedCell) return;
+            if (!isEditing || !selectedCell) return;
 
             let r = selectedCell.r;
             let c = selectedCell.c;
@@ -451,13 +487,12 @@
             }
 
             cellInput.style.display = 'none';
+            isEditing = false;
             render();
         }
 
         cellInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                commitEditing();
-            }
+            if (e.key === 'Enter') commitEditing();
         });
 
         window.getCurrentDataJson = function() {
