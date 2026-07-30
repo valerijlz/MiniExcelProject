@@ -28,15 +28,20 @@ class MainActivity : AppCompatActivity() {
     private var currentWorkbook: Workbook? = null
     private var currentUri: Uri? = null
 
-    // Вызов встроенного проводника Android для выбора файлов .xls / .xlsx
+    // Вызов системного проводника для выбора .xls / .xlsx
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let {
             currentUri = it
-            contentResolver.takePersistableUriPermission(
-                it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+            // Попытка получить постоянные права (безопасно, без краша)
+            try {
+                contentResolver.takePersistableUriPermission(
+                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (e: SecurityException) {
+                Log.w("MiniExcel", "Persistable permission not granted, proceeding with temporary URI access: ${e.message}")
+            }
             loadExcelFile(it)
         }
     }
@@ -55,7 +60,8 @@ class MainActivity : AppCompatActivity() {
             openFileLauncher.launch(
                 arrayOf(
                     "application/vnd.ms-excel",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/octet-stream" // Добавлено для совместимости с некоторыми файловыми менеджерами
                 )
             )
         }
@@ -84,11 +90,22 @@ class MainActivity : AppCompatActivity() {
     private fun loadExcelFile(uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                // Закрываем предыдущий Workbook, если он был открыт
+                currentWorkbook?.close()
+
                 contentResolver.openInputStream(uri)?.use { inputStream ->
+                    // WorkbookFactory автоматически определяет XLS (HSSF) или XLSX (XSSF)
                     currentWorkbook = WorkbookFactory.create(inputStream)
                 }
 
-                val sheet = currentWorkbook?.getSheetAt(0) ?: return@launch
+                val sheet = currentWorkbook?.getSheetAt(0)
+                if (sheet == null) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Файл не содержит листов", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
                 val jsonResult = parseSheetToJSON(sheet)
 
                 withContext(Dispatchers.Main) {
@@ -97,7 +114,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e("MiniExcel", "Error loading file", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Ошибка чтения файла", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "Ошибка открытия: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -106,10 +123,16 @@ class MainActivity : AppCompatActivity() {
     private fun parseSheetToJSON(sheet: Sheet): String {
         val root = JSONObject()
         val rowsArray = JSONArray()
-        val evaluator = currentWorkbook?.creationHelper?.createFormulaEvaluator()
+        
+        // Перехватываем возможные ошибки при вычислении формул в POI
+        val evaluator = try {
+            currentWorkbook?.creationHelper?.createFormulaEvaluator()
+        } catch (e: Exception) {
+            null
+        }
 
         val lastRowNum = sheet.lastRowNum
-        val maxRows = minOf(lastRowNum, 200)
+        val maxRows = minOf(lastRowNum, 300)
 
         for (r in 0..maxRows) {
             val row = sheet.getRow(r) ?: continue
@@ -178,11 +201,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Запрашиваем из JS накопившиеся диффы изменений
         webView.evaluateJavascript("window.getDiffsJson()") { diffJsonString ->
             if (diffJsonString == null || diffJsonString == "null") return@evaluateJavascript
 
-            // Убираем экранирование строк JS
             val unescapedJson = if (diffJsonString.startsWith("\"") && diffJsonString.endsWith("\"")) {
                 diffJsonString.substring(1, diffJsonString.length - 1).replace("\\\"", "\"")
             } else diffJsonString
@@ -213,7 +234,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Запись обратно в файл
                     contentResolver.openOutputStream(uri, "rwt")?.use { os ->
                         wb.write(os)
                         os.flush()
@@ -225,7 +245,7 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     Log.e("MiniExcel", "Save error", e)
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                     }
                 }
             }
