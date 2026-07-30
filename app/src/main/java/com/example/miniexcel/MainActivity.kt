@@ -87,38 +87,38 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
-    private fun loadExcelFile(uri: Uri) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                // Закрываем предыдущий Workbook, если он был открыт
-                currentWorkbook?.close()
+private fun loadExcelFile(uri: Uri) {
+    lifecycleScope.launch(Dispatchers.IO) {
+        try {
+            currentWorkbook?.close()
 
-                contentResolver.openInputStream(uri)?.use { inputStream ->
-                    // WorkbookFactory автоматически определяет XLS (HSSF) или XLSX (XSSF)
-                    currentWorkbook = WorkbookFactory.create(inputStream)
-                }
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                // Используем BufferedInputStream для надежности вычисления формата
+                val bufferedInput = java.io.BufferedInputStream(inputStream)
+                currentWorkbook = WorkbookFactory.create(bufferedInput)
+            }
 
-                val sheet = currentWorkbook?.getSheetAt(0)
-                if (sheet == null) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Файл не содержит листов", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-
-                val jsonResult = parseSheetToJSON(sheet)
-
+            val sheet = currentWorkbook?.getSheetAt(0)
+            if (sheet == null) {
                 withContext(Dispatchers.Main) {
-                    webView.evaluateJavascript("window.loadJsonData($jsonResult)", null)
+                    Toast.makeText(this@MainActivity, "Файл не содержит листов", Toast.LENGTH_SHORT).show()
                 }
-            } catch (e: Exception) {
-                Log.e("MiniExcel", "Error loading file", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Ошибка открытия: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                }
+                return@launch
+            }
+
+            val jsonResult = parseSheetToJSON(sheet)
+
+            withContext(Dispatchers.Main) {
+                webView.evaluateJavascript("window.loadJsonData($jsonResult)", null)
+            }
+        } catch (t: Throwable) { // <-- Перехватываем Throwable (включая NoClassDefFoundError!)
+            Log.e("MiniExcel", "Fatal error loading file", t)
+            withContext(Dispatchers.Main) {
+                Toast.makeText(this@MainActivity, "Ошибка: ${t.javaClass.simpleName}: ${t.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
+}
 
     private fun parseSheetToJSON(sheet: Sheet): String {
         val root = JSONObject()
