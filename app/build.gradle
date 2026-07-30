@@ -20,7 +20,7 @@ android {
             minifyEnabled false
         }
         release {
-            minifyEnabled false // Гарантирует, что POI-классы не вырежутся при оптимизации
+            minifyEnabled false // Отключаем R8, чтобы маршаллеры ZipPackage не вырезались!
         }
     }
 
@@ -51,8 +51,9 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'com.google.android.material:material:1.12.0'
 
-    // Проверенная сборка POI для Android (поддержка XLS и XLSX)
+    // Поддержка обычных .xls (HSSF)
     implementation 'com.github.SUPERCILEX.poi-android:poi:3.17'
+    // Поддержка современных .xlsx (XSSF/ZipPackage) — без этого был вылет!
     implementation 'com.github.SUPERCILEX.poi-android:poi-ooxml:3.17'
 
     // Coroutines
