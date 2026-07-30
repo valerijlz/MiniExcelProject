@@ -1,15 +1,13 @@
 package com.example.miniexcel
 
 import android.annotation.SuppressLint
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -22,52 +20,19 @@ import org.json.JSONObject
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var btnOpen: Button
-    private lateinit var btnSave: Button
-
     private var currentWorkbook: Workbook? = null
     private var currentUri: Uri? = null
 
-    // Вызов системного проводника для выбора .xls / .xlsx
-    private val openFileLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let {
-            currentUri = it
-            // Попытка получить постоянные права (безопасно, без краша)
-            try {
-                contentResolver.takePersistableUriPermission(
-                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            } catch (e: SecurityException) {
-                Log.w("MiniExcel", "Persistable permission not granted, proceeding with temporary URI access: ${e.message}")
-            }
-            loadExcelFile(it)
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        webView = findViewById(R.id.webView)
-        btnOpen = findViewById(R.id.btnOpen)
-        btnSave = findViewById(R.id.btnSave)
+        webView = WebView(this)
+        setContentView(webView)
 
         setupWebView()
 
-        btnOpen.setOnClickListener {
-            openFileLauncher.launch(
-                arrayOf(
-                    "application/vnd.ms-excel",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    "application/octet-stream" // Добавлено для совместимости с некоторыми файловыми менеджерами
-                )
-            )
-        }
-
-        btnSave.setOnClickListener {
-            saveExcelFile()
+        intent?.data?.let { uri ->
+            currentUri = uri
+            loadExcelFile(uri)
         }
     }
 
@@ -77,7 +42,10 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             allowFileAccess = true
+            useWideViewPort = true
+            loadWithOverviewMode = true
         }
+        webView.addJavascriptInterface(WebAppInterface(), "AndroidBridge")
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
@@ -87,46 +55,38 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
-private fun loadExcelFile(uri: Uri) {
-    lifecycleScope.launch(Dispatchers.IO) {
-        try {
-            currentWorkbook?.close()
-
-            contentResolver.openInputStream(uri)?.use { inputStream ->
-                // Используем BufferedInputStream для надежности вычисления формата
-                val bufferedInput = java.io.BufferedInputStream(inputStream)
-                currentWorkbook = WorkbookFactory.create(bufferedInput)
-            }
-
-            val sheet = currentWorkbook?.getSheetAt(0)
-            if (sheet == null) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Файл не содержит листов", Toast.LENGTH_SHORT).show()
+    /**
+     * Безопасное чтение XLS / XLSX
+     */
+    private fun loadExcelFile(uri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                contentResolver.openInputStream(uri)?.use { inputStream ->
+                    currentWorkbook = WorkbookFactory.create(inputStream)
                 }
-                return@launch
-            }
 
-            val jsonResult = parseSheetToJSON(sheet)
+                val sheet = currentWorkbook?.getSheetAt(0) ?: return@launch
+                val jsonResult = parseSheetToJSON(sheet)
 
-            withContext(Dispatchers.Main) {
-                webView.evaluateJavascript("window.loadJsonData($jsonResult)", null)
-            }
-        } catch (t: Throwable) { // <-- Перехватываем Throwable (включая NoClassDefFoundError!)
-            Log.e("MiniExcel", "Fatal error loading file", t)
-            withContext(Dispatchers.Main) {
-                Toast.makeText(this@MainActivity, "Ошибка: ${t.javaClass.simpleName}: ${t.message}", Toast.LENGTH_LONG).show()
+                withContext(Dispatchers.Main) {
+                    webView.evaluateJavascript("window.loadJsonData($jsonResult)", null)
+                }
+            } catch (e: Exception) {
+                Log.e("MiniExcel", "Error loading workbook", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Ошибка открытия файла", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
-}
 
-private fun parseSheetToJSON(sheet: Sheet): String {
+    private fun parseSheetToJSON(sheet: Sheet): String {
         val root = JSONObject()
         val rowsArray = JSONArray()
         val evaluator = currentWorkbook?.creationHelper?.createFormulaEvaluator()
 
         val lastRowNum = sheet.lastRowNum
-        val maxRows = minOf(lastRowNum, 5000) 
+        val maxRows = minOf(lastRowNum, 5000)
 
         for (r in 0..maxRows) {
             val row = sheet.getRow(r) ?: continue
@@ -149,10 +109,11 @@ private fun parseSheetToJSON(sheet: Sheet): String {
                         cellObj.put("v", value)
                         hasDataInRow = true
                     }
-                    
+
+                    // Исправлено: работаем со строгой non-null гарантией для JSONObject.put
                     val bgHex = getSafeBackgroundColor(cell)
-                    if (bgHex != null) {
-                        cellObj.put("bg", bgHex)
+                    if (!bgHex.isNullOrEmpty()) {
+                        cellObj.put("bg", bgHex as String)
                     }
                 }
                 cellsArray.put(cellObj)
@@ -173,7 +134,6 @@ private fun parseSheetToJSON(sheet: Sheet): String {
 
     private fun getCellValueAsString(cell: Cell, evaluator: FormulaEvaluator?): String {
         return try {
-            // В POI 3.17 безопаснее брать cellTypeEnum для совместимости с when-выражениями
             @Suppress("DEPRECATION")
             val type = cell.cellTypeEnum
 
@@ -191,6 +151,7 @@ private fun parseSheetToJSON(sheet: Sheet): String {
                 CellType.FORMULA -> {
                     if (evaluator != null) {
                         val evaluated = evaluator.evaluate(cell)
+                        @Suppress("DEPRECATION")
                         when (evaluated.cellTypeEnum) {
                             CellType.NUMERIC -> evaluated.numberValue.toString()
                             CellType.STRING -> evaluated.stringValue
@@ -208,25 +169,33 @@ private fun parseSheetToJSON(sheet: Sheet): String {
         }
     }
 
-    private fun saveExcelFile() {
-        val uri = currentUri ?: run {
-            Toast.makeText(this, "Нет открытого файла для сохранения", Toast.LENGTH_SHORT).show()
-            return
+    /**
+     * Безопасный извлекатель фонового цвета ячейки без падения по java.awt
+     */
+    private fun getSafeBackgroundColor(cell: Cell): String? {
+        return try {
+            val fill = cell.cellStyle?.fillForegroundColorColor ?: return null
+            val hex = fill.toString()
+            if (hex.length >= 6) "#${hex.takeLast(6)}" else null
+        } catch (t: Throwable) {
+            null
         }
+    }
 
-        webView.evaluateJavascript("window.getDiffsJson()") { diffJsonString ->
-            if (diffJsonString == null || diffJsonString == "null") return@evaluateJavascript
+    /**
+     * Мост сохранения диффов без потери исходного форматирования
+     */
+    inner class WebAppInterface {
 
-            val unescapedJson = if (diffJsonString.startsWith("\"") && diffJsonString.endsWith("\"")) {
-                diffJsonString.substring(1, diffJsonString.length - 1).replace("\\\"", "\"")
-            } else diffJsonString
-
+        @JavascriptInterface
+        fun saveChanges(diffJsonString: String) {
             lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     val wb = currentWorkbook ?: return@launch
+                    val uri = currentUri ?: return@launch
                     val sheet = wb.getSheetAt(0)
-                    val diffArray = JSONArray(unescapedJson)
 
+                    val diffArray = JSONArray(diffJsonString)
                     for (i in 0 until diffArray.length()) {
                         val change = diffArray.getJSONObject(i)
                         val r = change.getInt("r")
@@ -239,9 +208,9 @@ private fun parseSheetToJSON(sheet: Sheet): String {
                         var cell = row.getCell(c)
                         if (cell == null) cell = row.createCell(c)
 
-                        val numVal = newValue.toDoubleOrNull()
-                        if (numVal != null) {
-                            cell.setCellValue(numVal)
+                        val doubleValue = newValue.toDoubleOrNull()
+                        if (doubleValue != null) {
+                            cell.setCellValue(doubleValue)
                         } else {
                             cell.setCellValue(newValue)
                         }
@@ -253,12 +222,12 @@ private fun parseSheetToJSON(sheet: Sheet): String {
                     }
 
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Файл успешно сохранен!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Сохранено успешно", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    Log.e("MiniExcel", "Save error", e)
+                    Log.e("MiniExcel", "Error saving workbook", e)
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Ошибка сохранения: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@MainActivity, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
