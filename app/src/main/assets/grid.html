@@ -6,7 +6,7 @@
     <title>MiniExcel Grid</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-        body, html { width: 100%; height: 100%; overflow: hidden; background: #f0f0f0; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background: #ffffff; }
         #canvasContainer { position: relative; width: 100vw; height: 100vh; }
         canvas { display: block; width: 100%; height: 100%; }
         #cellInput {
@@ -34,38 +34,38 @@
     const ctx = canvas.getContext('2d');
     const cellInput = document.getElementById('cellInput');
 
-    // Размеры сетки
-    const DEFAULT_COL_WIDTH = 80;
-    const DEFAULT_ROW_HEIGHT = 24;
-    const HEADER_WIDTH = 40;
-    const HEADER_HEIGHT = 24;
+    const DEFAULT_COL_WIDTH = 90;
+    const DEFAULT_ROW_HEIGHT = 28;
+    const HEADER_WIDTH = 45;
+    const HEADER_HEIGHT = 28;
 
-    let gridData = {}; // Map: `${r}_${c}` -> { v: string, bg: string }
-    let diffs = {};    // Map: `${r}_${c}` -> string (новые значения)
+    let gridData = {}; 
+    let diffs = {};    
 
-    let scale = window.devicePixelRatio || 1;
+    let dpr = window.devicePixelRatio || 1;
     let zoom = 1.0;
     let scrollX = 0;
     let scrollY = 0;
 
-    let selectedCell = null; // { r, c }
+    let selectedCell = null;
     let maxRows = 100;
     let maxCols = 26;
 
-    function initCanvas() {
-        canvas.width = window.innerWidth * scale;
-        canvas.height = window.innerHeight * scale;
+    function resizeCanvas() {
+        canvas.width = window.innerWidth * dpr;
+        canvas.height = window.innerHeight * dpr;
+        canvas.style.width = window.innerWidth + 'px';
+        canvas.style.height = window.innerHeight + 'px';
         render();
     }
 
-    window.addEventListener('resize', initCanvas);
+    window.addEventListener('resize', resizeCanvas);
 
-    // Прием JSON из Kotlin
     window.loadJsonData = function(data) {
         gridData = {};
         diffs = {};
-        maxRows = data.maxRows || 100;
-        maxCols = data.maxCols || 26;
+        maxRows = Math.max(data.maxRows || 100, 50);
+        maxCols = Math.max(data.maxCols || 26, 15);
 
         if (data.rows) {
             data.rows.forEach(row => {
@@ -80,16 +80,15 @@
         render();
     };
 
-    // Отрисовка сетки и текста с поддержкой Overflow
     function render() {
         ctx.save();
-        ctx.scale(scale, scale);
+        ctx.scale(dpr, dpr);
         ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
         ctx.font = `${13 * zoom}px sans-serif`;
         ctx.textBaseline = 'middle';
 
-        // 1. Отрисовка ячеек
+        // 1. Сетка ячеек
         for (let r = 0; r < maxRows; r++) {
             let y = HEADER_HEIGHT + r * DEFAULT_ROW_HEIGHT * zoom - scrollY;
             if (y + DEFAULT_ROW_HEIGHT * zoom < HEADER_HEIGHT || y > window.innerHeight) continue;
@@ -102,43 +101,20 @@
                 let cellData = gridData[key] || {};
                 let cellVal = diffs[key] !== undefined ? diffs[key] : (cellData.v || "");
 
-                // Фон
                 if (cellData.bg) {
                     ctx.fillStyle = cellData.bg;
                     ctx.fillRect(x, y, DEFAULT_COL_WIDTH * zoom, DEFAULT_ROW_HEIGHT * zoom);
                 }
 
-                // Сетка
                 ctx.strokeStyle = '#d0d0d0';
-                ctx.lineWidth = 0.5;
+                ctx.lineWidth = 1;
                 ctx.strokeRect(x, y, DEFAULT_COL_WIDTH * zoom, DEFAULT_ROW_HEIGHT * zoom);
 
-                // Отрисовка Overflow Текста
                 if (cellVal) {
                     ctx.fillStyle = '#000000';
-                    let textWidth = ctx.measureText(cellVal).width;
-                    let cellWidth = DEFAULT_COL_WIDTH * zoom;
-
-                    // Если текст шире ячейки — проверяем пустые ячейки справа
-                    let allowedWidth = cellWidth;
-                    if (textWidth > cellWidth - 8) {
-                        let nextC = c + 1;
-                        while (nextC < maxCols) {
-                            let nextKey = `${r}_${nextC}`;
-                            let nextCell = gridData[nextKey];
-                            let nextVal = diffs[nextKey] !== undefined ? diffs[nextKey] : (nextCell ? nextCell.v : "");
-                            if (!nextVal && (!nextCell || !nextCell.bg)) {
-                                allowedWidth += DEFAULT_COL_WIDTH * zoom;
-                                nextC++;
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-
                     ctx.save();
                     ctx.beginPath();
-                    ctx.rect(x + 2, y, allowedWidth - 4, DEFAULT_ROW_HEIGHT * zoom);
+                    ctx.rect(x + 2, y, DEFAULT_COL_WIDTH * zoom - 4, DEFAULT_ROW_HEIGHT * zoom);
                     ctx.clip();
                     ctx.fillText(cellVal, x + 4, y + (DEFAULT_ROW_HEIGHT * zoom) / 2);
                     ctx.restore();
@@ -146,7 +122,7 @@
             }
         }
 
-        // 2. Рамка выделенной ячейки
+        // 2. Рамка выделения
         if (selectedCell) {
             let sx = HEADER_WIDTH + selectedCell.c * DEFAULT_COL_WIDTH * zoom - scrollX;
             let sy = HEADER_HEIGHT + selectedCell.r * DEFAULT_ROW_HEIGHT * zoom - scrollY;
@@ -155,30 +131,31 @@
             ctx.strokeRect(sx, sy, DEFAULT_COL_WIDTH * zoom, DEFAULT_ROW_HEIGHT * zoom);
         }
 
-        // 3. Заголовки (A, B, C... / 1, 2, 3...)
+        // 3. Заголовки (A, B, C / 1, 2, 3)
         renderHeaders();
-
         ctx.restore();
     }
 
     function renderHeaders() {
-        ctx.fillStyle = '#f8f9fa';
+        ctx.fillStyle = '#f1f3f4';
         ctx.fillRect(0, 0, window.innerWidth, HEADER_HEIGHT);
         ctx.fillRect(0, 0, HEADER_WIDTH, window.innerHeight);
 
-        ctx.fillStyle = '#5f6368';
+        ctx.fillStyle = '#3c4043';
         ctx.textAlign = 'center';
         ctx.strokeStyle = '#c0c0c0';
+        ctx.lineWidth = 1;
 
-        // Колонки
+        // Колонки (A..Z)
         for (let c = 0; c < maxCols; c++) {
             let x = HEADER_WIDTH + c * DEFAULT_COL_WIDTH * zoom - scrollX;
             if (x < HEADER_WIDTH || x > window.innerWidth) continue;
             ctx.strokeRect(x, 0, DEFAULT_COL_WIDTH * zoom, HEADER_HEIGHT);
-            ctx.fillText(String.fromCharCode(65 + c), x + (DEFAULT_COL_WIDTH * zoom) / 2, HEADER_HEIGHT / 2);
+            let colName = getColName(c);
+            ctx.fillText(colName, x + (DEFAULT_COL_WIDTH * zoom) / 2, HEADER_HEIGHT / 2);
         }
 
-        // Строки
+        // Строки (1..N)
         for (let r = 0; r < maxRows; r++) {
             let y = HEADER_HEIGHT + r * DEFAULT_ROW_HEIGHT * zoom - scrollY;
             if (y < HEADER_HEIGHT || y > window.innerHeight) continue;
@@ -186,13 +163,21 @@
             ctx.fillText(r + 1, HEADER_WIDTH / 2, y + (DEFAULT_ROW_HEIGHT * zoom) / 2);
         }
 
-        // Левый верхний угол
         ctx.fillStyle = '#e8eaed';
         ctx.fillRect(0, 0, HEADER_WIDTH, HEADER_HEIGHT);
         ctx.strokeRect(0, 0, HEADER_WIDTH, HEADER_HEIGHT);
     }
 
-    // Touch Event Handling (Без задержки 300ms для Pinch-Zoom & Scroll)
+    function getColName(n) {
+        let str = "";
+        while (n >= 0) {
+            str = String.fromCharCode((n % 26) + 65) + str;
+            n = Math.floor(n / 26) - 1;
+        }
+        return str;
+    }
+
+    // Touch events
     let lastTouches = [];
     let touchStartTime = 0;
     let lastTapTime = 0;
@@ -207,24 +192,10 @@
 
     canvas.addEventListener('touchmove', (e) => {
         if (e.touches.length === 1 && lastTouches.length === 1) {
-            // Скролл
             let dx = lastTouches[0].clientX - e.touches[0].clientX;
             let dy = lastTouches[0].clientY - e.touches[0].clientY;
             scrollX = Math.max(0, scrollX + dx);
             scrollY = Math.max(0, scrollY + dy);
-            render();
-        } else if (e.touches.length === 2 && lastTouches.length === 2) {
-            // Pinch-to-zoom
-            let prevDist = Math.hypot(
-                lastTouches[0].clientX - lastTouches[1].clientX,
-                lastTouches[0].clientY - lastTouches[1].clientY
-            );
-            let currDist = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX,
-                e.touches[0].clientY - e.touches[1].clientY
-            );
-            let factor = currDist / prevDist;
-            zoom = Math.min(Math.max(0.5, zoom * factor), 2.5);
             render();
         }
         lastTouches = Array.from(e.touches);
@@ -232,7 +203,7 @@
 
     canvas.addEventListener('touchend', (e) => {
         let touchDuration = Date.now() - touchStartTime;
-        if (touchDuration < 200 && lastTouches.length === 1) {
+        if (touchDuration < 250 && lastTouches.length === 1) {
             let touch = lastTouches[0];
             let x = touch.clientX - HEADER_WIDTH + scrollX;
             let y = touch.clientY - HEADER_HEIGHT + scrollY;
@@ -244,10 +215,8 @@
                 if (col < maxCols && row < maxRows) {
                     let now = Date.now();
                     if (now - lastTapTime < 300 && selectedCell && selectedCell.r === row && selectedCell.c === col) {
-                        // Двойной тап -> Редактирование
                         openEditor(row, col);
                     } else {
-                        // Одиночный тап -> Выделение
                         selectedCell = { r: row, c: col };
                         render();
                     }
@@ -257,7 +226,6 @@
         }
     });
 
-    // Редактор ячеек
     function openEditor(r, c) {
         selectedCell = { r, c };
         let key = `${r}_${c}`;
@@ -280,9 +248,6 @@
         if (save && selectedCell) {
             let key = `${selectedCell.r}_${selectedCell.c}`;
             diffs[key] = cellInput.value;
-
-            // Вызов автосохранения через мост AndroidBridge
-            sendDiffsToKotlin();
         }
         cellInput.style.display = 'none';
         render();
@@ -294,22 +259,22 @@
         if (e.key === 'Escape') closeEditor(false);
     });
 
-    function sendDiffsToKotlin() {
-        if (window.AndroidBridge && typeof window.AndroidBridge.saveChanges === 'function') {
-            let diffArray = [];
-            for (let key in diffs) {
-                let parts = key.split('_');
-                diffArray.push({
-                    r: parseInt(parts[0]),
-                    c: parseInt(parts[1]),
-                    v: diffs[key]
-                });
-            }
-            window.AndroidBridge.saveChanges(JSON.stringify(diffArray));
+    // Функция передачи диффов в Android при сохранении
+    window.getDiffsJson = function() {
+        let diffArray = [];
+        for (let key in diffs) {
+            let parts = key.split('_');
+            diffArray.push({
+                r: parseInt(parts[0]),
+                c: parseInt(parts[1]),
+                v: diffs[key]
+            });
         }
-    }
+        return JSON.stringify(diffArray);
+    };
 
-    initCanvas();
+    resizeCanvas();
+    render(); // Рендерим пустую сетку по умолчанию!
 </script>
 </body>
 </html>
