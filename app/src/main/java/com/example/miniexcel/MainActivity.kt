@@ -18,29 +18,21 @@ import kotlinx.coroutines.withContext
 import org.apache.poi.ss.usermodel.*
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var currentWorkbook: Workbook? = null
     private var currentUri: Uri? = null
+    private var tempFile: File? = null
 
-    // Регистрация лаунчера для выбора .xls / .xlsx файлов
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
             currentUri = it
-            // Предоставляем устойчивые права на чтение/запись системного Uri
-            try {
-                contentResolver.takePersistableUriPermission(
-                    it,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or 
-                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            } catch (e: Exception) {
-                Log.w("MiniExcel", "Persistable permission not granted: ${e.message}")
-            }
             loadExcelFile(it)
         }
     }
@@ -55,7 +47,6 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
 
-        // Кнопка Открыть -> открывает системный файловый менеджер
         btnOpen.setOnClickListener {
             openFileLauncher.launch(
                 arrayOf(
@@ -66,7 +57,6 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // Кнопка Сохранить -> запрашивает актуальный JSON с JS и запускает сохранение
         btnSave.setOnClickListener {
             if (currentWorkbook == null) {
                 Toast.makeText(this, "Сначала откройте файл", Toast.LENGTH_SHORT).show()
@@ -100,23 +90,37 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
+    /**
+     * Безопасное чтение XLS / XLSX через локальный кэш-файл
+     */
     private fun loadExcelFile(uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                contentResolver.openInputStream(uri)?.use { inputStream ->
-                    currentWorkbook = WorkbookFactory.create(inputStream)
+                // 1. Копируем данные из Uri во временный файл кэша
+                val localFile = File.createTempFile("excel_cache", ".tmp", cacheDir)
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(localFile).use { output ->
+                        input.copyTo(output)
+                    }
                 }
+                tempFile = localFile
 
-                val sheet = currentWorkbook?.getSheetAt(0) ?: return@launch
+                // 2. POI открывает локальный файл гораздо стабильнее, чем прямой Stream
+                currentWorkbook = WorkbookFactory.create(localFile)
+
+                val sheet = currentWorkbook?.getSheetAt(0) ?: throw Exception("Лист в Excel не найден")
                 val jsonResult = parseSheetToJSON(sheet)
 
                 withContext(Dispatchers.Main) {
                     webView.evaluateJavascript("window.loadJsonData($jsonResult)", null)
+                    Toast.makeText(this@MainActivity, "Файл загружен!", Toast.LENGTH_SHORT).show()
                 }
-            } catch (e: Exception) {
-                Log.e("MiniExcel", "Error loading workbook", e)
+            } catch (t: Throwable) {
+                // Ловим любые Throwable (включая NoClassDefFoundError)
+                Log.e("MiniExcel", "Error opening Excel file", t)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Ошибка открытия файла", Toast.LENGTH_SHORT).show()
+                    val errorMsg = t.localizedMessage ?: t.javaClass.simpleName
+                    Toast.makeText(this@MainActivity, "Ошибка: $errorMsg", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -125,10 +129,14 @@ class MainActivity : AppCompatActivity() {
     private fun parseSheetToJSON(sheet: Sheet): String {
         val root = JSONObject()
         val rowsArray = JSONArray()
-        val evaluator = currentWorkbook?.creationHelper?.createFormulaEvaluator()
+        val evaluator = try {
+            currentWorkbook?.creationHelper?.createFormulaEvaluator()
+        } catch (e: Exception) {
+            null
+        }
 
         val lastRowNum = sheet.lastRowNum
-        val maxRows = minOf(lastRowNum, 5000)
+        val maxRows = minOf(lastRowNum, 2000)
 
         for (r in 0..maxRows) {
             val row = sheet.getRow(r) ?: continue
@@ -139,7 +147,7 @@ class MainActivity : AppCompatActivity() {
             if (lastCellNum < 0) continue
 
             var hasDataInRow = false
-            for (c in 0 until minOf(lastCellNum, 256)) {
+            for (c in 0 until minOf(lastCellNum, 128)) {
                 val cell = row.getCell(c)
                 val cellObj = JSONObject()
                 cellObj.put("r", r)
@@ -179,10 +187,10 @@ class MainActivity : AppCompatActivity() {
             val type = cell.cellTypeEnum
 
             when (type) {
-                CellType.STRING -> cell.stringCellValue
+                CellType.STRING -> cell.stringCellValue ?: ""
                 CellType.NUMERIC -> {
                     if (DateUtil.isCellDateFormatted(cell)) {
-                        cell.dateCellValue.toString()
+                        cell.dateCellValue?.toString() ?: ""
                     } else {
                         val num = cell.numericCellValue
                         if (num == num.toLong().toDouble()) num.toLong().toString() else num.toString()
@@ -195,12 +203,12 @@ class MainActivity : AppCompatActivity() {
                         @Suppress("DEPRECATION")
                         when (evaluated.cellTypeEnum) {
                             CellType.NUMERIC -> evaluated.numberValue.toString()
-                            CellType.STRING -> evaluated.stringValue
+                            CellType.STRING -> evaluated.stringValue ?: ""
                             CellType.BOOLEAN -> evaluated.booleanValue.toString()
                             else -> ""
                         }
                     } else {
-                        cell.cellFormula
+                        cell.cellFormula ?: ""
                     }
                 }
                 else -> ""
@@ -251,6 +259,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
+                    // Сохраняем результат обратно в исходный Uri
                     contentResolver.openOutputStream(uri, "rwt")?.use { os ->
                         wb.write(os)
                         os.flush()
@@ -259,10 +268,10 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(this@MainActivity, "Сохранено успешно", Toast.LENGTH_SHORT).show()
                     }
-                } catch (e: Exception) {
-                    Log.e("MiniExcel", "Error saving workbook", e)
+                } catch (t: Throwable) {
+                    Log.e("MiniExcel", "Error saving workbook", t)
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Ошибка сохранения", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Ошибка сохранения: ${t.localizedMessage}", Toast.LENGTH_LONG).show()
                     }
                 }
             }
