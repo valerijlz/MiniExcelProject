@@ -45,8 +45,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'com.google.android.material:material:1.12.0'
 
-    // Адаптированный для Android порт Apache POI (поддерживает и .xls, и .xlsx)
-    implementation 'com.github.centic9:poi-on-android:5.2.0'
+    // Рабочая библиотека POI для Android
+    implementation 'com.github.SUPERCILEX.poi-android:poi:3.17'
 
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0'
