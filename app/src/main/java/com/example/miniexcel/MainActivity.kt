@@ -17,9 +17,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.poi.ss.usermodel.BorderStyle
 import org.apache.poi.ss.usermodel.CellType
-import org.apache.poi.ss.usermodel.FillPatternType
+import org.apache.poi.ss.usermodel.WorkbookFactory
 import org.apache.poi.ss.util.CellRangeAddress
-import org.apache.poi.xssf.usermodel.XSSFColor
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,7 +40,7 @@ class MainActivity : AppCompatActivity() {
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let { readXlsxFromUri(it) }
+        uri?.let { readExcelFromUri(it) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,7 +50,7 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         progressBar = findViewById(R.id.progressBar)
 
-        findViewById<Button>(R.id.btnOpen).setOnClickListener { openXlsx() }
+        findViewById<Button>(R.id.btnOpen).setOnClickListener { openExcel() }
         findViewById<Button>(R.id.btnSave).setOnClickListener { exportToXlsx() }
 
         setupWebView()
@@ -87,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript("javascript:window.loadJsonData('$escapedJson');", null)
     }
 
-    fun openXlsx() {
+    fun openExcel() {
         openFileLauncher.launch(
             arrayOf(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -97,7 +96,7 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun readXlsxFromUri(uri: Uri) {
+    private fun readExcelFromUri(uri: Uri) {
         progressBar.visibility = View.VISIBLE
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -105,7 +104,8 @@ class MainActivity : AppCompatActivity() {
                     ?: throw Exception("Не удалось открыть файл")
 
                 val resultPayload = inputStream.use { stream ->
-                    val workbook = XSSFWorkbook(stream)
+                    // WorkbookFactory поддерживает и .xls, и .xlsx!
+                    val workbook = WorkbookFactory.create(stream)
                     val sheet = workbook.getSheetAt(0) ?: throw Exception("Лист не найден")
 
                     val matrixArray = JSONArray()
@@ -114,15 +114,16 @@ class MainActivity : AppCompatActivity() {
                     val heightsObj = JSONObject()
 
                     var maxCol = 0
+                    val maxRowsToRead = Math.min(sheet.lastRowNum + 1, 1000)
 
-                    for (r in 0..sheet.lastRowNum) {
+                    for (r in 0 until maxRowsToRead) {
                         val row = sheet.getRow(r)
                         val rowArray = JSONArray()
                         if (row != null) {
                             heightsObj.put(r.toString(), (row.heightInPoints * 1.33).toInt())
-                            if (row.lastCellNum > maxCol) maxCol = row.lastCellNum.toInt()
+                            if (row.lastCellNum > maxCol) maxCol = Math.min(row.lastCellNum.toInt(), 50)
 
-                            for (c in 0 until row.lastCellNum) {
+                            for (c in 0 until maxCol) {
                                 val cell = row.getCell(c)
                                 if (cell != null) {
                                     val cellObj = JSONObject()
@@ -138,28 +139,15 @@ class MainActivity : AppCompatActivity() {
                                     }
                                     cellObj.put("v", valStr)
 
+                                    // Оптимизированный разбор стилей без тяжелой работы с XSSFColor
                                     val style = cell.cellStyle
                                     if (style != null) {
-                                        if (style.fillPattern == FillPatternType.SOLID_FOREGROUND) {
-                                            val fillClr = style.fillForegroundColorColor as? XSSFColor
-                                            fillClr?.rgb?.let { rgb ->
-                                                cellObj.put("bg", String.format("#%02X%02X%02X", rgb[0], rgb[1], rgb[2]))
-                                            }
-                                        }
-
                                         val borderObj = JSONObject()
-                                        if (style.borderTop != BorderStyle.NONE) {
-                                            borderObj.put("top", JSONObject().put("style", style.borderTop.name.lowercase()))
-                                        }
-                                        if (style.borderBottom != BorderStyle.NONE) {
-                                            borderObj.put("bottom", JSONObject().put("style", style.borderBottom.name.lowercase()))
-                                        }
-                                        if (style.borderLeft != BorderStyle.NONE) {
-                                            borderObj.put("left", JSONObject().put("style", style.borderLeft.name.lowercase()))
-                                        }
-                                        if (style.borderRight != BorderStyle.NONE) {
-                                            borderObj.put("right", JSONObject().put("style", style.borderRight.name.lowercase()))
-                                        }
+                                        if (style.borderTop != BorderStyle.NONE) borderObj.put("top", JSONObject().put("width", 1))
+                                        if (style.borderBottom != BorderStyle.NONE) borderObj.put("bottom", JSONObject().put("width", 1))
+                                        if (style.borderLeft != BorderStyle.NONE) borderObj.put("left", JSONObject().put("width", 1))
+                                        if (style.borderRight != BorderStyle.NONE) borderObj.put("right", JSONObject().put("width", 1))
+
                                         if (borderObj.length() > 0) cellObj.put("borders", borderObj)
                                     }
 
@@ -204,7 +192,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
             } catch (e: Exception) {
-                Log.e("OpenError", "Ошибка открытия XLSX", e)
+                Log.e("OpenError", "Ошибка открытия Excel", e)
                 withContext(Dispatchers.Main) {
                     progressBar.visibility = View.GONE
                     Toast.makeText(this@MainActivity, "Ошибка открытия: ${e.message}", Toast.LENGTH_LONG).show()
