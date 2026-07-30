@@ -120,19 +120,13 @@ private fun loadExcelFile(uri: Uri) {
     }
 }
 
-    private fun parseSheetToJSON(sheet: Sheet): String {
+private fun parseSheetToJSON(sheet: Sheet): String {
         val root = JSONObject()
         val rowsArray = JSONArray()
-        
-        // Перехватываем возможные ошибки при вычислении формул в POI
-        val evaluator = try {
-            currentWorkbook?.creationHelper?.createFormulaEvaluator()
-        } catch (e: Exception) {
-            null
-        }
+        val evaluator = currentWorkbook?.creationHelper?.createFormulaEvaluator()
 
         val lastRowNum = sheet.lastRowNum
-        val maxRows = minOf(lastRowNum, 300)
+        val maxRows = minOf(lastRowNum, 5000) 
 
         for (r in 0..maxRows) {
             val row = sheet.getRow(r) ?: continue
@@ -142,25 +136,36 @@ private fun loadExcelFile(uri: Uri) {
 
             if (lastCellNum < 0) continue
 
-            for (c in 0 until minOf(lastCellNum, 50)) {
-                val cell = row.getCell(c) ?: continue
+            var hasDataInRow = false
+            for (c in 0 until minOf(lastCellNum, 256)) {
+                val cell = row.getCell(c)
                 val cellObj = JSONObject()
                 cellObj.put("r", r)
                 cellObj.put("c", c)
 
-                val value = getCellValueAsString(cell, evaluator)
-                if (value.isNotEmpty()) {
-                    cellObj.put("v", value)
+                if (cell != null) {
+                    val value = getCellValueAsString(cell, evaluator)
+                    if (value.isNotEmpty()) {
+                        cellObj.put("v", value)
+                        hasDataInRow = true
+                    }
+                    
+                    val bgHex = getSafeBackgroundColor(cell)
+                    if (bgHex != null) {
+                        cellObj.put("bg", bgHex)
+                    }
                 }
                 cellsArray.put(cellObj)
             }
 
-            rowObj.put("r", r)
-            rowObj.put("cells", cellsArray)
-            rowsArray.put(rowObj)
+            if (hasDataInRow || cellsArray.length() > 0) {
+                rowObj.put("r", r)
+                rowObj.put("cells", cellsArray)
+                rowsArray.put(rowObj)
+            }
         }
 
-        root.put("maxRows", maxOf(maxRows + 1, 50))
+        root.put("maxRows", maxRows + 1)
         root.put("maxCols", 26)
         root.put("rows", rowsArray)
         return root.toString()
@@ -168,25 +173,33 @@ private fun loadExcelFile(uri: Uri) {
 
     private fun getCellValueAsString(cell: Cell, evaluator: FormulaEvaluator?): String {
         return try {
-            when (cell.cellType) {
+            // В POI 3.17 безопаснее брать cellTypeEnum для совместимости с when-выражениями
+            @Suppress("DEPRECATION")
+            val type = cell.cellTypeEnum
+
+            when (type) {
                 CellType.STRING -> cell.stringCellValue
                 CellType.NUMERIC -> {
-                    if (DateUtil.isCellDateFormatted(cell)) cell.dateCellValue.toString()
-                    else cell.numericCellValue.let {
-                        if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
+                    if (DateUtil.isCellDateFormatted(cell)) {
+                        cell.dateCellValue.toString()
+                    } else {
+                        val num = cell.numericCellValue
+                        if (num == num.toLong().toDouble()) num.toLong().toString() else num.toString()
                     }
                 }
                 CellType.BOOLEAN -> cell.booleanCellValue.toString()
                 CellType.FORMULA -> {
-                    evaluator?.let {
-                        val evaluated = it.evaluate(cell)
-                        when (evaluated.cellType) {
+                    if (evaluator != null) {
+                        val evaluated = evaluator.evaluate(cell)
+                        when (evaluated.cellTypeEnum) {
                             CellType.NUMERIC -> evaluated.numberValue.toString()
                             CellType.STRING -> evaluated.stringValue
                             CellType.BOOLEAN -> evaluated.booleanValue.toString()
                             else -> ""
                         }
-                    } ?: cell.cellFormula
+                    } else {
+                        cell.cellFormula
+                    }
                 }
                 else -> ""
             }
