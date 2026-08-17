@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.poi.ss.usermodel.*
+import org.apache.poi.ss.util.CellRangeAddress
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -26,7 +27,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private var currentWorkbook: Workbook? = null
     private var currentUri: Uri? = null
-    private var tempFile: File? = null
 
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -90,24 +90,17 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
-    /**
-     * Безопасное чтение XLS / XLSX через локальный кэш-файл
-     */
     private fun loadExcelFile(uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                // 1. Копируем данные из Uri во временный файл кэша
                 val localFile = File.createTempFile("excel_cache", ".tmp", cacheDir)
                 contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(localFile).use { output ->
                         input.copyTo(output)
                     }
                 }
-                tempFile = localFile
 
-                // 2. POI открывает локальный файл гораздо стабильнее, чем прямой Stream
                 currentWorkbook = WorkbookFactory.create(localFile)
-
                 val sheet = currentWorkbook?.getSheetAt(0) ?: throw Exception("Лист в Excel не найден")
                 val jsonResult = parseSheetToJSON(sheet)
 
@@ -116,7 +109,6 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this@MainActivity, "Файл загружен!", Toast.LENGTH_SHORT).show()
                 }
             } catch (t: Throwable) {
-                // Ловим любые Throwable (включая NoClassDefFoundError)
                 Log.e("MiniExcel", "Error opening Excel file", t)
                 withContext(Dispatchers.Main) {
                     val errorMsg = t.localizedMessage ?: t.javaClass.simpleName
@@ -134,6 +126,19 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             null
         }
+
+        // 1. Считываем объединения ячеек (Merged Regions)
+        val mergedArray = JSONArray()
+        for (i in 0 until sheet.numMergedRegions) {
+            val range: CellRangeAddress = sheet.getMergedRegion(i)
+            val mergedObj = JSONObject()
+            mergedObj.put("fromRow", range.firstRow)
+            mergedObj.put("toRow", range.lastRow)
+            mergedObj.put("fromCol", range.firstColumn)
+            mergedObj.put("toCol", range.lastColumn)
+            mergedArray.put(mergedObj)
+        }
+        root.put("merged", mergedArray)
 
         val lastRowNum = sheet.lastRowNum
         val maxRows = minOf(lastRowNum, 2000)
@@ -160,9 +165,19 @@ class MainActivity : AppCompatActivity() {
                         hasDataInRow = true
                     }
 
+                    // Читаем фоновый цвет
                     val bgHex = getSafeBackgroundColor(cell)
                     if (!bgHex.isNullOrEmpty()) {
                         cellObj.put("bg", bgHex as String)
+                    }
+
+                    // Читаем границы (Borders)
+                    val style = cell.cellStyle
+                    if (style != null) {
+                        if (style.borderTop != BorderStyle.NONE) cellObj.put("bt", 1)
+                        if (style.borderBottom != BorderStyle.NONE) cellObj.put("bb", 1)
+                        if (style.borderLeft != BorderStyle.NONE) cellObj.put("bl", 1)
+                        if (style.borderRight != BorderStyle.NONE) cellObj.put("br", 1)
                     }
                 }
                 cellsArray.put(cellObj)
@@ -229,7 +244,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     inner class WebAppInterface {
-
         @JavascriptInterface
         fun saveChanges(diffJsonString: String) {
             lifecycleScope.launch(Dispatchers.IO) {
@@ -259,7 +273,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Сохраняем результат обратно в исходный Uri
                     contentResolver.openOutputStream(uri, "rwt")?.use { os ->
                         wb.write(os)
                         os.flush()
