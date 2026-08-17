@@ -127,7 +127,7 @@ class MainActivity : AppCompatActivity() {
             null
         }
 
-        // 1. Считываем объединения ячеек (Merged Regions)
+        // 1. Объединения ячеек
         val mergedArray = JSONArray()
         for (i in 0 until sheet.numMergedRegions) {
             val range: CellRangeAddress = sheet.getMergedRegion(i)
@@ -139,6 +139,16 @@ class MainActivity : AppCompatActivity() {
             mergedArray.put(mergedObj)
         }
         root.put("merged", mergedArray)
+
+        // 2. Ширины колонок
+        val colWidthsObj = JSONObject()
+        for (c in 0..30) {
+            val w = sheet.getColumnWidth(c)
+            if (w > 0) {
+                colWidthsObj.put(c.toString(), (w / 256.0 * 8.0).toInt())
+            }
+        }
+        root.put("colWidths", colWidthsObj)
 
         val lastRowNum = sheet.lastRowNum
         val maxRows = minOf(lastRowNum, 2000)
@@ -165,13 +175,13 @@ class MainActivity : AppCompatActivity() {
                         hasDataInRow = true
                     }
 
-                    // Читаем фоновый цвет
+                    // Цвет фона
                     val bgHex = getSafeBackgroundColor(cell)
                     if (!bgHex.isNullOrEmpty()) {
-                        cellObj.put("bg", bgHex as String)
+                        cellObj.put("bg", bgHex)
                     }
 
-                    // Читаем границы (Borders)
+                    // Границы ячеек
                     val style = cell.cellStyle
                     if (style != null) {
                         if (style.borderTop != BorderStyle.NONE) cellObj.put("bt", 1)
