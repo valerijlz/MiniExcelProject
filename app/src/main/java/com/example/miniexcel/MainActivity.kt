@@ -181,18 +181,15 @@ class MainActivity : AppCompatActivity() {
                         cellObj.put("bg", bgHex)
                     }
 
-                    // Границы ячеек
+                    // Границы ячеек (числовая проверка для POI 3.17)
                     val style = cell.cellStyle
-if (style != null) {
-    @Suppress("DEPRECATION")
-    if (style.borderTop != CellStyle.BORDER_NONE) cellObj.put("bt", 1)
-    @Suppress("DEPRECATION")
-    if (style.borderBottom != CellStyle.BORDER_NONE) cellObj.put("bb", 1)
-    @Suppress("DEPRECATION")
-    if (style.borderLeft != CellStyle.BORDER_NONE) cellObj.put("bl", 1)
-    @Suppress("DEPRECATION")
-    if (style.borderRight != CellStyle.BORDER_NONE) cellObj.put("br", 1)
-}
+                    if (style != null) {
+                        if (style.borderTop.toInt() != 0) cellObj.put("bt", 1)
+                        if (style.borderBottom.toInt() != 0) cellObj.put("bb", 1)
+                        if (style.borderLeft.toInt() != 0) cellObj.put("bl", 1)
+                        if (style.borderRight.toInt() != 0) cellObj.put("br", 1)
+                    }
+                }
                 cellsArray.put(cellObj)
             }
 
