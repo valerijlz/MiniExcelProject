@@ -183,13 +183,16 @@ class MainActivity : AppCompatActivity() {
 
                     // Границы ячеек
                     val style = cell.cellStyle
-                    if (style != null) {
-                        if (style.borderTop != BorderStyle.NONE) cellObj.put("bt", 1)
-                        if (style.borderBottom != BorderStyle.NONE) cellObj.put("bb", 1)
-                        if (style.borderLeft != BorderStyle.NONE) cellObj.put("bl", 1)
-                        if (style.borderRight != BorderStyle.NONE) cellObj.put("br", 1)
-                    }
-                }
+if (style != null) {
+    @Suppress("DEPRECATION")
+    if (style.borderTop != CellStyle.BORDER_NONE) cellObj.put("bt", 1)
+    @Suppress("DEPRECATION")
+    if (style.borderBottom != CellStyle.BORDER_NONE) cellObj.put("bb", 1)
+    @Suppress("DEPRECATION")
+    if (style.borderLeft != CellStyle.BORDER_NONE) cellObj.put("bl", 1)
+    @Suppress("DEPRECATION")
+    if (style.borderRight != CellStyle.BORDER_NONE) cellObj.put("br", 1)
+}
                 cellsArray.put(cellObj)
             }
 
