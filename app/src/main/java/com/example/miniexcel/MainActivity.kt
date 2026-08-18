@@ -15,6 +15,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.apache.poi.hssf.usermodel.HSSFColor
 import org.apache.poi.ss.usermodel.*
 import org.apache.poi.ss.util.CellRangeAddress
 import org.json.JSONArray
@@ -40,6 +41,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Исправление XML-парсеров StAX для Android (решает проблему com.bea.xml.stream)
+        fixXmlStaxProviders()
 
         webView = findViewById(R.id.webView)
         val btnOpen = findViewById<Button>(R.id.btnOpen)
@@ -71,6 +75,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun fixXmlStaxProviders() {
+        try {
+            System.setProperty("javax.xml.stream.XMLInputFactory", "com.com.fasterxml.aalto.stax.InputFactoryImpl")
+            System.setProperty("javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl")
+            System.setProperty("javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl")
+        } catch (t: Throwable) {
+            // fallback для стандартных фабрик Java
+            System.setProperty("javax.xml.stream.XMLInputFactory", "org.apache.commons.com.sun.xml.internal.stream.XMLInputFactoryImpl")
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         webView.settings.apply {
@@ -92,8 +107,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun initPoiEnvironment() {
         try {
-            // Настройка ClassLoader для предотвращения ошибки ZipPackagePropertiesMarshaller в Android
-            Thread.currentThread().contextClassLoader = javaClass.classLoader
+            // Исправление ClassLoader для корректной загрузки Marshallers в POI OpenXML
+            Thread.currentThread().contextClassLoader = MainActivity::class.java.classLoader
         } catch (e: Exception) {
             Log.e("MiniExcel", "Failed to set contextClassLoader", e)
         }
@@ -186,13 +201,13 @@ class MainActivity : AppCompatActivity() {
                         hasDataInRow = true
                     }
 
-                    // Цвет фона
+                    // Цвет фона с поддержкой .xls и .xlsx
                     val bgHex = getSafeBackgroundColor(cell)
                     if (!bgHex.isNullOrEmpty()) {
                         cellObj.put("bg", bgHex)
                     }
 
-                    // Границы ячеек (числовая проверка для POI 3.17)
+                    // Границы ячеек
                     val style = cell.cellStyle
                     if (style != null) {
                         if (style.borderTop.toInt() != 0) cellObj.put("bt", 1)
@@ -256,9 +271,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun getSafeBackgroundColor(cell: Cell): String? {
         return try {
-            val fill = cell.cellStyle?.fillForegroundColorColor ?: return null
-            val hex = fill.toString()
-            if (hex.length >= 6) "#${hex.takeLast(6)}" else null
+            val style = cell.cellStyle ?: return null
+            val color = style.fillForegroundColorColor ?: return null
+            
+            if (color is HSSFColor) {
+                val rgb = color.triplet
+                if (rgb != null && rgb.size == 3 && !(rgb[0] == 255 && rgb[1] == 255 && rgb[2] == 255)) {
+                    return String.format("#%02X%02X%02X", rgb[0], rgb[1], rgb[2])
+                }
+            } else {
+                val hex = color.toString()
+                if (hex.length >= 6) return "#${hex.takeLast(6)}"
+            }
+            null
         } catch (t: Throwable) {
             null
         }
@@ -294,13 +319,14 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    contentResolver.openOutputStream(uri, "rwt")?.use { os ->
+                    // Перезапись файла через ContentResolver без флага дозаписи "rwt"
+                    contentResolver.openOutputStream(uri, "wt")?.use { os ->
                         wb.write(os)
                         os.flush()
                     }
 
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Сохранено успешно", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Сохранено успешно!", Toast.LENGTH_SHORT).show()
                     }
                 } catch (t: Throwable) {
                     Log.e("MiniExcel", "Error saving workbook", t)
