@@ -43,6 +43,12 @@ android {
                 'META-INF/NOTICE.txt',
                 'META-INF/groovy-*'
             ]
+            // Позволяет правильным ServiceLoader файлам попасть в сборку без конфликтов
+            pickFirsts += [
+                'META-INF/services/javax.xml.stream.XMLInputFactory',
+                'META-INF/services/javax.xml.stream.XMLOutputFactory',
+                'META-INF/services/javax.xml.stream.XMLEventFactory'
+            ]
         }
     }
 }
@@ -52,7 +58,10 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'com.google.android.material:material:1.12.0'
 
-    // POI Android для поддержке XLS и XLSX
+    // Полноценный StAX-парсер для Android (убирает com.bea.xml.stream)
+    implementation 'com.fasterxml:aalto-xml:1.3.2'
+
+    // POI Android для поддержки XLS и XLSX
     implementation 'com.github.SUPERCILEX.poi-android:poi:3.17'
 
     // Coroutines
