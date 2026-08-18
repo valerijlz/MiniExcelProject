@@ -2,279 +2,210 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>MiniExcel Grid</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-        body, html { width: 100%; height: 100%; overflow: hidden; background: #ffffff; }
-        #canvasContainer { position: relative; width: 100vw; height: 100vh; }
-        canvas { display: block; width: 100%; height: 100%; }
-        #cellInput {
-            position: absolute;
-            display: none;
-            border: 2px solid #1a73e8;
-            outline: none;
-            padding: 0 4px;
-            font-family: sans-serif;
-            font-size: 14px;
-            background: #fff;
-            z-index: 10;
+        * {
+            box-sizing: border-box;
         }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            overflow: auto;
+        }
+        .grid-container {
+            border-collapse: collapse;
+            background-color: #fff;
+            table-layout: fixed;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 4px 6px;
+            font-size: 13px;
+            height: 28px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        th {
+            background-color: #e6e6e6;
+            color: #333;
+            text-align: center;
+            font-weight: bold;
+            user-select: none;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+        .row-header {
+            position: sticky;
+            left: 0;
+            background-color: #e6e6e6;
+            z-index: 3;
+            width: 40px;
+            text-align: center;
+        }
+        th:first-child {
+            z-index: 4;
+        }
+        td.editable {
+            background-color: #fff;
+        }
+        td.editable:focus {
+            outline: 2px solid #1a73e8;
+            background-color: #e8f0fe !important;
+        }
+        .bt { border-top: 2px solid #000 !important; }
+        .bb { border-bottom: 2px solid #000 !important; }
+        .bl { border-left: 2px solid #000 !important; }
+        .br { border-right: 2px solid #000 !important; }
     </style>
 </head>
 <body>
 
-<div id="canvasContainer">
-    <canvas id="gridCanvas"></canvas>
-    <input type="text" id="cellInput" />
-</div>
+<table class="grid-container" id="excelTable">
+    <thead id="tableHead"></thead>
+    <tbody id="tableBody"></tbody>
+</table>
 
 <script>
-    const canvas = document.getElementById('gridCanvas');
-    const ctx = canvas.getContext('2d');
-    const cellInput = document.getElementById('cellInput');
+    let originalData = {};
+    let modifiedCells = {};
 
-    const DEFAULT_COL_WIDTH = 90;
-    const DEFAULT_ROW_HEIGHT = 28;
-    const HEADER_WIDTH = 45;
-    const HEADER_HEIGHT = 28;
-
-    let gridData = {}; 
-    let diffs = {};    
-
-    let dpr = window.devicePixelRatio || 1;
-    let zoom = 1.0;
-    let scrollX = 0;
-    let scrollY = 0;
-
-    let selectedCell = null;
-    let maxRows = 100;
-    let maxCols = 26;
-
-    function resizeCanvas() {
-        canvas.width = window.innerWidth * dpr;
-        canvas.height = window.innerHeight * dpr;
-        canvas.style.width = window.innerWidth + 'px';
-        canvas.style.height = window.innerHeight + 'px';
-        render();
+    function getColName(colIndex) {
+        let name = '';
+        while (colIndex >= 0) {
+            name = String.fromCharCode((colIndex % 26) + 65) + name;
+            colIndex = Math.floor(colIndex / 26) - 1;
+        }
+        return name;
     }
-
-    window.addEventListener('resize', resizeCanvas);
 
     window.loadJsonData = function(data) {
-        gridData = {};
-        diffs = {};
-        maxRows = Math.max(data.maxRows || 100, 50);
-        maxCols = Math.max(data.maxCols || 26, 15);
+        originalData = data;
+        modifiedCells = {};
 
+        const tableHead = document.getElementById('tableHead');
+        const tableBody = document.getElementById('tableBody');
+        tableHead.innerHTML = '';
+        tableBody.innerHTML = '';
+
+        const maxRows = data.maxRows || 100;
+        const maxCols = data.maxCols || 26;
+        const colWidths = data.colWidths || {};
+        const merged = data.merged || [];
+
+        // Карта скрытых объединениями ячеек
+        const mergedMap = {};
+        const spanMap = {};
+
+        merged.forEach(m => {
+            for (let r = m.fromRow; r <= m.toRow; r++) {
+                for (let c = m.fromCol; c <= m.toCol; c++) {
+                    if (r === m.fromRow && c === m.fromCol) {
+                        spanMap[`${r}_${c}`] = {
+                            rowSpan: m.toRow - m.fromRow + 1,
+                            colSpan: m.toCol - m.fromCol + 1
+                        };
+                    } else {
+                        mergedMap[`${r}_${c}`] = true;
+                    }
+                }
+            }
+        });
+
+        // Карта ячеек из JSON
+        const cellMap = {};
         if (data.rows) {
             data.rows.forEach(row => {
-                row.cells.forEach(cell => {
-                    gridData[`${cell.r}_${cell.c}`] = {
-                        v: cell.v || "",
-                        bg: cell.bg || null
-                    };
-                });
+                if (row.cells) {
+                    row.cells.forEach(cell => {
+                        cellMap[`${cell.r}_${cell.c}`] = cell;
+                    });
+                }
             });
         }
-        render();
-    };
 
-    function render() {
-        ctx.save();
-        ctx.scale(dpr, dpr);
-        ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+        // Заголовок таблицы
+        const headRow = document.createElement('tr');
+        const cornerTh = document.createElement('th');
+        cornerTh.className = 'row-header';
+        cornerTh.textContent = '';
+        headRow.appendChild(cornerTh);
 
-        ctx.font = `${13 * zoom}px sans-serif`;
-        ctx.textBaseline = 'middle';
+        for (let c = 0; c < maxCols; c++) {
+            const th = document.createElement('th');
+            th.textContent = getColName(c);
+            if (colWidths[c]) {
+                th.style.width = colWidths[c] + 'px';
+            } else {
+                th.style.width = '80px';
+            }
+            headRow.appendChild(th);
+        }
+        tableHead.appendChild(headRow);
 
-        // 1. Сетка ячеек
+        // Тело таблицы
         for (let r = 0; r < maxRows; r++) {
-            let y = HEADER_HEIGHT + r * DEFAULT_ROW_HEIGHT * zoom - scrollY;
-            if (y + DEFAULT_ROW_HEIGHT * zoom < HEADER_HEIGHT || y > window.innerHeight) continue;
+            const tr = document.createElement('tr');
+            const rowTh = document.createElement('th');
+            rowTh.className = 'row-header';
+            rowTh.textContent = r + 1;
+            tr.appendChild(rowTh);
 
             for (let c = 0; c < maxCols; c++) {
-                let x = HEADER_WIDTH + c * DEFAULT_COL_WIDTH * zoom - scrollX;
-                if (x + DEFAULT_COL_WIDTH * zoom < HEADER_WIDTH || x > window.innerWidth) continue;
+                const key = `${r}_${c}`;
 
-                let key = `${r}_${c}`;
-                let cellData = gridData[key] || {};
-                let cellVal = diffs[key] !== undefined ? diffs[key] : (cellData.v || "");
-
-                if (cellData.bg) {
-                    ctx.fillStyle = cellData.bg;
-                    ctx.fillRect(x, y, DEFAULT_COL_WIDTH * zoom, DEFAULT_ROW_HEIGHT * zoom);
+                if (mergedMap[key]) {
+                    continue; // Пропускаем закрытые объединением ячейки
                 }
 
-                ctx.strokeStyle = '#d0d0d0';
-                ctx.lineWidth = 1;
-                ctx.strokeRect(x, y, DEFAULT_COL_WIDTH * zoom, DEFAULT_ROW_HEIGHT * zoom);
+                const td = document.createElement('td');
+                td.className = 'editable';
+                td.contentEditable = "true";
+                td.dataset.r = r;
+                td.dataset.c = c;
 
-                if (cellVal) {
-                    ctx.fillStyle = '#000000';
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.rect(x + 2, y, DEFAULT_COL_WIDTH * zoom - 4, DEFAULT_ROW_HEIGHT * zoom);
-                    ctx.clip();
-                    ctx.fillText(cellVal, x + 4, y + (DEFAULT_ROW_HEIGHT * zoom) / 2);
-                    ctx.restore();
+                if (spanMap[key]) {
+                    td.rowSpan = spanMap[key].rowSpan;
+                    td.colSpan = spanMap[key].colSpan;
                 }
-            }
-        }
 
-        // 2. Рамка выделения
-        if (selectedCell) {
-            let sx = HEADER_WIDTH + selectedCell.c * DEFAULT_COL_WIDTH * zoom - scrollX;
-            let sy = HEADER_HEIGHT + selectedCell.r * DEFAULT_ROW_HEIGHT * zoom - scrollY;
-            ctx.strokeStyle = '#1a73e8';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(sx, sy, DEFAULT_COL_WIDTH * zoom, DEFAULT_ROW_HEIGHT * zoom);
-        }
-
-        // 3. Заголовки (A, B, C / 1, 2, 3)
-        renderHeaders();
-        ctx.restore();
-    }
-
-    function renderHeaders() {
-        ctx.fillStyle = '#f1f3f4';
-        ctx.fillRect(0, 0, window.innerWidth, HEADER_HEIGHT);
-        ctx.fillRect(0, 0, HEADER_WIDTH, window.innerHeight);
-
-        ctx.fillStyle = '#3c4043';
-        ctx.textAlign = 'center';
-        ctx.strokeStyle = '#c0c0c0';
-        ctx.lineWidth = 1;
-
-        // Колонки (A..Z)
-        for (let c = 0; c < maxCols; c++) {
-            let x = HEADER_WIDTH + c * DEFAULT_COL_WIDTH * zoom - scrollX;
-            if (x < HEADER_WIDTH || x > window.innerWidth) continue;
-            ctx.strokeRect(x, 0, DEFAULT_COL_WIDTH * zoom, HEADER_HEIGHT);
-            let colName = getColName(c);
-            ctx.fillText(colName, x + (DEFAULT_COL_WIDTH * zoom) / 2, HEADER_HEIGHT / 2);
-        }
-
-        // Строки (1..N)
-        for (let r = 0; r < maxRows; r++) {
-            let y = HEADER_HEIGHT + r * DEFAULT_ROW_HEIGHT * zoom - scrollY;
-            if (y < HEADER_HEIGHT || y > window.innerHeight) continue;
-            ctx.strokeRect(0, y, HEADER_WIDTH, DEFAULT_ROW_HEIGHT * zoom);
-            ctx.fillText(r + 1, HEADER_WIDTH / 2, y + (DEFAULT_ROW_HEIGHT * zoom) / 2);
-        }
-
-        ctx.fillStyle = '#e8eaed';
-        ctx.fillRect(0, 0, HEADER_WIDTH, HEADER_HEIGHT);
-        ctx.strokeRect(0, 0, HEADER_WIDTH, HEADER_HEIGHT);
-    }
-
-    function getColName(n) {
-        let str = "";
-        while (n >= 0) {
-            str = String.fromCharCode((n % 26) + 65) + str;
-            n = Math.floor(n / 26) - 1;
-        }
-        return str;
-    }
-
-    // Touch events
-    let lastTouches = [];
-    let touchStartTime = 0;
-    let lastTapTime = 0;
-
-    canvas.addEventListener('touchstart', (e) => {
-        lastTouches = Array.from(e.touches);
-        touchStartTime = Date.now();
-        if (e.touches.length === 1 && cellInput.style.display === 'block') {
-            closeEditor(true);
-        }
-    }, { passive: true });
-
-    canvas.addEventListener('touchmove', (e) => {
-        if (e.touches.length === 1 && lastTouches.length === 1) {
-            let dx = lastTouches[0].clientX - e.touches[0].clientX;
-            let dy = lastTouches[0].clientY - e.touches[0].clientY;
-            scrollX = Math.max(0, scrollX + dx);
-            scrollY = Math.max(0, scrollY + dy);
-            render();
-        }
-        lastTouches = Array.from(e.touches);
-    }, { passive: true });
-
-    canvas.addEventListener('touchend', (e) => {
-        let touchDuration = Date.now() - touchStartTime;
-        if (touchDuration < 250 && lastTouches.length === 1) {
-            let touch = lastTouches[0];
-            let x = touch.clientX - HEADER_WIDTH + scrollX;
-            let y = touch.clientY - HEADER_HEIGHT + scrollY;
-
-            if (x > 0 && y > 0) {
-                let col = Math.floor(x / (DEFAULT_COL_WIDTH * zoom));
-                let row = Math.floor(y / (DEFAULT_ROW_HEIGHT * zoom));
-
-                if (col < maxCols && row < maxRows) {
-                    let now = Date.now();
-                    if (now - lastTapTime < 300 && selectedCell && selectedCell.r === row && selectedCell.c === col) {
-                        openEditor(row, col);
-                    } else {
-                        selectedCell = { r: row, c: col };
-                        render();
+                const cellData = cellMap[key];
+                if (cellData) {
+                    if (cellData.v !== undefined) {
+                        td.textContent = cellData.v;
                     }
-                    lastTapTime = now;
+                    if (cellData.bg) {
+                        td.style.backgroundColor = cellData.bg;
+                    }
+                    if (cellData.bt) td.classList.add('bt');
+                    if (cellData.bb) td.classList.add('bb');
+                    if (cellData.bl) td.classList.add('bl');
+                    if (cellData.br) td.classList.add('br');
                 }
+
+                td.addEventListener('input', function() {
+                    const row = this.dataset.r;
+                    const col = this.dataset.c;
+                    const val = this.textContent;
+                    modifiedCells[`${row}_${col}`] = { r: parseInt(row), c: parseInt(col), v: val };
+                });
+
+                tr.appendChild(td);
             }
+            tableBody.appendChild(tr);
         }
-    });
-
-    function openEditor(r, c) {
-        selectedCell = { r, c };
-        let key = `${r}_${c}`;
-        let currentVal = diffs[key] !== undefined ? diffs[key] : (gridData[key] ? gridData[key].v : "");
-
-        let x = HEADER_WIDTH + c * DEFAULT_COL_WIDTH * zoom - scrollX;
-        let y = HEADER_HEIGHT + r * DEFAULT_ROW_HEIGHT * zoom - scrollY;
-
-        cellInput.style.left = `${x}px`;
-        cellInput.style.top = `${y}px`;
-        cellInput.style.width = `${DEFAULT_COL_WIDTH * zoom}px`;
-        cellInput.style.height = `${DEFAULT_ROW_HEIGHT * zoom}px`;
-        cellInput.value = currentVal;
-        cellInput.style.display = 'block';
-        cellInput.focus();
-    }
-
-    function closeEditor(save) {
-        if (cellInput.style.display === 'none') return;
-        if (save && selectedCell) {
-            let key = `${selectedCell.r}_${selectedCell.c}`;
-            diffs[key] = cellInput.value;
-        }
-        cellInput.style.display = 'none';
-        render();
-    }
-
-    cellInput.addEventListener('blur', () => closeEditor(true));
-    cellInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') closeEditor(true);
-        if (e.key === 'Escape') closeEditor(false);
-    });
-
-    // Функция передачи диффов в Android при сохранении
-    window.getDiffsJson = function() {
-        let diffArray = [];
-        for (let key in diffs) {
-            let parts = key.split('_');
-            diffArray.push({
-                r: parseInt(parts[0]),
-                c: parseInt(parts[1]),
-                v: diffs[key]
-            });
-        }
-        return JSON.stringify(diffArray);
     };
 
-    resizeCanvas();
-    render(); // Рендерим пустую сетку по умолчанию!
+    window.sendDiffsToKotlin = function() {
+        const diffArray = Object.values(modifiedCells);
+        if (window.AndroidBridge && window.AndroidBridge.saveChanges) {
+            window.AndroidBridge.saveChanges(JSON.stringify(diffArray));
+        }
+    };
 </script>
 </body>
 </html>
