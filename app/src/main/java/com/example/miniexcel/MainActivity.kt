@@ -90,9 +90,20 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
+    private fun initPoiEnvironment() {
+        try {
+            // Настройка ClassLoader для предотвращения ошибки ZipPackagePropertiesMarshaller в Android
+            Thread.currentThread().contextClassLoader = javaClass.classLoader
+        } catch (e: Exception) {
+            Log.e("MiniExcel", "Failed to set contextClassLoader", e)
+        }
+    }
+
     private fun loadExcelFile(uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                initPoiEnvironment()
+
                 val localFile = File.createTempFile("excel_cache", ".tmp", cacheDir)
                 contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(localFile).use { output ->
