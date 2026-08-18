@@ -97,7 +97,6 @@
         const colWidths = data.colWidths || {};
         const merged = data.merged || [];
 
-        // Карта скрытых объединениями ячеек
         const mergedMap = {};
         const spanMap = {};
 
@@ -116,7 +115,6 @@
             }
         });
 
-        // Карта ячеек из JSON
         const cellMap = {};
         if (data.rows) {
             data.rows.forEach(row => {
@@ -128,7 +126,6 @@
             });
         }
 
-        // Заголовок таблицы
         const headRow = document.createElement('tr');
         const cornerTh = document.createElement('th');
         cornerTh.className = 'row-header';
@@ -147,7 +144,6 @@
         }
         tableHead.appendChild(headRow);
 
-        // Тело таблицы
         for (let r = 0; r < maxRows; r++) {
             const tr = document.createElement('tr');
             const rowTh = document.createElement('th');
@@ -159,7 +155,7 @@
                 const key = `${r}_${c}`;
 
                 if (mergedMap[key]) {
-                    continue; // Пропускаем закрытые объединением ячейки
+                    continue;
                 }
 
                 const td = document.createElement('td');
@@ -187,12 +183,16 @@
                     if (cellData.br) td.classList.add('br');
                 }
 
-                td.addEventListener('input', function() {
-                    const row = this.dataset.r;
-                    const col = this.dataset.c;
-                    const val = this.textContent;
+                const trackChange = function() {
+                    const row = td.dataset.r;
+                    const col = td.dataset.c;
+                    const val = td.textContent;
                     modifiedCells[`${row}_${col}`] = { r: parseInt(row), c: parseInt(col), v: val };
-                });
+                };
+
+                td.addEventListener('input', trackChange);
+                td.addEventListener('keyup', trackChange);
+                td.addEventListener('blur', trackChange);
 
                 tr.appendChild(td);
             }
