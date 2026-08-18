@@ -43,7 +43,6 @@ android {
                 'META-INF/NOTICE.txt',
                 'META-INF/groovy-*'
             ]
-            // Позволяет правильным ServiceLoader файлам попасть в сборку без конфликтов
             pickFirsts += [
                 'META-INF/services/javax.xml.stream.XMLInputFactory',
                 'META-INF/services/javax.xml.stream.XMLOutputFactory',
@@ -58,7 +57,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'com.google.android.material:material:1.12.0'
 
-    // POI Android для работы с XLS и XLSX (Aalto XML уже встроен внутри этой библиотеки!)
+    // POI Android для поддержки XLS и XLSX (содержит внутри Aalto XML)
     implementation 'com.github.SUPERCILEX.poi-android:poi:3.17'
 
     // Coroutines
