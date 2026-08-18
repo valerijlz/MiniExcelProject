@@ -15,7 +15,6 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.apache.poi.hssf.usermodel.HSSFColor
 import org.apache.poi.ss.usermodel.*
 import org.apache.poi.ss.util.CellRangeAddress
 import org.json.JSONArray
@@ -42,7 +41,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Исправление XML-парсеров StAX для Android (решает проблему com.bea.xml.stream)
+        // Исправление XML-парсеров StAX для Android
         fixXmlStaxProviders()
 
         webView = findViewById(R.id.webView)
@@ -77,12 +76,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun fixXmlStaxProviders() {
         try {
-            System.setProperty("javax.xml.stream.XMLInputFactory", "com.com.fasterxml.aalto.stax.InputFactoryImpl")
+            System.setProperty("javax.xml.stream.XMLInputFactory", "com.fasterxml.aalto.stax.InputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl")
         } catch (t: Throwable) {
-            // fallback для стандартных фабрик Java
-            System.setProperty("javax.xml.stream.XMLInputFactory", "org.apache.commons.com.sun.xml.internal.stream.XMLInputFactoryImpl")
+            Log.e("MiniExcel", "Failed to set StAX providers", t)
         }
     }
 
@@ -201,7 +199,7 @@ class MainActivity : AppCompatActivity() {
                         hasDataInRow = true
                     }
 
-                    // Цвет фона с поддержкой .xls и .xlsx
+                    // Безопасное получение фонового цвета ячейки (без прямых зависимостей от HSSFColor)
                     val bgHex = getSafeBackgroundColor(cell)
                     if (!bgHex.isNullOrEmpty()) {
                         cellObj.put("bg", bgHex)
@@ -273,15 +271,43 @@ class MainActivity : AppCompatActivity() {
         return try {
             val style = cell.cellStyle ?: return null
             val color = style.fillForegroundColorColor ?: return null
-            
-            if (color is HSSFColor) {
-                val rgb = color.triplet
-                if (rgb != null && rgb.size == 3 && !(rgb[0] == 255 && rgb[1] == 255 && rgb[2] == 255)) {
-                    return String.format("#%02X%02X%02X", rgb[0], rgb[1], rgb[2])
+
+            // 1. Попытка получить RGB массив через рефлексию (работает для HSSFColor и XSSFColor)
+            try {
+                val getTripletMethod = color.javaClass.getMethod("getTriplet")
+                val triplet = getTripletMethod.invoke(color) as? ShortArray
+                if (triplet != null && triplet.size == 3) {
+                    val r = triplet[0].toInt()
+                    val g = triplet[1].toInt()
+                    val b = triplet[2].toInt()
+                    // Игнорируем стандартный чистый белый цвет по умолчанию
+                    if (!(r == 255 && g == 255 && b == 255)) {
+                        return String.format("#%02X%02X%02X", r, g, b)
+                    }
                 }
-            } else {
-                val hex = color.toString()
-                if (hex.length >= 6) return "#${hex.takeLast(6)}"
+            } catch (_: Exception) { }
+
+            // 2. Попытка получить RGB через getRgb() (для XSSFColor)
+            try {
+                val getRgbMethod = color.javaClass.getMethod("getRgb")
+                val rgb = getRgbMethod.invoke(color) as? ByteArray
+                if (rgb != null && rgb.size >= 3) {
+                    val r = rgb[rgb.size - 3].toInt() and 0xFF
+                    val g = rgb[rgb.size - 2].toInt() and 0xFF
+                    val b = rgb[rgb.size - 1].toInt() and 0xFF
+                    if (!(r == 255 && g == 255 && b == 255)) {
+                        return String.format("#%02X%02X%02X", r, g, b)
+                    }
+                }
+            } catch (_: Exception) { }
+
+            // 3. Fallback: разбор строкового представления
+            val hex = color.toString()
+            if (hex.length >= 6) {
+                val cleanHex = hex.takeLast(6)
+                if (cleanHex != "FFFFFF") {
+                    return "#$cleanHex"
+                }
             }
             null
         } catch (t: Throwable) {
@@ -319,7 +345,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Перезапись файла через ContentResolver без флага дозаписи "rwt"
+                    // Перезапись файла через ContentResolver (без "rwt" для предотвращения коррупции файлов .xls)
                     contentResolver.openOutputStream(uri, "wt")?.use { os ->
                         wb.write(os)
                         os.flush()
