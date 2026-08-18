@@ -40,7 +40,8 @@ android {
                 'META-INF/LICENSE',
                 'META-INF/LICENSE.txt',
                 'META-INF/NOTICE',
-                'META-INF/NOTICE.txt'
+                'META-INF/NOTICE.txt',
+                'META-INF/groovy-*'
             ]
         }
     }
@@ -51,7 +52,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'com.google.android.material:material:1.12.0'
 
-    // POI Android библиотека
+    // POI Android для поддержке XLS и XLSX
     implementation 'com.github.SUPERCILEX.poi-android:poi:3.17'
 
     // Coroutines
