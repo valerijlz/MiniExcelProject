@@ -24,17 +24,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var btnOpen: Button
     private var currentWorkbook: Workbook? = null
-    
+    private var formulaEvaluator: FormulaEvaluator? = null
+
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
-    // Вызов диалога выбора файлов для кнопки "Открыть"
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { loadExcelFile(it) }
     }
 
-    // Вызов диалога выбора файлов из клика внутри WebView
     private val webViewFilePickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -48,8 +47,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. Инициализируем StAX-парсер без явных импортов javax.xml.stream
-        initStaxProviders()
+        // 1. Принудительно внедряем Aalto XML фабрики
+        fixStaxProviders()
 
         setContentView(R.layout.activity_main)
 
@@ -91,19 +90,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun initStaxProviders() {
+    private fun fixStaxProviders() {
         try {
-            // Принудительно задаем системные свойства для Aalto StAX, упакованного в poi-android
+            // Прописываем системные свойства для парсера Aalto
             System.setProperty("javax.xml.stream.XMLInputFactory", "com.fasterxml.aalto.stax.InputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl")
 
-            // Проверяем наличие классов в памяти через рефлексию (без импорта javax.xml.stream)
-            Class.forName("com.fasterxml.aalto.stax.InputFactoryImpl")
-            Class.forName("com.fasterxml.aalto.stax.OutputFactoryImpl")
-            Class.forName("com.fasterxml.aalto.stax.EventFactoryImpl")
-        } catch (e: Exception) {
-            Log.e("MiniExcel", "Failed to set StAX properties", e)
+            // Принудительно загружаем классы Aalto в ClassLoader
+            val inputFactory = Class.forName("com.fasterxml.aalto.stax.InputFactoryImpl").newInstance()
+            val outputFactory = Class.forName("com.fasterxml.aalto.stax.OutputFactoryImpl").newInstance()
+            val eventFactory = Class.forName("com.fasterxml.aalto.stax.EventFactoryImpl").newInstance()
+
+            Log.d("MiniExcel", "StAX providers successfully initialized: $inputFactory, $outputFactory, $eventFactory")
+        } catch (e: Throwable) {
+            Log.e("MiniExcel", "Failed to force-init StAX providers", e)
         }
     }
 
@@ -111,8 +112,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val originalClassLoader = Thread.currentThread().contextClassLoader
             try {
-                // Подменяем ClassLoader потока на ClassLoader приложения,
-                // чтобы POI увидел встроенные фабрики Aalto XML при чтении .xlsx
+                // Подменяем ClassLoader потока корутины на ClassLoader приложения
                 Thread.currentThread().contextClassLoader = applicationContext.classLoader
 
                 val localFile = File.createTempFile("excel_cache", ".tmp", cacheDir)
@@ -122,9 +122,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                currentWorkbook = WorkbookFactory.create(localFile)
-                val sheet = currentWorkbook?.getSheetAt(0) ?: throw Exception("Лист не найден")
-                
+                // Открываем файл
+                val workbook = WorkbookFactory.create(localFile)
+                currentWorkbook = workbook
+                formulaEvaluator = workbook.creationHelper.createFormulaEvaluator()
+
+                val sheet = workbook.getSheetAt(0) ?: throw Exception("Лист не найден")
                 val jsonResult = parseSheetToJSON(sheet)
 
                 withContext(Dispatchers.Main) {
@@ -146,29 +149,55 @@ class MainActivity : AppCompatActivity() {
         val rowsArray = StringBuilder("[")
         val formatter = DataFormatter()
 
-        for (rowIndex in 0..sheet.lastRowNum) {
-            val row = sheet.getRow(rowIndex) ?: continue
+        val lastRow = sheet.lastRowNum
+        for (rowIndex in 0..lastRow) {
+            val row = sheet.getRow(rowIndex)
             if (rowIndex > 0 && rowsArray.length > 1) rowsArray.append(",")
 
             rowsArray.append("[")
-            val maxCol = row.lastCellNum.toInt()
+            if (row != null) {
+                val maxCol = row.lastCellNum.toInt()
+                for (colIndex in 0 until maxCol) {
+                    val cell = row.getCell(colIndex)
+                    val cellValue = getCellValueAsString(cell, formatter)
 
-            for (colIndex in 0 until maxCol) {
-                val cell = row.getCell(colIndex)
-                val cellValue = if (cell != null) formatter.formatCellValue(cell) else ""
+                    val escapedValue = cellValue
+                        .replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("\n", "\\n")
+                        .replace("\r", "")
 
-                val escapedValue = cellValue
-                    .replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-
-                if (colIndex > 0) rowsArray.append(",")
-                rowsArray.append("\"$escapedValue\"")
+                    if (colIndex > 0) rowsArray.append(",")
+                    rowsArray.append("\"$escapedValue\"")
+                }
             }
             rowsArray.append("]")
         }
 
         rowsArray.append("]")
         return rowsArray.toString()
+    }
+
+    private fun getCellValueAsString(cell: Cell?, formatter: DataFormatter): String {
+        if (cell == null) return ""
+        return try {
+            when (cell.cellTypeEnum) {
+                CellType.FORMULA -> {
+                    val evaluatedCell = formulaEvaluator?.evaluateInCell(cell)
+                    if (evaluatedCell != null) {
+                        formatter.formatCellValue(evaluatedCell)
+                    } else {
+                        cell.cellFormula
+                    }
+                }
+                else -> formatter.formatCellValue(cell)
+            }
+        } catch (e: Exception) {
+            try {
+                formatter.formatCellValue(cell)
+            } catch (ex: Exception) {
+                ""
+            }
+        }
     }
 }
