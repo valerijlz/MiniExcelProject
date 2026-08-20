@@ -18,9 +18,6 @@ import kotlinx.coroutines.withContext
 import org.apache.poi.ss.usermodel.*
 import java.io.File
 import java.io.FileOutputStream
-import javax.xml.stream.XMLEventFactory
-import javax.xml.stream.XMLInputFactory
-import javax.xml.stream.XMLOutputFactory
 
 class MainActivity : AppCompatActivity() {
 
@@ -30,12 +27,14 @@ class MainActivity : AppCompatActivity() {
     
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
+    // Вызов диалога выбора файлов для кнопки "Открыть"
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { loadExcelFile(it) }
     }
 
+    // Вызов диалога выбора файлов из клика внутри WebView
     private val webViewFilePickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -49,8 +48,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. Прямая инициализация StAX фабрик через явное указание Aalto
-        initStaxProvidersDirectly()
+        // 1. Инициализируем StAX-парсер без явных импортов javax.xml.stream
+        initStaxProviders()
 
         setContentView(R.layout.activity_main)
 
@@ -92,20 +91,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun initStaxProvidersDirectly() {
+    private fun initStaxProviders() {
         try {
-            // Задаем свойства системы
+            // Принудительно задаем системные свойства для Aalto StAX, упакованного в poi-android
             System.setProperty("javax.xml.stream.XMLInputFactory", "com.fasterxml.aalto.stax.InputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl")
 
-            // ПРИНУДИТЕЛЬНАЯ инициализация классов Aalto в памяти
-            // Это решает ошибку Provider com.bea.xml.stream.EventFactory
+            // Проверяем наличие классов в памяти через рефлексию (без импорта javax.xml.stream)
             Class.forName("com.fasterxml.aalto.stax.InputFactoryImpl")
             Class.forName("com.fasterxml.aalto.stax.OutputFactoryImpl")
             Class.forName("com.fasterxml.aalto.stax.EventFactoryImpl")
         } catch (e: Exception) {
-            Log.e("MiniExcel", "Failed to force-init StAX classes", e)
+            Log.e("MiniExcel", "Failed to set StAX properties", e)
         }
     }
 
@@ -113,7 +111,8 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val originalClassLoader = Thread.currentThread().contextClassLoader
             try {
-                // Подменяем ClassLoader для текущего фонового потока
+                // Подменяем ClassLoader потока на ClassLoader приложения,
+                // чтобы POI увидел встроенные фабрики Aalto XML при чтении .xlsx
                 Thread.currentThread().contextClassLoader = applicationContext.classLoader
 
                 val localFile = File.createTempFile("excel_cache", ".tmp", cacheDir)
@@ -126,7 +125,6 @@ class MainActivity : AppCompatActivity() {
                 currentWorkbook = WorkbookFactory.create(localFile)
                 val sheet = currentWorkbook?.getSheetAt(0) ?: throw Exception("Лист не найден")
                 
-                // Преобразуем лист в JSON с реальными данными ячеек
                 val jsonResult = parseSheetToJSON(sheet)
 
                 withContext(Dispatchers.Main) {
@@ -144,10 +142,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Исправление для пустых ячеек (.xls / .xlsx)
-     * Базовый парсер значений ячеек в JSON для передачи в grid.html
-     */
     private fun parseSheetToJSON(sheet: Sheet): String {
         val rowsArray = StringBuilder("[")
         val formatter = DataFormatter()
@@ -163,7 +157,6 @@ class MainActivity : AppCompatActivity() {
                 val cell = row.getCell(colIndex)
                 val cellValue = if (cell != null) formatter.formatCellValue(cell) else ""
 
-                // Экранируем кавычки и переносы для безопасного JSON
                 val escapedValue = cellValue
                     .replace("\\", "\\\\")
                     .replace("\"", "\\\"")
