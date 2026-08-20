@@ -18,6 +18,9 @@ import kotlinx.coroutines.withContext
 import org.apache.poi.ss.usermodel.*
 import java.io.File
 import java.io.FileOutputStream
+import javax.xml.stream.XMLEventFactory
+import javax.xml.stream.XMLInputFactory
+import javax.xml.stream.XMLOutputFactory
 
 class MainActivity : AppCompatActivity() {
 
@@ -25,17 +28,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnOpen: Button
     private var currentWorkbook: Workbook? = null
     
-    // Переменная для обработки выбора файлов из самого WebView (если в grid.html есть <input type="file">)
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
-    // 1. Лаунчер для системного диалога открытия файлов (кнопка "Открыть")
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { loadExcelFile(it) }
     }
 
-    // 2. Лаунчер для обработки выбора файлов из клика внутри WebView
     private val webViewFilePickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -49,24 +49,19 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Инициализируем StAX-парсер для XLSX до инициализации интерфейса
-        initStaxProviders()
+        // 1. Прямая инициализация StAX фабрик через явное указание Aalto
+        initStaxProvidersDirectly()
 
         setContentView(R.layout.activity_main)
 
-        // Связываем элементы интерфейса
         webView = findViewById(R.id.webView)
-        btnOpen = findViewById(R.id.btnOpen) // Кнопка "Открыть" в разметке
+        btnOpen = findViewById(R.id.btnOpen)
 
-        // Привязываем клик по кнопке "Открыть" к запуск диалога выбора файла
         btnOpen.setOnClickListener {
             openFileLauncher.launch("*/*")
         }
 
-        // Настройка WebView для работы с JS и сеткой
         setupWebView()
-
-        // Загружаем HTML-сетку
         webView.loadUrl("file:///android_asset/grid.html")
     }
 
@@ -79,13 +74,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
-            // Перехват логов JavaScript в Logcat для удобной отладки grid.html
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
                 Log.d("MiniExcel-JS", "${consoleMessage.message()} -- From line ${consoleMessage.lineNumber()} of ${consoleMessage.sourceId()}")
                 return true
             }
 
-            // Поддержка диалога выбора файла, если запуск идет из самого WebView
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
@@ -99,13 +92,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun initStaxProviders() {
+    private fun initStaxProvidersDirectly() {
         try {
+            // Задаем свойства системы
             System.setProperty("javax.xml.stream.XMLInputFactory", "com.fasterxml.aalto.stax.InputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl")
+
+            // ПРИНУДИТЕЛЬНАЯ инициализация классов Aalto в памяти
+            // Это решает ошибку Provider com.bea.xml.stream.EventFactory
+            Class.forName("com.fasterxml.aalto.stax.InputFactoryImpl")
+            Class.forName("com.fasterxml.aalto.stax.OutputFactoryImpl")
+            Class.forName("com.fasterxml.aalto.stax.EventFactoryImpl")
         } catch (e: Exception) {
-            Log.e("MiniExcel", "Failed to set StAX properties", e)
+            Log.e("MiniExcel", "Failed to force-init StAX classes", e)
         }
     }
 
@@ -113,7 +113,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val originalClassLoader = Thread.currentThread().contextClassLoader
             try {
-                // Подменяем ClassLoader потока для корректного чтения XLSX через Aalto
+                // Подменяем ClassLoader для текущего фонового потока
                 Thread.currentThread().contextClassLoader = applicationContext.classLoader
 
                 val localFile = File.createTempFile("excel_cache", ".tmp", cacheDir)
@@ -125,6 +125,8 @@ class MainActivity : AppCompatActivity() {
 
                 currentWorkbook = WorkbookFactory.create(localFile)
                 val sheet = currentWorkbook?.getSheetAt(0) ?: throw Exception("Лист не найден")
+                
+                // Преобразуем лист в JSON с реальными данными ячеек
                 val jsonResult = parseSheetToJSON(sheet)
 
                 withContext(Dispatchers.Main) {
@@ -142,8 +144,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Исправление для пустых ячеек (.xls / .xlsx)
+     * Базовый парсер значений ячеек в JSON для передачи в grid.html
+     */
     private fun parseSheetToJSON(sheet: Sheet): String {
-        // Ваши функции обхода ячеек, размеров, текста и стилей таблицы
-        return "[]"
+        val rowsArray = StringBuilder("[")
+        val formatter = DataFormatter()
+
+        for (rowIndex in 0..sheet.lastRowNum) {
+            val row = sheet.getRow(rowIndex) ?: continue
+            if (rowIndex > 0 && rowsArray.length > 1) rowsArray.append(",")
+
+            rowsArray.append("[")
+            val maxCol = row.lastCellNum.toInt()
+
+            for (colIndex in 0 until maxCol) {
+                val cell = row.getCell(colIndex)
+                val cellValue = if (cell != null) formatter.formatCellValue(cell) else ""
+
+                // Экранируем кавычки и переносы для безопасного JSON
+                val escapedValue = cellValue
+                    .replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+
+                if (colIndex > 0) rowsArray.append(",")
+                rowsArray.append("\"$escapedValue\"")
+            }
+            rowsArray.append("]")
+        }
+
+        rowsArray.append("]")
+        return rowsArray.toString()
     }
 }
