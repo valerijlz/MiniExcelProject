@@ -7,6 +7,7 @@ import android.webkit.ConsoleMessage
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -23,8 +24,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var btnOpen: Button
-    private var currentWorkbook: Workbook? = null
-    private var formulaEvaluator: FormulaEvaluator? = null
+    private var isWebViewLoaded = false
 
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
@@ -47,8 +47,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. Принудительно внедряем Aalto XML фабрики
-        fixStaxProviders()
+        // 1. Принудительная инициализация фабрик StAX
+        setupStaxProperties()
 
         setContentView(R.layout.activity_main)
 
@@ -71,9 +71,17 @@ class MainActivity : AppCompatActivity() {
             allowContentAccess = true
         }
 
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                isWebViewLoaded = true
+                Log.d("MiniExcel", "WebView HTML grid successfully loaded")
+            }
+        }
+
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-                Log.d("MiniExcel-JS", "${consoleMessage.message()} -- From line ${consoleMessage.lineNumber()} of ${consoleMessage.sourceId()}")
+                Log.d("MiniExcel-JS", "${consoleMessage.message()} -- line ${consoleMessage.lineNumber()}")
                 return true
             }
 
@@ -90,58 +98,74 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun fixStaxProviders() {
+    private fun setupStaxProperties() {
         try {
-            // Прописываем системные свойства для парсера Aalto
+            // Указываем явные классы Aalto StAX, вшитые внутрь poi-android
             System.setProperty("javax.xml.stream.XMLInputFactory", "com.fasterxml.aalto.stax.InputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl")
             System.setProperty("javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl")
-
-            // Принудительно загружаем классы Aalto в ClassLoader
-            val inputFactory = Class.forName("com.fasterxml.aalto.stax.InputFactoryImpl").newInstance()
-            val outputFactory = Class.forName("com.fasterxml.aalto.stax.OutputFactoryImpl").newInstance()
-            val eventFactory = Class.forName("com.fasterxml.aalto.stax.EventFactoryImpl").newInstance()
-
-            Log.d("MiniExcel", "StAX providers successfully initialized: $inputFactory, $outputFactory, $eventFactory")
-        } catch (e: Throwable) {
-            Log.e("MiniExcel", "Failed to force-init StAX providers", e)
+        } catch (e: Exception) {
+            Log.e("MiniExcel", "Error setting StAX system properties", e)
         }
     }
 
     private fun loadExcelFile(uri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             val originalClassLoader = Thread.currentThread().contextClassLoader
+            var tempFile: File? = null
+            var workbook: Workbook? = null
+
             try {
-                // Подменяем ClassLoader потока корутины на ClassLoader приложения
+                // Подменяем контекстный ClassLoader для корутины
                 Thread.currentThread().contextClassLoader = applicationContext.classLoader
 
-                val localFile = File.createTempFile("excel_cache", ".tmp", cacheDir)
+                tempFile = File.createTempFile("excel_cache", ".tmp", cacheDir)
                 contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(localFile).use { output ->
+                    FileOutputStream(tempFile).use { output ->
                         input.copyTo(output)
                     }
                 }
 
-                // Открываем файл
-                val workbook = WorkbookFactory.create(localFile)
-                currentWorkbook = workbook
-                formulaEvaluator = workbook.creationHelper.createFormulaEvaluator()
-
-                val sheet = workbook.getSheetAt(0) ?: throw Exception("Лист не найден")
+                // Создаем Workbook
+                workbook = WorkbookFactory.create(tempFile)
+                val sheet = workbook.getSheetAt(0) ?: throw Exception("В файле нет листов")
+                
                 val jsonResult = parseSheetToJSON(sheet)
+                Log.d("MiniExcel", "Parsed JSON length: ${jsonResult.length}")
 
                 withContext(Dispatchers.Main) {
-                    webView.evaluateJavascript("window.loadJsonData($jsonResult)", null)
-                    Toast.makeText(this@MainActivity, "Файл успешно загружен!", Toast.LENGTH_SHORT).show()
+                    sendJsonToWebView(jsonResult)
                 }
+
             } catch (t: Throwable) {
                 Log.e("MiniExcel", "Error opening Excel file", t)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(this@MainActivity, "Ошибка: ${t.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             } finally {
+                try {
+                    workbook?.close()
+                } catch (e: Exception) {
+                    // Игнорируем ошибки закрытия
+                }
+                tempFile?.delete()
                 Thread.currentThread().contextClassLoader = originalClassLoader
             }
+        }
+    }
+
+    private fun sendJsonToWebView(jsonResult: String) {
+        if (!isWebViewLoaded) {
+            Toast.makeText(this, "Сетка еще загружается, попробуйте снова через секунду", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Вызываем функцию JS в WebView
+        val script = "if (typeof loadJsonData === 'function') { loadJsonData($jsonResult); } else if (typeof window.loadJsonData === 'function') { window.loadJsonData($jsonResult); } else { console.error('loadJsonData function not found in JS'); }"
+        
+        webView.evaluateJavascript(script) { result ->
+            Log.d("MiniExcel", "JS evaluation result: $result")
+            Toast.makeText(this@MainActivity, "Файл прочитан!", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -159,7 +183,7 @@ class MainActivity : AppCompatActivity() {
                 val maxCol = row.lastCellNum.toInt()
                 for (colIndex in 0 until maxCol) {
                     val cell = row.getCell(colIndex)
-                    val cellValue = getCellValueAsString(cell, formatter)
+                    val cellValue = if (cell != null) formatter.formatCellValue(cell) else ""
 
                     val escapedValue = cellValue
                         .replace("\\", "\\\\")
@@ -176,28 +200,5 @@ class MainActivity : AppCompatActivity() {
 
         rowsArray.append("]")
         return rowsArray.toString()
-    }
-
-    private fun getCellValueAsString(cell: Cell?, formatter: DataFormatter): String {
-        if (cell == null) return ""
-        return try {
-            when (cell.cellTypeEnum) {
-                CellType.FORMULA -> {
-                    val evaluatedCell = formulaEvaluator?.evaluateInCell(cell)
-                    if (evaluatedCell != null) {
-                        formatter.formatCellValue(evaluatedCell)
-                    } else {
-                        cell.cellFormula
-                    }
-                }
-                else -> formatter.formatCellValue(cell)
-            }
-        } catch (e: Exception) {
-            try {
-                formatter.formatCellValue(cell)
-            } catch (ex: Exception) {
-                ""
-            }
-        }
     }
 }
